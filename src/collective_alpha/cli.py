@@ -31,6 +31,8 @@ eval_app = typer.Typer(help="Signal evaluation", no_args_is_help=True)
 app.add_typer(eval_app, name="eval")
 bt_app = typer.Typer(help="Backtests", no_args_is_help=True)
 app.add_typer(bt_app, name="backtest")
+pf_app = typer.Typer(help="Portfolio construction with a risk model", no_args_is_help=True)
+app.add_typer(pf_app, name="portfolio")
 console = Console()
 
 
@@ -388,6 +390,66 @@ def backtest_feature_cmd(
         console.print_json(json.dumps({"summary": res.summary(), "by_year": res.by_year().to_dicts()}, default=str))
     else:
         console.print(res.to_markdown())
+
+
+@pf_app.command("feature")
+def portfolio_feature_cmd(
+    feature: str,
+    universe: str = "liquid_1500",
+    sign: float = 1.0,
+    method: str = typer.Option("heuristic", help="heuristic | mvo"),
+    rebalance: str = "21",
+    gross: float = 2.0,
+    net: float = 0.0,
+    max_weight: float = 0.03,
+    sector_neutral: bool = True,
+    vol_target: float | None = None,
+    risk_aversion: float = 5.0,
+    turnover_penalty: float = 0.0,
+    max_adv_participation: float | None = None,
+    delay: int = 1,
+    start: DateOpt = None,
+    end: DateOpt = None,
+    as_json: bool = False,
+):
+    """Backtest a feature signal through portfolio construction (sector neutral, capped, vol-targeted)."""
+    from collective_alpha.backtest.engine import BacktestConfig
+    from collective_alpha.portfolio.construct import PortfolioConfig
+    from collective_alpha.portfolio.run import exposure_report, portfolio_feature
+
+    _setup_logging(False)
+    rb: int | str = int(rebalance) if rebalance.isdigit() else rebalance
+    cfg = PortfolioConfig(
+        method=method,
+        gross=gross,
+        net=net,
+        max_weight=max_weight,
+        sector_neutral=sector_neutral,
+        vol_target=vol_target,
+        risk_aversion=risk_aversion,
+        turnover_penalty=turnover_penalty,
+        max_adv_participation=max_adv_participation,
+    )
+    res, diag = portfolio_feature(
+        feature,
+        universe,
+        sign,
+        cfg,
+        rb,
+        BacktestConfig(delay=delay),
+        start.date() if start else None,
+        end.date() if end else None,
+    )
+    if as_json:
+        console.print_json(
+            json.dumps(
+                {"summary": res.summary(), "by_year": res.by_year().to_dicts(), "exposures": exposure_report(diag)},
+                default=str,
+            )
+        )
+    else:
+        console.print(res.to_markdown())
+        console.print_json(json.dumps(exposure_report(diag), default=str))
 
 
 @app.command()
