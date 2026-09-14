@@ -27,6 +27,8 @@ panel_app = typer.Typer(help="Daily security panel with split/dividend-aware ret
 app.add_typer(panel_app, name="panel")
 features_app = typer.Typer(help="Feature groups (price, size, fund, short, news)", no_args_is_help=True)
 app.add_typer(features_app, name="features")
+eval_app = typer.Typer(help="Signal evaluation", no_args_is_help=True)
+app.add_typer(eval_app, name="eval")
 console = Console()
 
 
@@ -295,6 +297,48 @@ def features_list():
     from collective_alpha.features.base import list_features
 
     console.print_json(json.dumps(list_features()))
+
+
+@eval_app.command("forward")
+def eval_forward(delist_return: float = 0.0, verbose: bool = False):
+    """Build curated/forward_returns (close-to-close over several horizons, next-day open/close)."""
+    from collective_alpha.eval.report import build_forward_returns
+
+    _run("eval forward", lambda p: build_forward_returns(p.s, delist_return), verbose)
+
+
+@eval_app.command("feature")
+def eval_feature(
+    feature: str,
+    universe: str = "liquid_1500",
+    horizon: int = 5,
+    sign: float = 1.0,
+    quantiles: int = 10,
+    start: DateOpt = None,
+    end: DateOpt = None,
+    neutralize_by: Annotated[
+        str | None, typer.Option(help="attribute column to demean within, e.g. primary_exchange")
+    ] = None,
+    as_json: bool = False,
+):
+    """Evaluate a raw feature as a signal (cross-sectional rank of sign * feature)."""
+    from collective_alpha.eval.report import evaluate_feature
+
+    _setup_logging(False)
+    rep = evaluate_feature(
+        feature,
+        universe,
+        horizon,
+        sign,
+        quantiles,
+        start.date() if start else None,
+        end.date() if end else None,
+        neutralize_by,
+    )
+    if as_json:
+        console.print_json(json.dumps(rep.to_dict(), default=str))
+    else:
+        console.print(rep.to_markdown())
 
 
 @app.command()
