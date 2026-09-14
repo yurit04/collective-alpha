@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# collective-alpha
+config/settings.toml
+*.key
+*_key.txt
+notebooks/**/*.parquet
+notebooks/**/scratch/
+.DS_Store

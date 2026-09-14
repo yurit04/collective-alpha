@@ -1,0 +1,20 @@
+# Copy to config/settings.toml (git-ignored) to override defaults.
+# Every key can also be set as an environment variable with the CA_ prefix,
+# e.g. CA_DATA_ROOT=/somewhere/else.
+
+data_root = "/Users/yuriturygin/Documents/market_data/massive"
+api_key_file = "/Users/yuriturygin/Documents/massive_key.txt"
+s3_key_file = "/Users/yuriturygin/Documents/massive_s3_key.txt"
+
+s3_endpoint = "https://files.massive.com"
+s3_bucket = "flatfiles"
+rest_base_url = "https://api.massive.com"
+
+# Entitlement horizon in years; backfills stop here when the listing goes further back.
+history_years = 5
+
+# Flat-file datasets synced by `ca backfill` / `ca update`.
+flatfile_datasets = ["day_aggs_v1", "minute_aggs_v1"]
+
+# Parallel downloads / REST workers.
+max_workers = 6
