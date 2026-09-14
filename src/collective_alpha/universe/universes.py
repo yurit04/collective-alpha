@@ -20,6 +20,7 @@ from collective_alpha.config import REPO_ROOT, Settings
 from collective_alpha.storage import layout
 from collective_alpha.storage.parquet import write_parquet_atomic
 from collective_alpha.universe.attributes import attributes_asof
+from collective_alpha.universe.marketcap import shares_asof
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +40,8 @@ class UniverseSpec:
     exit_n: int | None = None  # stay while rank <= exit_n (defaults to 1.3 * top_n)
     one_class_per_issuer: bool = False  # keep the most liquid share class per CIK
     rebalance: str = "monthly"  # monthly | weekly
+    rank_by: str = "adv"  # adv | cap  (cap needs SEC facts; securities without a share count are excluded)
+    min_cap: float | None = None  # market cap floor in USD, evaluated with lagged close x latest filed shares
 
     @property
     def exit_rank(self) -> int | None:
@@ -102,6 +105,7 @@ def build_universe(
     last_trade: pl.DataFrame,
     sessions: list[dt.date],
     max_stale_sessions: int = 5,
+    shares: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Daily membership table for one universe.
 
@@ -109,8 +113,11 @@ def build_universe(
     attrs: security_id, asof, type, primary_exchange, cik (point-in-time snapshots)
     last_trade: security_id, last_trade (from `securities`)
     sessions: all trading days covered by panel
-    Returns rows (date, security_id, rebalance_date, rank, lag_adv, lag_close, is_new).
+    shares: optional (cik, filed, shares, shares_source, shares_end) series from marketcap.shares_series
+    Returns rows (date, security_id, rebalance_date, rank, lag_adv, lag_close, cap, is_new).
     """
+    if spec.rank_by == "cap" and shares is None:
+        raise ValueError(f"universe {spec.name} ranks by cap but no shares series was provided")
     stats = lagged_stats(panel, spec.adv_window)
     # stats are indexed by sessions where the security has a bar; a rebalance date D needs the row
     # for the latest session <= D. Use an asof join per rebalance date.
@@ -137,6 +144,10 @@ def build_universe(
         )
         st = st.filter(pl.col("stale") <= max_stale_sessions)
         st = attributes_asof(attrs, st.rename({"date": "stat_date"}).with_columns(date=pl.lit(rd)), "date")
+        if shares is not None and "cik" in st.columns:
+            st = shares_asof(shares, st, "date").with_columns(cap=pl.col("shares") * pl.col("lag_close"))
+        else:
+            st = st.with_columns(cap=pl.lit(None, dtype=pl.Float64))
         elig = st.filter(
             pl.col("type").is_in(list(spec.types))
             & pl.col("primary_exchange").is_in(list(spec.exchanges))
@@ -144,6 +155,11 @@ def build_universe(
             & (pl.col("lag_adv") >= spec.min_adv)
             & (pl.col("lag_hist") >= spec.min_history_days)
         )
+        if spec.min_cap is not None:
+            elig = elig.filter(pl.col("cap") >= spec.min_cap)
+        if spec.rank_by == "cap":
+            elig = elig.filter(pl.col("cap").is_not_null())
+        rank_col = "cap" if spec.rank_by == "cap" else "lag_adv"
         if spec.one_class_per_issuer:
             elig = (
                 elig.sort(["cik", "lag_adv"], descending=[False, True])
@@ -151,7 +167,7 @@ def build_universe(
                 .filter(pl.col("cik").is_null() | (pl.col("cls_rank") == 1))
                 .drop("cls_rank")
             )
-        elig = elig.sort("lag_adv", descending=True).with_columns(rank=pl.int_range(1, pl.len() + 1))
+        elig = elig.sort(rank_col, descending=True).with_columns(rank=pl.int_range(1, pl.len() + 1))
         if spec.top_n is not None:
             stay = elig.filter(pl.col("security_id").is_in(list(members)) & (pl.col("rank") <= spec.exit_rank))
             enter = elig.filter(~pl.col("security_id").is_in(list(members)) & (pl.col("rank") <= spec.top_n))
@@ -164,7 +180,7 @@ def build_universe(
 
         # expand to daily rows until period_end, cut at each security's last trade (delisting)
         days = [d for d in sessions if rd <= d <= period_end]
-        daily = is_new.select("security_id", "rank", "lag_adv", "lag_close", "is_new").join(
+        daily = is_new.select("security_id", "rank", "lag_adv", "lag_close", "cap", "is_new").join(
             pl.DataFrame({"date": days}), how="cross"
         )
         daily = daily.join(last_trade, on="security_id", how="left").filter(
@@ -233,7 +249,15 @@ def build_and_write(
     panel = security_panel(bars.select("ticker", "date", "close", "volume").collect(), master)
     sessions = trading_days(panel["date"].min(), panel["date"].max())
     last_trade = securities.select("security_id", "last_trade")
-    univ = build_universe(spec, panel, attrs, last_trade, sessions)
+    shares = None
+    try:
+        from collective_alpha.universe.marketcap import load_sec_facts, load_ticker_details, shares_series
+
+        shares = shares_series(load_sec_facts(settings), load_ticker_details(settings))
+    except RuntimeError:
+        if spec.rank_by == "cap" or spec.min_cap is not None:
+            raise
+    univ = build_universe(spec, panel, attrs, last_trade, sessions, shares=shares)
     n = write_universe(settings, spec.name, univ)
     st = universe_stats(univ)
     return {

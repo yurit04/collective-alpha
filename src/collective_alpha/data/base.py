@@ -14,11 +14,15 @@ class DataProvider(ABC):
     def probe(self) -> dict[str, Any]:
         """Return a description of what the account is entitled to."""
 
-    @abstractmethod
-    def sync_reference(self, asof: dt.date) -> None: ...
+    def close(self) -> None:  # noqa: B027
+        """Release network/database handles."""
 
-    @abstractmethod
-    def sync_corporate_actions(self, asof: dt.date) -> None: ...
+    # Optional capabilities; a provider implements the ones its vendor offers.
+    def sync_reference(self, asof: dt.date) -> None:
+        raise NotImplementedError(f"{self.name} has no reference data")
 
-    @abstractmethod
-    def sync_bars(self, dataset: str, start: dt.date, end: dt.date) -> None: ...
+    def sync_corporate_actions(self, asof: dt.date) -> None:
+        raise NotImplementedError(f"{self.name} has no corporate actions")
+
+    def sync_bars(self, dataset: str, start: dt.date, end: dt.date) -> None:
+        raise NotImplementedError(f"{self.name} has no bars")

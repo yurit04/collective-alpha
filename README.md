@@ -112,6 +112,32 @@ Output: `curated/universes/name=<name>/year=YYYY/data.parquet` with one row per 
 plus rank, lagged ADV and close, rebalance date and an `is_new` flag. Query via the `universes` view
 (`where name = 'liquid_1500'`), or `collective_alpha.universe.universes.load_universe`.
 
+## SEC company facts (second data provider)
+
+Point-in-time shares outstanding and basic fundamentals come from SEC EDGAR XBRL company facts,
+behind the same provider interface as Massive:
+
+```bash
+ca sync sec-facts                 # downloads the nightly companyfacts.zip (~1.4 GB) once, then parses
+                                  # every CIK present in `securities` -> curated/sec_facts/asof=<date>
+ca sync sec-facts --source api    # per-CIK API instead (8 req/s), for small incremental refreshes
+```
+
+* SEC's fair-access policy requires a user agent with a contact e-mail. The default is a
+  placeholder; set `sec_user_agent` in `config/settings.toml` or `CA_SEC_USER_AGENT` to your own contact.
+* `sec_facts` is a long table (cik, concept, unit, start, end, val, filed, form, ...). Concepts kept are
+  listed in `data/sec/facts.py`; every filing is retained so values can be used as-of their *filed* date.
+* Share counts for market cap (`universe/marketcap.py`): one concept per issuer, the one it reports in
+  the most filings (ties: cover-page `shares_outstanding` > balance-sheet `common_shares` >
+  `wavg_shares_basic`), so units never mix across filings. A count is usable on date D only if filed on
+  or before D and its period end is within 400 days. Values more than 20x away from the issuer's latest
+  filing are dropped as filing errors.
+* ADRs: SEC filers report ordinary shares while the price is per depositary share. The vendor's current
+  ADS count calibrates a static ADS ratio (snapped to a round number when within 15%) which is applied to
+  the whole history; domestic multi-class issuers use the SEC total across classes.
+* Cap-ranked universes (`cap_1000`, `cap_3000`) use `rank_by = "cap"`; issuers without a usable share
+  count are excluded rather than guessed.
+
 ## Research access
 
 ```python
@@ -132,6 +158,7 @@ src/collective_alpha/
   cli.py               `ca` entry point
   data/base.py         DataProvider interface (future vendors plug in here)
   data/massive/        auth, rest client, flat-file store, dataset specs, transforms, provider
+  data/sec/            EDGAR client, companyfacts parser, provider
   storage/             path layout, manifest ledger, parquet writer, DuckDB catalog
   universe/            security master, point-in-time attributes, universe builder
 notebooks/inspection/  coverage & quality checks
@@ -141,7 +168,7 @@ tests/                 offline unit tests
 
 ## Roadmap
 
-1. ~~Security master~~ and ~~universe builder~~ done. Next: SEC shares outstanding feed for cap-ranked universes.
+1. ~~Security master~~, ~~universe builder~~ and ~~SEC shares feed~~ done. Next: adjusted price panel and returns.
 2. Feature / signal library on daily and intraday bars, fundamentals-lite (float, short interest), news sentiment.
 3. Backtester: vectorised daily and intraday rebalance, costs, IC/turnover diagnostics, walk-forward.
 4. Portfolio construction and risk.

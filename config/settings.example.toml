@@ -18,3 +18,7 @@ flatfile_datasets = ["day_aggs_v1", "minute_aggs_v1"]
 
 # Parallel downloads / REST workers.
 max_workers = 6
+
+# SEC EDGAR requires a declared user agent with a contact e-mail (fair-access policy).
+sec_user_agent = "collective-alpha research bot you@example.com"
+sec_max_rps = 8.0
