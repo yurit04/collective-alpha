@@ -197,6 +197,31 @@ Forward returns are what a position opened at the signal date's close earns. If 
 trading inside the horizon the return compounds to its last bar and then a configurable
 `delist_return` (default 0). Rows too close to the end of the store are null, never truncated.
 
+## Backtesting
+
+```bash
+ca backtest feature mom_12_1 --universe liquid_1500 --rebalance 21            # long-short deciles, monthly
+ca backtest feature ret_5d --sign -1 --rebalance 5 --scheme signal_weighted    # rank-weighted book, weekly
+ca backtest feature si_ratio --sign -1 --impact --half-spread-bps 5             # with sqrt impact on ADV
+```
+
+`collective_alpha.backtest` is a vectorised daily engine over target weights:
+
+* **weights**: `long_short_quantiles` (equal-weight top vs bottom quantile, dollar neutral, or long-only),
+  `signal_weighted` (proportional to demeaned rank), rebalanced every n sessions or monthly/weekly, with
+  a per-name cap
+* **timing**: a target set on signal date D executes at the close `delay` sessions later (default 1) and
+  first earns the following session; weights drift with prices between rebalances; a security's last bar
+  is followed by liquidation at `delist_return`
+* **costs**: commission + half-spread + slippage in bps on traded notional, an annual borrow rate on the
+  short leg, and an optional square-root impact term on ADV participation
+* **output**: daily gross/net returns, cost, borrow, turnover, gross/net exposure and name counts;
+  `summary()` (annualised return, vol, Sharpe, max drawdown, Calmar, cost drag) and `by_year()`
+
+Sanity on the store (liquid_1500, 2022-2026, default costs): 12-1 momentum deciles rebalanced monthly earn
+~13% net with Sharpe ~0.45 and 1.1% cost drag; 5-day reversal rebalanced weekly loses money after ~9% of
+annual costs.
+
 ## Research access
 
 ```python
@@ -223,6 +248,7 @@ src/collective_alpha/
   panel/               corporate-action cleaning, daily panel with returns
   features/            feature groups (price, size, fund, short, news) and signal transforms
   eval/                forward returns, IC / quantile / turnover diagnostics, signal reports
+  backtest/            weight schemes, vectorised daily engine with costs, feature backtests
 notebooks/inspection/  coverage & quality checks
 notebooks/research/    alpha research (start from the template)
 tests/                 offline unit tests
@@ -230,7 +256,7 @@ tests/                 offline unit tests
 
 ## Roadmap
 
-1. ~~Security master~~, ~~universe builder~~, ~~SEC shares feed~~, ~~daily panel~~, ~~feature library~~ and ~~signal evaluation~~ done. Next: backtester.
+1. ~~Security master~~, ~~universe builder~~, ~~SEC shares feed~~, ~~daily panel~~, ~~feature library~~, ~~signal evaluation~~ and ~~backtester~~ done. Next: portfolio construction and risk.
 2. Feature / signal library on daily and intraday bars, fundamentals-lite (float, short interest), news sentiment.
 3. Backtester: vectorised daily and intraday rebalance, costs, IC/turnover diagnostics, walk-forward.
 4. Portfolio construction and risk.
