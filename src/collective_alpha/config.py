@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     rest_base_url: str = "https://api.massive.com"
 
     history_years: int = 5
+
+    # SEC EDGAR fair-access policy requires a user agent naming a contact e-mail. Replace the
+    # placeholder with your own contact (CA_SEC_USER_AGENT or config/settings.toml).
+    sec_user_agent: str = "collective-alpha research bot research@collective-alpha.invalid"
+    sec_max_rps: float = 8.0
     flatfile_datasets: list[str] = Field(default_factory=lambda: ["day_aggs_v1", "minute_aggs_v1"])
     max_workers: int = 6
 

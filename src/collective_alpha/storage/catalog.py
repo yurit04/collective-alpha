@@ -60,6 +60,7 @@ class Catalog:
             "tickers_pit",
             "security_master",
             "securities",
+            "sec_facts",
             "ticker_details",
             "ticker_types",
             "exchanges",

@@ -141,6 +141,28 @@ def sync_tickers_pit(verbose: bool = False):
     _run("sync tickers-pit", lambda p: p.sync_tickers_pit(), verbose)
 
 
+@sync_app.command("sec-facts")
+def sync_sec_facts(
+    source: str = typer.Option("bulk", help="bulk (1.4 GB nightly archive, all CIKs at once) | api (per-CIK, 8 req/s)"),
+    verbose: bool = False,
+):
+    """SEC EDGAR company facts (shares outstanding, basic fundamentals) for every CIK in `securities`."""
+    from collective_alpha.data.sec.provider import SecProvider
+
+    _setup_logging(verbose)
+    p = SecProvider()
+    run_id = p.manifest.start_run(f"sync sec-facts {source}")
+    try:
+        res = p.sync_facts(source=source)
+        p.manifest.finish_run(run_id, "ok", json.dumps(res, default=str))
+        console.print_json(json.dumps(res, default=str))
+    except Exception as e:
+        p.manifest.finish_run(run_id, "error", str(e))
+        raise
+    finally:
+        p.close()
+
+
 @sync_app.command("corporate-actions")
 def sync_ca(verbose: bool = False):
     """Splits, dividends, IPOs."""
