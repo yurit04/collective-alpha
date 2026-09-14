@@ -82,6 +82,13 @@ class Catalog:
             self._register(monthly, monthly, 2)
         self._register("universes", "universes", 2)  # hive: name, year
         self._register("panel", "panel", 1)  # hive: year
+        fdir = self.s.curated_dir / "features"
+        if fdir.exists():
+            for g in sorted(p for p in fdir.iterdir() if p.is_dir()):
+                if any(g.rglob("*.parquet")):
+                    self.con.execute(
+                        f"CREATE OR REPLACE VIEW features_{g.name} AS SELECT * FROM read_parquet('{g}/*/*.parquet', hive_partitioning=true, union_by_name=true)"
+                    )
         attrs = self.s.curated_dir / "security_attributes" / "data.parquet"
         if attrs.exists():
             self.con.execute(f"CREATE OR REPLACE VIEW security_attributes AS SELECT * FROM read_parquet('{attrs}')")
