@@ -57,6 +57,9 @@ class Catalog:
         self._register("quotes", "quotes", 2)
         for snap in (
             "tickers",
+            "tickers_pit",
+            "security_master",
+            "securities",
             "ticker_details",
             "ticker_types",
             "exchanges",

@@ -69,6 +69,26 @@ ca status [--errors]                      # manifest summary + disk free
 Every sync records what it fetched in `manifest.sqlite`; re-running only fetches what is missing or
 changed on the vendor side (size/etag).
 
+## Security master
+
+Tickers are reused and renamed (FB was Meta until 2022-06-08 and an ETF since 2025-06; META was an
+ETF until 2022-01-28), so every point-in-time join goes through `security_master`:
+
+```bash
+ca sync tickers-pit        # monthly point-in-time snapshots of active tickers (vendor `date=` filter)
+ca master build            # bars -> trading episodes -> identity per segment -> security_master + securities
+ca master lookup FB        # every security a ticker has referred to
+```
+
+* `security_master`: one row per (ticker, validity window) with `security_id`, identity source and attributes.
+  `security_id` is the composite FIGI when the vendor has one, else share-class FIGI, else `CIK:<cik>:<ticker>`,
+  else `SYM:<ticker>:<first date>` (exchange test symbols such as ZVZZT).
+* `securities`: one row per security with tickers used, first/last trade and delisting date.
+* Identity comes from the monthly snapshots; when it changes inside one trading episode the exact boundary
+  is pinned by bisecting dated ticker-detail lookups (cached under `raw/rest/ticker_details_pit`).
+* `collective_alpha.universe.security_master.map_to_security(df, master)` attaches `security_id` to any
+  frame with `ticker` and `date`.
+
 ## Research access
 
 ```python
@@ -90,6 +110,7 @@ src/collective_alpha/
   data/base.py         DataProvider interface (future vendors plug in here)
   data/massive/        auth, rest client, flat-file store, dataset specs, transforms, provider
   storage/             path layout, manifest ledger, parquet writer, DuckDB catalog
+  universe/            security master (ticker -> security id over time); universes next
 notebooks/inspection/  coverage & quality checks
 notebooks/research/    alpha research (start from the template)
 tests/                 offline unit tests
@@ -97,7 +118,7 @@ tests/                 offline unit tests
 
 ## Roadmap
 
-1. Universe construction and point-in-time daily panel (liquidity filters, delistings, adjustments).
+1. ~~Security master~~ done. Universe construction and point-in-time daily panel (liquidity filters, delistings, adjustments).
 2. Feature / signal library on daily and intraday bars, fundamentals-lite (float, short interest), news sentiment.
 3. Backtester: vectorised daily and intraday rebalance, costs, IC/turnover diagnostics, walk-forward.
 4. Portfolio construction and risk.

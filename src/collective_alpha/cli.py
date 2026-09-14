@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 from typing import Annotated
 
+import polars as pl
 import typer
 from rich.console import Console
 from rich.logging import RichHandler
@@ -18,6 +19,8 @@ from collective_alpha.config import get_settings
 app = typer.Typer(help="collective-alpha data platform", no_args_is_help=True)
 sync_app = typer.Typer(help="Sync datasets from Massive", no_args_is_help=True)
 app.add_typer(sync_app, name="sync")
+master_app = typer.Typer(help="Security master (ticker -> security id over time)", no_args_is_help=True)
+app.add_typer(master_app, name="master")
 console = Console()
 
 
@@ -130,6 +133,12 @@ def sync_details(verbose: bool = False):
     _run("sync details", lambda p: p.sync_ticker_details(), verbose)
 
 
+@sync_app.command("tickers-pit")
+def sync_tickers_pit(verbose: bool = False):
+    """Monthly point-in-time snapshots of active tickers (resolves symbol reuse)."""
+    _run("sync tickers-pit", lambda p: p.sync_tickers_pit(), verbose)
+
+
 @sync_app.command("corporate-actions")
 def sync_ca(verbose: bool = False):
     """Splits, dividends, IPOs."""
@@ -170,6 +179,27 @@ def sync_bars(
         f"sync bars {dataset}",
         lambda p: p.sync_bars(dataset, start.date() if start else None, end.date() if end else None, convert),
         verbose,
+    )
+
+
+@master_app.command("build")
+def master_build(gap_days: int = 30, verbose: bool = False):
+    """Build security_master + securities tables from bars, PIT ticker snapshots and dated lookups."""
+    from collective_alpha.universe.builder import build_security_master
+
+    _run("master build", lambda p: build_security_master(p, gap_days=gap_days), verbose)
+
+
+@master_app.command("lookup")
+def master_lookup(ticker: str):
+    """Show every security a ticker has referred to."""
+    from collective_alpha.universe.builder import load_master
+
+    m = load_master().filter(pl.col("ticker") == ticker.upper()).sort("valid_from")
+    console.print(
+        m.select("ticker", "security_id", "valid_from", "valid_to", "name", "type", "method")
+        .to_pandas()
+        .to_string(index=False)
     )
 
 
