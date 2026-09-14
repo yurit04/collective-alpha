@@ -81,6 +81,7 @@ class Catalog:
         for monthly in ("news", "short_interest", "short_volume"):
             self._register(monthly, monthly, 2)
         self._register("universes", "universes", 2)  # hive: name, year
+        self._register("panel", "panel", 1)  # hive: year
         attrs = self.s.curated_dir / "security_attributes" / "data.parquet"
         if attrs.exists():
             self.con.execute(f"CREATE OR REPLACE VIEW security_attributes AS SELECT * FROM read_parquet('{attrs}')")
