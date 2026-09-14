@@ -25,6 +25,8 @@ universe_app = typer.Typer(help="Point-in-time universes", no_args_is_help=True)
 app.add_typer(universe_app, name="universe")
 panel_app = typer.Typer(help="Daily security panel with split/dividend-aware returns", no_args_is_help=True)
 app.add_typer(panel_app, name="panel")
+features_app = typer.Typer(help="Feature groups (price, size, fund, short, news)", no_args_is_help=True)
+app.add_typer(features_app, name="features")
 console = Console()
 
 
@@ -274,6 +276,25 @@ def panel_check(threshold: float = 1.0):
     panel = load_panel()
     console.print_json(json.dumps(check_panel(panel), default=str))
     console.print(extreme_returns(panel, threshold).to_pandas().to_string(index=False))
+
+
+@features_app.command("build")
+def features_build(
+    group: str = typer.Argument("all", help="price | size | fund | short | news | all"), verbose: bool = False
+):
+    """Materialise feature groups under curated/features/<group>/year=YYYY."""
+    from collective_alpha.features.base import build_groups
+
+    groups = None if group == "all" else [group]
+    _run(f"features build {group}", lambda p: build_groups(groups, p.s), verbose)
+
+
+@features_app.command("list")
+def features_list():
+    """Built feature groups and their columns."""
+    from collective_alpha.features.base import list_features
+
+    console.print_json(json.dumps(list_features()))
 
 
 @app.command()

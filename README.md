@@ -155,6 +155,28 @@ Load with `collective_alpha.panel.build.load_panel(start, end, universe="liquid_
 date x security matrix with `to_wide(panel, "ret")`. `ca panel check` prints a sanity report and the
 largest absolute returns.
 
+## Features and signals
+
+Feature groups are materialised under `curated/features/<group>/year=YYYY` (views `features_<group>`).
+Every value at (security_id, date) uses only information known by that session's close.
+
+```bash
+ca features build all        # or one of: price size fund short news
+ca features list
+```
+
+| group | examples |
+|---|---|
+| price | `ret_{1,5,21,63,126,252}d`, `mom_12_1`, `vol_21d`, `vol_63d`, `parkinson_21d`, `max_ret_21d`, `dist_52w_high`, `gap_overnight`, `ret_intraday`, `adv_21d`, `amihud_21d`, `volume_ratio_21d`, `suspect_split_252d` |
+| size | `shares` (SEC, as-of filed date), `cap`, `log_cap`, `turnover_21d` |
+| fund | TTM `revenue_ttm`, `net_income_ttm`, `cfo_ttm` (Q4 derived from the 10-K), `equity`, `assets`, `earnings_yield`, `book_to_market`, `sales_to_price`, `cfo_yield`, `roe`, `asset_growth`, `accruals`, `leverage` |
+| short | `si_shares`, `si_ratio`, `si_days_to_cover`, `si_change` (settlement + 10-day publication lag), `sv_ratio`, `sv_ratio_5d`, `sv_ratio_21d` |
+| news | `news_count`, `news_count_5d`, `news_count_21d`, `news_sent_5d`, `news_sent_21d` (articles after 16:00 New York count toward the next session) |
+
+Load with `collective_alpha.features.base.load_features(["price", "size"], universe="liquid_1500")`.
+Cross-sectional transforms live in `features/signals.py`: `cs_rank`, `cs_zscore` (winsorised),
+`neutralize` (demean within a group such as a sector), `combine` (weighted z-score sum), `lag`.
+
 ## Research access
 
 ```python
@@ -179,6 +201,7 @@ src/collective_alpha/
   storage/             path layout, manifest ledger, parquet writer, DuckDB catalog
   universe/            security master, point-in-time attributes, universe builder, market cap
   panel/               corporate-action cleaning, daily panel with returns
+  features/            feature groups (price, size, fund, short, news) and signal transforms
 notebooks/inspection/  coverage & quality checks
 notebooks/research/    alpha research (start from the template)
 tests/                 offline unit tests
@@ -186,7 +209,7 @@ tests/                 offline unit tests
 
 ## Roadmap
 
-1. ~~Security master~~, ~~universe builder~~, ~~SEC shares feed~~ and ~~daily panel~~ done. Next: feature and signal library.
+1. ~~Security master~~, ~~universe builder~~, ~~SEC shares feed~~, ~~daily panel~~ and ~~feature library~~ done. Next: signal evaluation.
 2. Feature / signal library on daily and intraday bars, fundamentals-lite (float, short interest), news sentiment.
 3. Backtester: vectorised daily and intraday rebalance, costs, IC/turnover diagnostics, walk-forward.
 4. Portfolio construction and risk.
