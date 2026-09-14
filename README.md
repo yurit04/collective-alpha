@@ -177,6 +177,26 @@ Load with `collective_alpha.features.base.load_features(["price", "size"], unive
 Cross-sectional transforms live in `features/signals.py`: `cs_rank`, `cs_zscore` (winsorised),
 `neutralize` (demean within a group such as a sector), `combine` (weighted z-score sum), `lag`.
 
+## Signal evaluation
+
+```bash
+ca eval forward                                   # curated/forward_returns: close-to-close over 1..63 sessions,
+                                                  # next-day open->close and close->open; delisting handled
+ca eval feature mom_12_1 --universe liquid_1500 --horizon 21
+ca eval feature ret_5d --sign -1 --horizon 5      # short-term reversal
+ca eval feature earnings_yield --universe cap_1000 --horizon 21 --neutralize-by primary_exchange
+```
+
+`collective_alpha.eval` computes, for any long frame (security_id, date, signal): per-date rank IC with
+mean, IR, t-stat (scaled for overlapping horizons) and hit rate; IC decay across horizons; equal-weight
+quantile returns and the top-minus-bottom spread with annualised return, vol, Sharpe and drawdown;
+signal rank autocorrelation and top/bottom quantile turnover; IC by year; rolling walk-forward windows
+for model-based signals. `evaluate(signal, fwd)` returns a `SignalReport` with `to_markdown()` / `to_dict()`.
+
+Forward returns are what a position opened at the signal date's close earns. If a security stops
+trading inside the horizon the return compounds to its last bar and then a configurable
+`delist_return` (default 0). Rows too close to the end of the store are null, never truncated.
+
 ## Research access
 
 ```python
@@ -202,6 +222,7 @@ src/collective_alpha/
   universe/            security master, point-in-time attributes, universe builder, market cap
   panel/               corporate-action cleaning, daily panel with returns
   features/            feature groups (price, size, fund, short, news) and signal transforms
+  eval/                forward returns, IC / quantile / turnover diagnostics, signal reports
 notebooks/inspection/  coverage & quality checks
 notebooks/research/    alpha research (start from the template)
 tests/                 offline unit tests
@@ -209,7 +230,7 @@ tests/                 offline unit tests
 
 ## Roadmap
 
-1. ~~Security master~~, ~~universe builder~~, ~~SEC shares feed~~, ~~daily panel~~ and ~~feature library~~ done. Next: signal evaluation.
+1. ~~Security master~~, ~~universe builder~~, ~~SEC shares feed~~, ~~daily panel~~, ~~feature library~~ and ~~signal evaluation~~ done. Next: backtester.
 2. Feature / signal library on daily and intraday bars, fundamentals-lite (float, short interest), news sentiment.
 3. Backtester: vectorised daily and intraday rebalance, costs, IC/turnover diagnostics, walk-forward.
 4. Portfolio construction and risk.
