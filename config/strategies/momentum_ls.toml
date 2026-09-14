@@ -1,0 +1,19 @@
+# Example strategy: 12-1 momentum, sector-neutral long-short, monthly rebalance, paper broker.
+name = "momentum_ls"
+universe = "liquid_1500"
+rebalance = "monthly"
+capital = 100000
+broker = "paper"
+min_notional = 200
+
+[signals]            # feature = weight (negative flips the sign); several are z-scored and combined
+mom_12_1 = 1.0
+
+[portfolio]
+method = "heuristic"
+gross = 1.6
+net = 0.0
+max_weight = 0.03
+n_names = 100          # 50 longs / 50 shorts: a $100k book cannot hold 1,500 names above min_notional
+sector_neutral = true
+vol_target = 0.10

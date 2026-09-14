@@ -22,6 +22,7 @@ class PortfolioConfig:
     gross: float = 2.0
     net: float = 0.0
     max_weight: float = 0.03
+    n_names: int | None = None  # keep only the n/2 strongest longs and n/2 strongest shorts (after sector demeaning)
     sector_neutral: bool = True
     sector_band: float = 0.05  # mvo: |sector net exposure| <= band; heuristic: exact demeaning
     beta_band: float | None = 0.1  # mvo: |beta| <= band; heuristic: ignored
@@ -46,6 +47,17 @@ def _apply_cap_and_scale(w: np.ndarray, cap: float, gross: float, net: float) ->
             return clipped
         w = clipped
     return w
+
+
+def _keep_extremes(w: np.ndarray, n: int) -> np.ndarray:
+    """Zero everything except the n//2 largest and n//2 smallest values."""
+    half = max(n // 2, 1)
+    order = np.argsort(w)
+    keep = np.zeros_like(w, dtype=bool)
+    keep[order[:half]] = True
+    keep[order[-half:]] = True
+    out = np.where(keep, w, 0.0)
+    return out
 
 
 def heuristic_weights(
@@ -75,6 +87,9 @@ def heuristic_weights(
             else:
                 x[m] = 0.0
     w[ok] = x
+    if cfg.n_names and cfg.n_names < ok.sum():
+        w = _keep_extremes(w, cfg.n_names)
+        ok = w != 0
     if cfg.net:
         w[ok] += cfg.net / ok.sum() * (cfg.gross / 2)  # small tilt; rescaled below
     w = _apply_cap_and_scale(w, cfg.max_weight, cfg.gross, cfg.net)
@@ -107,6 +122,10 @@ def mvo_weights(
     import cvxpy as cp
 
     N = alpha.shape[0]
+    if cfg.n_names and np.sum(~np.isnan(alpha)) > cfg.n_names:
+        a0 = np.where(np.isnan(alpha), 0.0, alpha - np.nanmean(alpha))
+        kept = _keep_extremes(a0, cfg.n_names) != 0
+        alpha = np.where(kept, alpha, np.nan)
     ok = ~np.isnan(alpha)
     a = np.nan_to_num(alpha, nan=0.0)
     # standardise alpha so risk_aversion has a stable meaning
