@@ -138,6 +138,23 @@ ca sync sec-facts --source api    # per-CIK API instead (8 req/s), for small inc
 * Cap-ranked universes (`cap_1000`, `cap_3000`) use `rank_by = "cap"`; issuers without a usable share
   count are excluded rather than guessed.
 
+## Daily panel
+
+`ca panel build` writes `curated/panel/year=YYYY` (view `panel`): one row per (security_id, date) with
+unadjusted bars plus split/dividend-aware fields:
+
+* `split_ratio` (new shares per old, effective that session), `dividend` (USD cash per share going ex)
+* `ret` total return `(close * split_ratio + dividend) / prev_close - 1`; `ret_px` without dividends
+* `adj_close` split-adjusted close on today's share basis; `tr_index` total-return index per security
+* `gap_sessions` sessions since the previous bar; `is_last_trade` marks the final bar (delisting or data end)
+* `suspect_split` flags whole-day price level shifts (>= 2.5x, both open and close) with no split on record:
+  reverse splits the vendor missed. Drop or winsorise those returns in research code.
+
+Cash dividends larger than 50% of the previous close are treated as data errors and dropped.
+Load with `collective_alpha.panel.build.load_panel(start, end, universe="liquid_1500")`, and pivot to a
+date x security matrix with `to_wide(panel, "ret")`. `ca panel check` prints a sanity report and the
+largest absolute returns.
+
 ## Research access
 
 ```python
@@ -160,7 +177,8 @@ src/collective_alpha/
   data/massive/        auth, rest client, flat-file store, dataset specs, transforms, provider
   data/sec/            EDGAR client, companyfacts parser, provider
   storage/             path layout, manifest ledger, parquet writer, DuckDB catalog
-  universe/            security master, point-in-time attributes, universe builder
+  universe/            security master, point-in-time attributes, universe builder, market cap
+  panel/               corporate-action cleaning, daily panel with returns
 notebooks/inspection/  coverage & quality checks
 notebooks/research/    alpha research (start from the template)
 tests/                 offline unit tests
@@ -168,7 +186,7 @@ tests/                 offline unit tests
 
 ## Roadmap
 
-1. ~~Security master~~, ~~universe builder~~ and ~~SEC shares feed~~ done. Next: adjusted price panel and returns.
+1. ~~Security master~~, ~~universe builder~~, ~~SEC shares feed~~ and ~~daily panel~~ done. Next: feature and signal library.
 2. Feature / signal library on daily and intraday bars, fundamentals-lite (float, short interest), news sentiment.
 3. Backtester: vectorised daily and intraday rebalance, costs, IC/turnover diagnostics, walk-forward.
 4. Portfolio construction and risk.

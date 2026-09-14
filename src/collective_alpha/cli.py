@@ -23,6 +23,8 @@ master_app = typer.Typer(help="Security master (ticker -> security id over time)
 app.add_typer(master_app, name="master")
 universe_app = typer.Typer(help="Point-in-time universes", no_args_is_help=True)
 app.add_typer(universe_app, name="universe")
+panel_app = typer.Typer(help="Daily security panel with split/dividend-aware returns", no_args_is_help=True)
+app.add_typer(panel_app, name="panel")
 console = Console()
 
 
@@ -254,6 +256,24 @@ def universe_stats_cmd(name: str):
 
     st = universe_stats(load_universe(get_settings(), name))
     console.print(st.to_pandas().to_string(index=False))
+
+
+@panel_app.command("build")
+def panel_build(verbose: bool = False):
+    """Build curated/panel/year=YYYY from bars, security master, splits and dividends."""
+    from collective_alpha.panel.build import build_and_write
+
+    _run("panel build", lambda p: build_and_write(p.s), verbose)
+
+
+@panel_app.command("check")
+def panel_check(threshold: float = 1.0):
+    """Sanity report and the largest absolute returns."""
+    from collective_alpha.panel.build import check_panel, extreme_returns, load_panel
+
+    panel = load_panel()
+    console.print_json(json.dumps(check_panel(panel), default=str))
+    console.print(extreme_returns(panel, threshold).to_pandas().to_string(index=False))
 
 
 @app.command()
