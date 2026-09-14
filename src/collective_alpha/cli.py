@@ -29,6 +29,8 @@ features_app = typer.Typer(help="Feature groups (price, size, fund, short, news)
 app.add_typer(features_app, name="features")
 eval_app = typer.Typer(help="Signal evaluation", no_args_is_help=True)
 app.add_typer(eval_app, name="eval")
+bt_app = typer.Typer(help="Backtests", no_args_is_help=True)
+app.add_typer(bt_app, name="backtest")
 console = Console()
 
 
@@ -339,6 +341,53 @@ def eval_feature(
         console.print_json(json.dumps(rep.to_dict(), default=str))
     else:
         console.print(rep.to_markdown())
+
+
+@bt_app.command("feature")
+def backtest_feature_cmd(
+    feature: str,
+    universe: str = "liquid_1500",
+    sign: float = 1.0,
+    scheme: str = typer.Option("ls_quantile", help="ls_quantile | long_top | signal_weighted"),
+    rebalance: str = typer.Option("21", help="sessions between rebalances, or monthly/weekly"),
+    quantiles: int = 10,
+    gross: float = 2.0,
+    max_weight: float = 0.05,
+    delay: int = 1,
+    commission_bps: float = 0.5,
+    half_spread_bps: float = 3.0,
+    slippage_bps: float = 2.0,
+    borrow_rate: float = 0.005,
+    impact: bool = typer.Option(False, help="square-root impact on ADV participation (needs price features)"),
+    start: DateOpt = None,
+    end: DateOpt = None,
+    as_json: bool = False,
+):
+    """Backtest a feature as a signal with a simple portfolio scheme and cost model."""
+    from collective_alpha.backtest.engine import CostModel
+    from collective_alpha.backtest.run import backtest_feature
+
+    _setup_logging(False)
+    rb: int | str = int(rebalance) if rebalance.isdigit() else rebalance
+    res = backtest_feature(
+        feature,
+        universe,
+        sign,
+        scheme,
+        rb,
+        quantiles,
+        gross,
+        max_weight,
+        CostModel(commission_bps, half_spread_bps, slippage_bps, borrow_rate, 0.1 if impact else 0.0),
+        delay,
+        start.date() if start else None,
+        end.date() if end else None,
+        impact,
+    )
+    if as_json:
+        console.print_json(json.dumps({"summary": res.summary(), "by_year": res.by_year().to_dicts()}, default=str))
+    else:
+        console.print(res.to_markdown())
 
 
 @app.command()
