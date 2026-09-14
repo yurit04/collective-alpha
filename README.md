@@ -222,6 +222,31 @@ Sanity on the store (liquid_1500, 2022-2026, default costs): 12-1 momentum decil
 ~13% net with Sharpe ~0.45 and 1.1% cost drag; 5-day reversal rebalanced weekly loses money after ~9% of
 annual costs.
 
+## Portfolio construction and risk
+
+```bash
+ca portfolio feature mom_12_1 --universe liquid_1500 --vol-target 0.10                 # heuristic (default)
+ca portfolio feature mom_12_1 --method mvo --vol-target 0.10 --turnover-penalty 0.002  # mean-variance (cvxpy)
+```
+
+* **risk model** (`portfolio/risk.py`): statistical factor model refit at every rebalance on a trailing
+  window (default 252 sessions): PCA factors (default 10) plus diagonal idiosyncratic variance with a
+  shrinkage floor, and each name's beta to the equal-weight universe. Gives predicted portfolio vol,
+  factor exposures and beta.
+* **sectors** (`portfolio/sectors.py`): Fama-French 12 industries from SIC codes; `Unknown` when the
+  vendor has none (about a fifth of names, mostly delisted).
+* **heuristic** construction: demeaned cross-sectional rank, sector-demeaned, per-name cap, per-leg scaling
+  to gross/net (iterated so caps and sector neutrality hold together), optional ADV participation cap,
+  then scaled down to a volatility target using the risk model.
+* **mvo** construction: maximise alpha'w - lambda w'Sigma w - tau |w - w_prev|_1 subject to net, gross,
+  per-name cap, sector bands, beta band and liquidity caps, solved with Clarabel; falls back to the
+  heuristic if the solver fails.
+* `portfolio/run.py` runs the rebalance loop, hands targets to the backtest engine and reports
+  exposures per rebalance (names, gross, net, predicted vol, beta, turnover, max weight, max sector).
+
+Note: predicted vol from the statistical model runs below realised vol (roughly half on liquid_1500);
+size the vol target accordingly or use it as a relative rather than absolute control.
+
 ## Research access
 
 ```python
@@ -249,6 +274,7 @@ src/collective_alpha/
   features/            feature groups (price, size, fund, short, news) and signal transforms
   eval/                forward returns, IC / quantile / turnover diagnostics, signal reports
   backtest/            weight schemes, vectorised daily engine with costs, feature backtests
+  portfolio/           sectors, statistical risk model, heuristic and mean-variance construction
 notebooks/inspection/  coverage & quality checks
 notebooks/research/    alpha research (start from the template)
 tests/                 offline unit tests
@@ -256,7 +282,7 @@ tests/                 offline unit tests
 
 ## Roadmap
 
-1. ~~Security master~~, ~~universe builder~~, ~~SEC shares feed~~, ~~daily panel~~, ~~feature library~~, ~~signal evaluation~~ and ~~backtester~~ done. Next: portfolio construction and risk.
+1. ~~Security master~~, ~~universe builder~~, ~~SEC shares feed~~, ~~daily panel~~, ~~feature library~~, ~~signal evaluation~~, ~~backtester~~ and ~~portfolio construction~~ done. Next: execution and paper trading.
 2. Feature / signal library on daily and intraday bars, fundamentals-lite (float, short interest), news sentiment.
 3. Backtester: vectorised daily and intraday rebalance, costs, IC/turnover diagnostics, walk-forward.
 4. Portfolio construction and risk.
