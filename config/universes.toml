@@ -1,0 +1,30 @@
+# Named universes built by `ca universe build`. All thresholds apply to data through the prior close.
+
+[universe.all_common]
+types = ["CS", "ADRC"]
+exchanges = ["XNYS", "XNAS", "XASE"]
+min_price = 1.0
+min_adv = 100000
+adv_window = 20
+min_history_days = 20
+
+[universe.liquid_3000]
+min_price = 2.0
+min_adv = 500000
+top_n = 3000
+exit_n = 3600
+one_class_per_issuer = true
+
+[universe.liquid_1500]
+min_price = 5.0
+min_adv = 2000000
+top_n = 1500
+exit_n = 1900
+one_class_per_issuer = true
+
+[universe.liquid_500]
+min_price = 5.0
+min_adv = 10000000
+top_n = 500
+exit_n = 650
+one_class_per_issuer = true

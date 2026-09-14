@@ -23,7 +23,18 @@ def test_convert_minute_bars(tmp_path):
     n = convert_flatfile(src, "minute_aggs_v1", dt.date(2024, 4, 5), dest)
     df = pl.read_parquet(dest)
     assert n == df.height == 4
-    assert df.columns[:10] == ["ticker", "date", "ts", "ts_ny", "open", "high", "low", "close", "volume", "transactions"]
+    assert df.columns[:10] == [
+        "ticker",
+        "date",
+        "ts",
+        "ts_ny",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "transactions",
+    ]
     assert "window_start" not in df.columns
     # 2024-04-05 13:30 UTC == 09:30 New York (EDT)
     aapl = df.filter(pl.col("ticker") == "AAPL").sort("ts")
