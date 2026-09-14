@@ -304,6 +304,61 @@ class MassiveProvider(DataProvider):
             log.info("%s %s: %d rows", key, part, n)
         return out
 
+    # ------------------------------------------------------------------ point-in-time reference
+    def pit_dates(self, start: dt.date | None = None, end: dt.date | None = None) -> list[dt.date]:
+        """First trading day of every month in [start, end] plus the last trading day."""
+        start = start or self.horizon
+        end = end or previous_trading_day()
+        days = trading_days(start, end)
+        firsts: dict[tuple[int, int], dt.date] = {}
+        for d in days:
+            firsts.setdefault((d.year, d.month), d)
+        out = sorted(firsts.values())
+        if days and days[-1] not in out:
+            out.append(days[-1])
+        return out
+
+    def sync_tickers_pit(self, dates: list[dt.date] | None = None, refresh_last: bool = True) -> dict[str, int]:
+        """Active stock tickers *as of* each date (vendor `date=` filter). One snapshot per date under
+        curated/tickers_pit/asof=YYYY-MM-DD. This is what makes symbol reuse resolvable."""
+        dates = dates or self.pit_dates()
+        out: dict[str, int] = {}
+        for i, d in enumerate(dates):
+            part = f"asof={d:%Y-%m-%d}"
+            mkey = f"rest/tickers_pit/{part}"
+            raw = layout.raw_rest_path(self.s, "tickers_pit", part)
+            dest = layout.curated_snapshot_path(self.s, "tickers_pit", d)
+            is_last = i == len(dates) - 1
+            if dest.exists() and self.manifest.is_converted(mkey) and not (is_last and refresh_last):
+                continue
+            params = {"market": "stocks", "active": "true", "date": d.isoformat(), "limit": 1000}
+            pages = self.rest.fetch_all_pages("/v3/reference/tickers", params)
+            save_pages(pages, raw)
+            self.manifest.mark_downloaded(mkey, "rest", "tickers_pit", d.isoformat(), raw.stat().st_size, None)
+            df = records_to_frame(flatten_results(pages), asof=d)
+            n = write_parquet_atomic(df, dest) if df.height else 0
+            self.manifest.mark_converted(mkey, dest, n)
+            out[d.isoformat()] = n
+            log.info("tickers_pit %s: %d rows", d, n)
+        return out
+
+    def ticker_details_pit(self, ticker: str, date: dt.date) -> dict[str, Any] | None:
+        """Ticker details as of a date (works for delisted names). Disk-cached; None if unknown."""
+        safe = ticker.replace("/", "_")
+        raw = self.s.raw_dir / "rest" / "ticker_details_pit" / safe / f"{date:%Y-%m-%d}.json.gz"
+        if raw.exists():
+            pages = load_pages(raw)
+            return pages[0].get("results") if pages else None
+        try:
+            page = self.rest.get_json(f"/v3/reference/tickers/{ticker}", {"date": date.isoformat()})
+        except MassiveHTTPError as e:
+            if e.status == 404:
+                page = {"results": None, "status": "NOT_FOUND"}
+            else:
+                raise
+        save_pages([page], raw)
+        return page.get("results")
+
     # ------------------------------------------------------------------ flat files
     def sync_bars(
         self, dataset: str, start: dt.date | None = None, end: dt.date | None = None, convert: bool | None = None
@@ -373,6 +428,7 @@ class MassiveProvider(DataProvider):
         out: dict[str, Any] = {}
         out["reference"] = self.sync_reference(details=False)
         out["corporate_actions"] = self.sync_corporate_actions()
+        out["tickers_pit"] = self.sync_tickers_pit()
         for ds in self.s.flatfile_datasets:
             out[ds] = self.sync_bars(ds)
         for key in ("news", "short_interest", "short_volume"):
@@ -391,6 +447,7 @@ class MassiveProvider(DataProvider):
             out[ds] = self.sync_bars(ds, start, end)
         out["reference"] = self.sync_reference(details=details)
         out["corporate_actions"] = self.sync_corporate_actions()
+        out["tickers_pit"] = self.sync_tickers_pit()
         for key in ("news", "short_interest", "short_volume"):
             out[key] = self.sync_monthly(key, start=start.replace(day=1))
         return out
