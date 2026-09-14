@@ -247,6 +247,34 @@ ca portfolio feature mom_12_1 --method mvo --vol-target 0.10 --turnover-penalty 
 Note: predicted vol from the statistical model runs below realised vol (roughly half on liquid_1500);
 size the vol target accordingly or use it as a relative rather than absolute control.
 
+## Execution and paper trading
+
+Strategies are TOML files in `config/strategies/` (signals as feature weights, universe, rebalance
+schedule, portfolio settings, capital, broker). The pipeline runs once per session after the store
+is refreshed:
+
+```bash
+ca trade run momentum_ls                 # fill pending orders at today's open, mark at the close,
+                                         # rebalance if due (orders execute at the next open)
+ca trade replay momentum_ls --start 2026-06-01 --end 2026-09-11   # seed / audit a paper book
+ca trade status momentum_ls
+ca trade export momentum_ls --path orders.csv   # pending orders for manual execution at a broker
+```
+
+* `execution/orders.py`: orders, fills, position accounting, target weights -> integer share orders
+  (closes names that left the targets, skips trades below `min_notional`)
+* `execution/broker.py`: `Broker` interface and `PaperBroker`, a SQLite ledger under
+  `<data_root>/paper/<strategy>.sqlite` with positions, orders, fills and a daily NAV series; fills at
+  the next open with slippage and commission
+* `execution/strategy.py`: strategy config, signal from one or several features (z-scored and combined),
+  target weights for a date via the portfolio module and a risk model fitted on trailing returns
+* `execution/pipeline.py`: session runner, replay, status, CSV export
+* `scripts/daily_update.sh` chains the nightly refresh: update -> master -> universes -> panel ->
+  features -> forward returns -> every strategy in `config/strategies/`
+
+Live broker adapters are not implemented; `broker = "paper"` is the only value. The CSV export is the
+bridge to a real account until one is added.
+
 ## Research access
 
 ```python
@@ -275,6 +303,7 @@ src/collective_alpha/
   eval/                forward returns, IC / quantile / turnover diagnostics, signal reports
   backtest/            weight schemes, vectorised daily engine with costs, feature backtests
   portfolio/           sectors, statistical risk model, heuristic and mean-variance construction
+  execution/           orders, paper broker ledger, strategy configs, daily trading pipeline
 notebooks/inspection/  coverage & quality checks
 notebooks/research/    alpha research (start from the template)
 tests/                 offline unit tests
@@ -282,7 +311,7 @@ tests/                 offline unit tests
 
 ## Roadmap
 
-1. ~~Security master~~, ~~universe builder~~, ~~SEC shares feed~~, ~~daily panel~~, ~~feature library~~, ~~signal evaluation~~, ~~backtester~~ and ~~portfolio construction~~ done. Next: execution and paper trading.
+1. All planned layers are in place: security master, universes, SEC feed, panel, features, evaluation, backtester, portfolio construction, paper execution. Next candidates: a live broker adapter, intraday features from minute bars, more fundamental concepts.
 2. Feature / signal library on daily and intraday bars, fundamentals-lite (float, short interest), news sentiment.
 3. Backtester: vectorised daily and intraday rebalance, costs, IC/turnover diagnostics, walk-forward.
 4. Portfolio construction and risk.

@@ -33,6 +33,8 @@ bt_app = typer.Typer(help="Backtests", no_args_is_help=True)
 app.add_typer(bt_app, name="backtest")
 pf_app = typer.Typer(help="Portfolio construction with a risk model", no_args_is_help=True)
 app.add_typer(pf_app, name="portfolio")
+trade_app = typer.Typer(help="Paper/live trading pipeline", no_args_is_help=True)
+app.add_typer(trade_app, name="trade")
 console = Console()
 
 
@@ -450,6 +452,52 @@ def portfolio_feature_cmd(
     else:
         console.print(res.to_markdown())
         console.print_json(json.dumps(exposure_report(diag), default=str))
+
+
+@trade_app.command("run")
+def trade_run(strategy: str, date: DateOpt = None, force_rebalance: bool = False, verbose: bool = False):
+    """Run one session: fill pending orders at the open, mark at the close, rebalance if due."""
+    from collective_alpha.execution.pipeline import run_session
+    from collective_alpha.execution.strategy import StrategyConfig
+
+    _setup_logging(verbose)
+    cfg = StrategyConfig.load(strategy)
+    console.print_json(
+        json.dumps(run_session(cfg, date.date() if date else None, force_rebalance=force_rebalance), default=str)
+    )
+
+
+@trade_app.command("replay")
+def trade_replay(strategy: str, start: DateOpt = None, end: DateOpt = None, verbose: bool = False):
+    """Replay the pipeline over past sessions on the paper broker."""
+    from collective_alpha.execution.pipeline import nav_frame, replay
+    from collective_alpha.execution.strategy import StrategyConfig
+
+    _setup_logging(verbose)
+    cfg = StrategyConfig.load(strategy)
+    res = replay(cfg, start.date(), end.date())
+    errs = [r for r in res if "error" in r]
+    console.print(f"{len(res)} sessions, {len(errs)} errors, {sum(1 for r in res if r.get('rebalance'))} rebalances")
+    console.print(nav_frame(cfg).tail(5).to_pandas().to_string(index=False))
+
+
+@trade_app.command("status")
+def trade_status(strategy: str):
+    """Paper book status."""
+    from collective_alpha.execution.pipeline import status
+    from collective_alpha.execution.strategy import StrategyConfig
+
+    console.print_json(json.dumps(status(StrategyConfig.load(strategy)), default=str))
+
+
+@trade_app.command("export")
+def trade_export(strategy: str, path: Path = Path("orders.csv")):
+    """Export pending orders to CSV for manual execution at a broker."""
+    from collective_alpha.execution.pipeline import export_orders
+    from collective_alpha.execution.strategy import StrategyConfig
+
+    n = export_orders(StrategyConfig.load(strategy), path)
+    console.print(f"{n} pending orders written to {path}")
 
 
 @app.command()

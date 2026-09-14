@@ -94,3 +94,13 @@ def test_mvo_weights_constraints():
     w_pen = mvo_weights(alpha2, sectors, cfg_t, rm, prev)
     assert np.abs(w_pen - prev).sum() < np.abs(w_free - prev).sum()
     assert build_weights(alpha, sectors, PortfolioConfig(), rm).shape == (N,)
+
+
+def test_n_names_concentration():
+    rng = np.random.default_rng(3)
+    alpha = rng.normal(size=200)
+    cfg = PortfolioConfig(gross=2.0, max_weight=0.06, n_names=40, sector_neutral=False)
+    w = heuristic_weights(alpha, None, cfg)
+    assert (w != 0).sum() == 40 and (w > 0).sum() == 20 and (w < 0).sum() == 20
+    assert abs(np.abs(w).sum() - 2.0) < 1e-4 and abs(w.sum()) < 1e-4
+    assert set(np.argsort(alpha)[-20:]) == set(np.nonzero(w > 0)[0])
