@@ -21,6 +21,8 @@ sync_app = typer.Typer(help="Sync datasets from Massive", no_args_is_help=True)
 app.add_typer(sync_app, name="sync")
 master_app = typer.Typer(help="Security master (ticker -> security id over time)", no_args_is_help=True)
 app.add_typer(master_app, name="master")
+universe_app = typer.Typer(help="Point-in-time universes", no_args_is_help=True)
+app.add_typer(universe_app, name="universe")
 console = Console()
 
 
@@ -201,6 +203,35 @@ def master_lookup(ticker: str):
         .to_pandas()
         .to_string(index=False)
     )
+
+
+@universe_app.command("build")
+def universe_build(
+    name: str = typer.Argument("all", help="universe name from config/universes.toml, or 'all'"), verbose: bool = False
+):
+    """Build daily membership tables (curated/universes/name=<name>/year=YYYY)."""
+    from collective_alpha.universe.attributes import build_security_attributes
+    from collective_alpha.universe.builder import _all_snapshots, load_master, load_securities
+    from collective_alpha.universe.universes import build_and_write, load_specs
+
+    def run(p):
+        s = p.s
+        master, securities = load_master(s), load_securities(s)
+        attrs = build_security_attributes(s, master, _all_snapshots(s, "tickers_pit"))
+        specs = load_specs()
+        names = list(specs) if name == "all" else [name]
+        return {n: build_and_write(s, specs[n], master, attrs, securities) for n in names}
+
+    _run(f"universe build {name}", run, verbose)
+
+
+@universe_app.command("stats")
+def universe_stats_cmd(name: str):
+    """Members and turnover per rebalance."""
+    from collective_alpha.universe.universes import load_universe, universe_stats
+
+    st = universe_stats(load_universe(get_settings(), name))
+    console.print(st.to_pandas().to_string(index=False))
 
 
 @app.command()

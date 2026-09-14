@@ -89,6 +89,29 @@ ca master lookup FB        # every security a ticker has referred to
 * `collective_alpha.universe.security_master.map_to_security(df, master)` attaches `security_id` to any
   frame with `ticker` and `date`.
 
+## Universes
+
+Named, point-in-time universes are defined in `config/universes.toml` and built with:
+
+```bash
+ca universe build all          # or a single name
+ca universe stats liquid_1500  # members and turnover per rebalance
+```
+
+Rules (all evaluated with data through the *previous* close):
+
+* eligibility from point-in-time attributes: type in (CS, ADRC), primary exchange in (NYSE, Nasdaq, NYSE American)
+* last close >= `min_price`, average dollar volume over `adv_window` sessions >= `min_adv`,
+  at least `min_history_days` sessions of history, traded within the last 5 sessions
+* optional `one_class_per_issuer`: keep the most liquid share class per CIK
+* ranked by average dollar volume; enter at rank <= `top_n`, stay while rank <= `exit_n` (hysteresis)
+* monthly rebalance on the first session; membership frozen in between except delistings, which drop
+  the security the day after its last trade
+
+Output: `curated/universes/name=<name>/year=YYYY/data.parquet` with one row per (date, security_id)
+plus rank, lagged ADV and close, rebalance date and an `is_new` flag. Query via the `universes` view
+(`where name = 'liquid_1500'`), or `collective_alpha.universe.universes.load_universe`.
+
 ## Research access
 
 ```python
@@ -110,7 +133,7 @@ src/collective_alpha/
   data/base.py         DataProvider interface (future vendors plug in here)
   data/massive/        auth, rest client, flat-file store, dataset specs, transforms, provider
   storage/             path layout, manifest ledger, parquet writer, DuckDB catalog
-  universe/            security master (ticker -> security id over time); universes next
+  universe/            security master, point-in-time attributes, universe builder
 notebooks/inspection/  coverage & quality checks
 notebooks/research/    alpha research (start from the template)
 tests/                 offline unit tests
@@ -118,7 +141,7 @@ tests/                 offline unit tests
 
 ## Roadmap
 
-1. ~~Security master~~ done. Universe construction and point-in-time daily panel (liquidity filters, delistings, adjustments).
+1. ~~Security master~~ and ~~universe builder~~ done. Next: SEC shares outstanding feed for cap-ranked universes.
 2. Feature / signal library on daily and intraday bars, fundamentals-lite (float, short interest), news sentiment.
 3. Backtester: vectorised daily and intraday rebalance, costs, IC/turnover diagnostics, walk-forward.
 4. Portfolio construction and risk.
