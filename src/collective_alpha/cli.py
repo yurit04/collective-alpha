@@ -365,6 +365,9 @@ def backtest_feature_cmd(
     slippage_bps: float = 2.0,
     borrow_rate: float = 0.005,
     impact: bool = typer.Option(False, help="square-root impact on ADV participation (needs price features)"),
+    spreads: bool = typer.Option(
+        False, help="per-name estimated spreads instead of the flat half-spread (needs intra features)"
+    ),
     start: DateOpt = None,
     end: DateOpt = None,
     as_json: bool = False,
@@ -389,6 +392,7 @@ def backtest_feature_cmd(
         start.date() if start else None,
         end.date() if end else None,
         impact,
+        spreads,
     )
     if as_json:
         console.print_json(json.dumps({"summary": res.summary(), "by_year": res.by_year().to_dicts()}, default=str))

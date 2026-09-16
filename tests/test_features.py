@@ -196,3 +196,64 @@ def test_quarterly_flows_from_ytd_periods():
     assert q["val"].to_list() == [10.0, 20.0, 30.0, 40.0, 15.0]
     assert q["filed"].to_list() == [D(2023, 5, 1), D(2023, 8, 1), D(2023, 11, 1), D(2024, 2, 15), D(2024, 5, 1)]
     assert ttm(q)["ttm"].to_list() == [100.0, 105.0]
+
+
+def _intraday_frame(sid: str, n: int, **cols) -> pl.DataFrame:
+    days = SESSIONS[:n]
+    base = {
+        "security_id": [sid] * n,
+        "date": days,
+        "rv_5m": [0.01] * n,
+        "spread_est": [0.0005] * n,
+        "bar_coverage": [1.0] * n,
+        "close_to_vwap": [0.0] * n,
+        "share_open30": [0.2] * n,
+        "share_close30": [0.2] * n,
+        "share_auction": [0.01] * n,
+        "share_pre": [0.02] * n,
+        "share_post": [0.02] * n,
+        "or_range_pct": [0.01] * n,
+        "close_vs_or": [0.5] * n,
+        "ret_open30": [0.001] * n,
+        "ret_close30": [0.001] * n,
+    }
+    base.update({k: (v if isinstance(v, list) else [v] * n) for k, v in cols.items()})
+    return pl.DataFrame(base)
+
+
+def test_intraday_features_rolling_and_ratio():
+    from collective_alpha.features.intraday import intraday_features
+
+    n = 40
+    rv = [0.01] * (n - 1) + [0.05]  # a volatility spike on the last day
+    intra = _intraday_frame("S", n, rv_5m=rv)
+    panel = _panel("S", [100.0 * (1.001**i) for i in range(n)]).select(
+        "security_id", "date", "open", "close", "prev_close", "split_ratio"
+    )
+    f = intraday_features(intra, panel).sort("date")
+    last = f.row(-1, named=True)
+    assert abs(last["rv_21d"] - (20 * 0.01 + 0.05) / 21) < 1e-12
+    assert last["rv_ratio"] > 4  # the spike shows up against its own trailing level
+    assert abs(last["spread_21d"] - 0.0005) < 1e-12
+    early = f.row(2, named=True)
+    assert early["rv_21d"] is None  # not enough history yet
+
+
+def test_overnight_intraday_split_is_split_adjusted():
+    from collective_alpha.features.intraday import intraday_features
+
+    n = 30
+    closes = [100.0] * n
+    panel = _panel("S", closes).select("security_id", "date", "open", "close", "prev_close", "split_ratio")
+    # a 2-for-1 on day 10: the panel's raw open halves, and the split ratio must undo it
+    idx = 10
+    panel = panel.with_columns(
+        open=pl.when(pl.int_range(pl.len()) >= idx).then(50.0).otherwise(100.0),
+        close=pl.when(pl.int_range(pl.len()) >= idx).then(50.0).otherwise(100.0),
+        prev_close=pl.when(pl.int_range(pl.len()) > idx).then(50.0).otherwise(100.0),
+        split_ratio=pl.when(pl.int_range(pl.len()) == idx).then(2.0).otherwise(1.0),
+    )
+    f = intraday_features(_intraday_frame("S", n), panel).sort("date")
+    on = f["overnight"].to_list()
+    assert abs(on[idx]) < 1e-12  # split day: no spurious -50% overnight gap
+    assert all(abs(x) < 1e-12 for x in on[1:] if x is not None)

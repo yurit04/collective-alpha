@@ -23,6 +23,7 @@ def backtest_signal(
     start: dt.date | None = None,
     end: dt.date | None = None,
     use_impact: bool = False,
+    use_spreads: bool = False,
 ) -> BacktestResult:
     """signal: (security_id, date, signal) restricted to the tradable universe."""
     from collective_alpha.panel.build import load_panel
@@ -53,7 +54,24 @@ def backtest_signal(
             .rename({"adv_21d": "adv"})
             .filter(pl.col("security_id").is_in(ids))
         )
-    return run_backtest(w, panel, config, adv)
+    spreads = estimated_spreads(s, ids, start, end) if use_spreads else None
+    return run_backtest(w, panel, config, adv, spreads=spreads)
+
+
+def estimated_spreads(
+    settings: Settings, ids, start: dt.date | None = None, end: dt.date | None = None
+) -> pl.DataFrame:
+    """Per-name round-trip spread in basis points, from the intraday feature group. The 21-day
+    median is used where available (stable), today's estimate otherwise."""
+    from collective_alpha.features.base import load_features
+
+    f = load_features(["intra"], settings, start, end, columns=["spread_21d", "spread_est"])
+    return (
+        f.filter(pl.col("security_id").is_in(ids))
+        .with_columns(spread_bps=pl.coalesce(pl.col("spread_21d"), pl.col("spread_est")) * 1e4)
+        .filter(pl.col("spread_bps").is_not_null())
+        .select("security_id", "date", "spread_bps")
+    )
 
 
 def backtest_feature(
@@ -70,6 +88,7 @@ def backtest_feature(
     start: dt.date | None = None,
     end: dt.date | None = None,
     use_impact: bool = False,
+    use_spreads: bool = False,
     settings: Settings | None = None,
 ) -> BacktestResult:
     from collective_alpha.features.base import list_features, load_features
@@ -81,4 +100,6 @@ def backtest_feature(
     f = load_features([groups[0]], s, start, end, universe=universe, columns=[feature])
     sig = f.with_columns(signal=pl.col(feature) * sign).select("security_id", "date", "signal")
     cfg = BacktestConfig(delay=delay, costs=costs or CostModel())
-    return backtest_signal(sig, scheme, rebalance, n_quantiles, gross, max_weight, cfg, s, start, end, use_impact)
+    return backtest_signal(
+        sig, scheme, rebalance, n_quantiles, gross, max_weight, cfg, s, start, end, use_impact, use_spreads
+    )

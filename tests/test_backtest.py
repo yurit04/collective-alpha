@@ -83,3 +83,23 @@ def test_engine_impact_cost():
     cfg = BacktestConfig(delay=0, capital=1_000_000, costs=CostModel(0, 0, 0, 0, impact_coef=0.1))
     d = run_backtest(tgt, panel, cfg, adv).daily.sort("date")
     assert abs(d["cost"][0] - 0.1 * (0.25**0.5)) < 1e-12  # participation 25%
+
+
+def test_per_name_spreads_replace_the_flat_half_spread():
+    """A cheap name and an expensive one, traded equally: cost must follow each name's own spread,
+    and names without an estimate must fall back to the flat assumption."""
+    panel = _panel({"CHEAP": [0.0] * 4, "WIDE": [0.0] * 4, "UNKNOWN": [0.0] * 4})
+    tgt = pl.DataFrame(
+        {"security_id": ["CHEAP", "WIDE", "UNKNOWN"], "date": [SESSIONS[0]] * 3, "weight": [0.5, 0.5, 0.5]}
+    )
+    spreads = pl.DataFrame({"security_id": ["CHEAP", "WIDE"], "date": [SESSIONS[0]] * 2, "spread_bps": [2.0, 100.0]})
+    costs = CostModel(commission_bps=1.0, half_spread_bps=3.0, slippage_bps=0.0, borrow_rate=0.0)
+    cfg = BacktestConfig(delay=0, costs=costs)
+    flat = run_backtest(tgt, panel, cfg).daily.sort("date")
+    per_name = run_backtest(tgt, panel, cfg, spreads=spreads).daily.sort("date")
+    # flat: 1.5 gross traded at (1 commission + 3 half-spread) bps
+    assert abs(flat["cost"][0] - 1.5 * 4.0 / 1e4) < 1e-12
+    # per name: 1 + 1 bp, 1 + 50 bp, and the fallback 1 + 3 bp, each on 0.5 of notional
+    expected = 0.5 * (1 + 1) / 1e4 + 0.5 * (1 + 50) / 1e4 + 0.5 * (1 + 3) / 1e4
+    assert abs(per_name["cost"][0] - expected) < 1e-12
+    assert per_name["cost"][0] > flat["cost"][0]  # the wide name dominates
