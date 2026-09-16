@@ -516,6 +516,24 @@ def intraday_build(
     )
 
 
+@intraday_app.command("spreads")
+def intraday_spreads(universe: str = "all_common", start: DateOpt = None, end: DateOpt = None):
+    """Validate estimated effective spreads: they must fall as dollar volume and price rise."""
+    from collective_alpha.intraday.spread import spread_report
+
+    _setup_logging(False)
+    by_decile, named = spread_report(
+        get_settings(), universe, start.date() if start else None, end.date() if end else None
+    )
+    if by_decile.height == 0:
+        console.print("no intraday spreads yet: run `ca intraday build`")
+        return
+    console.print(f"[bold]by dollar-volume decile[/bold] ({universe})")
+    console.print(by_decile.to_pandas().to_string(index=False))
+    console.print("[bold]named examples[/bold] (tick_bp is one cent as a fraction of price)")
+    console.print(named.to_pandas().to_string(index=False))
+
+
 @intraday_app.command("check")
 def intraday_check():
     """Session coverage of the intraday table."""

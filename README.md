@@ -183,6 +183,32 @@ possible bars, so estimators that need a dense series return null below a bar th
 one-minute volatility, 24 five-minute buckets for five-minute volatility, 30 bars for volume shares and
 leg returns). Filter on `bar_coverage` in research code.
 
+### Effective spreads
+
+There is no quote data on the Starter plan, so spreads are estimated from open, high, low and close
+on consecutive minute bars and stored per security and session:
+
+* `spread_ar`, Abdi and Ranaldo (2017), the more accurate of the two on simulated bars with a known
+  spread (it recovers 50 bp as 49.9 bp)
+* `spread_cs`, Corwin and Schultz (2012), kept for reference only. On minute bars it is **inverted**,
+  reporting the least liquid names as the cheapest, because bars with a single trade have no range
+  and floor the estimate at zero. Do not use it.
+* `spread_est`, the canonical round-trip estimate: `spread_ar` floored at one tick. The raw estimator
+  is unbiased in the middle of the range but underestimates at both ends, returning zero for a very
+  liquid low-volatility name and landing below the minimum price increment for a cheap one. A round
+  trip cannot cost less than one tick.
+
+```bash
+ca intraday spreads --universe all_common --start 2026-01-01
+```
+
+Validation is cross-sectional, since there is nothing to check against: the estimate must fall as
+price and dollar volume rise, and known names must land near their true spreads. Both hold. Median
+round-trip estimate runs from 45 bp in the least liquid decile to 3.4 bp in the most liquid; Apple
+comes out at 0.75 bp, Coca-Cola at one cent, Ford at one cent, Plug Power at 44 bp. The backtester's
+current flat assumption of 3 bp of half-spread for every name is therefore about seven times too
+cheap for microcaps and about twice too expensive for megacaps.
+
 ## Features and signals
 
 Feature groups are materialised under `curated/features/<group>/year=YYYY` (views `features_<group>`).
