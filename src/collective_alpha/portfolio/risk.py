@@ -45,12 +45,15 @@ def fit_risk_model(
     valid = ~np.isnan(X)
     n_obs = valid.sum(axis=0)
     ok = n_obs >= min_obs
-    # demean and fill missing with 0 (mean) for the eigen-decomposition
-    mu = np.nanmean(np.where(valid, X, np.nan), axis=0)
-    mu = np.nan_to_num(mu, nan=0.0)
+    # demean and fill missing with 0 (mean) for the eigen-decomposition. Columns and rows can be
+    # entirely missing (a name that never traded in the window), so divide only where there is data
+    # rather than letting nanmean warn on an empty slice.
+    filled = np.where(valid, X, 0.0)
+    col_n = valid.sum(axis=0)
+    mu = np.divide(filled.sum(axis=0), col_n, out=np.zeros(N), where=col_n > 0)
     Xc = np.where(valid, X - mu, 0.0)
-    mkt = np.nanmean(np.where(valid, X, np.nan), axis=1)  # equal-weight market
-    mkt = np.nan_to_num(mkt, nan=0.0)
+    row_n = valid.sum(axis=1)
+    mkt = np.divide(filled.sum(axis=1), row_n, out=np.zeros(T), where=row_n > 0)  # equal-weight market
     # sample covariance on the filled matrix, scaled by pairwise-ish effective count
     S = (Xc.T @ Xc) / max(T - 1, 1)
     avg_var = float(np.mean(np.diag(S)[ok])) if ok.any() else float(np.mean(np.diag(S)))

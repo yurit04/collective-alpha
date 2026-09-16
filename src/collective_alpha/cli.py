@@ -266,7 +266,7 @@ def universe_stats_cmd(name: str):
     """Members and turnover per rebalance."""
     from collective_alpha.universe.universes import load_universe, universe_stats
 
-    st = universe_stats(load_universe(get_settings(), name))
+    st = universe_stats(load_universe(name))
     console.print(st.to_pandas().to_string(index=False))
 
 
