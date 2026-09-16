@@ -222,7 +222,11 @@ def write_universe(settings: Settings, name: str, univ: pl.DataFrame) -> int:
     return n
 
 
-def load_universe(settings: Settings, name: str) -> pl.DataFrame:
+def load_universe(name: str, settings: Settings | None = None) -> pl.DataFrame:
+    """Daily membership rows for a named universe. `settings` defaults to the active configuration."""
+    from collective_alpha.config import get_settings
+
+    settings = settings or get_settings()
     return pl.read_parquet(str(universe_dir(settings, name) / "year=*" / "data.parquet"), hive_partitioning=True).drop(
         "year"
     )

@@ -129,7 +129,7 @@ def load_intraday(
     if universe:
         from collective_alpha.universe.universes import load_universe
 
-        u = load_universe(s, universe).select("security_id", "date").lazy()
+        u = load_universe(universe, s).select("security_id", "date").lazy()
         lf = lf.join(u, on=["security_id", "date"], how="inner")
     if columns:
         lf = lf.select(["security_id", "date", *[c for c in columns if c not in ("security_id", "date")]])
