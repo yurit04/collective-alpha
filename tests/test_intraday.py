@@ -125,3 +125,68 @@ def test_bars_outside_the_session_are_excluded_from_regular_stats():
     assert r["close_reg"] == 20.0 and r["high_reg"] < 21
     assert r["auction_volume"] == 999.0 and r["volume_post"] == 999.0  # 16:00 is the auction, 18:20 is post
     assert r["share_post"] > 0 and abs(r["share_pre"]) < 1e-12
+
+
+def test_spread_estimators_recover_a_known_spread():
+    """Bars simulated from a random walk seen through a bid-ask bounce: both estimators should come
+    back near the spread that generated them, and Abdi-Ranaldo should be the more accurate."""
+    import numpy as np
+
+    from collective_alpha.intraday.spread import abdi_ranaldo, corwin_schultz, simulate_bars
+
+    for true_bp in (10, 50):
+        cs, ar = [], []
+        for seed in range(15):
+            h, low, c = simulate_bars(390, true_bp / 1e4, seed=seed)
+            cs.append(corwin_schultz(h, low))
+            ar.append(abdi_ranaldo(h, low, c))
+        true = true_bp / 1e4
+        assert abs(np.mean(ar) - true) < 0.25 * true
+        assert abs(np.mean(cs) - true) < 0.40 * true
+    # a market with no spread at all must not manufacture one
+    h, low, c = simulate_bars(390, 0.0, seed=1)
+    assert corwin_schultz(h, low) < 5e-4 and abdi_ranaldo(h, low, c) < 5e-4
+
+
+def test_spread_expressions_match_the_reference_implementation():
+    import numpy as np
+
+    from collective_alpha.intraday.spread import (
+        abdi_ranaldo,
+        abdi_ranaldo_expr,
+        corwin_schultz,
+        corwin_schultz_expr,
+        simulate_bars,
+    )
+
+    h, low, c = simulate_bars(200, 30 / 1e4, seed=3)
+    df = pl.DataFrame({"g": ["x"] * len(h), "high": h, "low": low, "close": c})
+    out = df.group_by("g").agg(cs=corwin_schultz_expr(), ar=abdi_ranaldo_expr()).row(0, named=True)
+    assert abs(out["cs"] - corwin_schultz(h, low)) < 1e-12
+    assert abs(out["ar"] - abdi_ranaldo(h, low, c)) < 1e-12
+    assert np.isfinite(out["cs"]) and np.isfinite(out["ar"])
+
+
+def test_spread_null_for_sparse_names():
+    b = session_bounds(DEFAULT_DAY)
+    sparse = _minute_bars("S", list(range(600, 640)), lambda m: 10.0)  # 40 bars < 60
+    dense = _minute_bars("D", list(range(570, 960)), lambda m: 10.0 + (m % 3) * 0.01)
+    out = aggregate_session(pl.concat([sparse, dense]), b).sort("ticker")
+    assert out.filter(pl.col("ticker") == "S")["spread_ar"][0] is None
+    assert out.filter(pl.col("ticker") == "D")["spread_ar"][0] is not None
+
+
+def test_spread_estimate_is_floored_at_one_tick():
+    from collective_alpha.intraday.spread import spread_estimate_expr
+
+    df = pl.DataFrame(
+        {
+            "spread_ar": [0.0, 0.00039, 0.0030, 0.0025],  # KO-like zero, Ford-like, wide, cheap name
+            "close_reg": [79.48, 13.83, 100.0, 0.50],
+        }
+    )
+    est = df.with_columns(est=spread_estimate_expr())["est"].to_list()
+    assert abs(est[0] - 0.01 / 79.48) < 1e-12  # floored at one tick
+    assert abs(est[1] - 0.01 / 13.83) < 1e-12  # floored: below the tick
+    assert abs(est[2] - 0.0030) < 1e-12  # estimator wins when it exceeds the tick
+    assert abs(est[3] - 0.0025) < 1e-12  # sub-dollar name: tick is a hundredth of a cent

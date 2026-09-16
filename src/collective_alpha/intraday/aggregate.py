@@ -5,11 +5,13 @@ from __future__ import annotations
 import polars as pl
 
 from collective_alpha.intraday.session import SessionBounds, minute_of_day
+from collective_alpha.intraday.spread import abdi_ranaldo_expr, corwin_schultz_expr, spread_estimate_expr
 
 # Estimators that need a dense series are suppressed below these bar counts.
 MIN_BARS_RV_1M = 120
 MIN_BARS_RV_5M = 24
 MIN_BARS_SHAPE = 30  # volume-share and leg returns
+MIN_BARS_SPREAD = 60  # effective-spread estimators
 
 
 def _typical_price() -> pl.Expr:
@@ -55,6 +57,8 @@ def aggregate_session(bars: pl.DataFrame, b: SessionBounds) -> pl.DataFrame:
         rv_1m=logret.pow(2).sum().sqrt(),
         max_abs_1m_ret=logret.abs().max(),
         hl_range_mean=(pl.col("high") / pl.col("low")).log().mean(),
+        spread_cs=corwin_schultz_expr(),
+        spread_ar=abdi_ranaldo_expr(),
         minutes_traded=pl.col("mod").n_unique(),
     )
 
@@ -96,6 +100,7 @@ def aggregate_session(bars: pl.DataFrame, b: SessionBounds) -> pl.DataFrame:
     dense_1m = pl.col("n_bars") >= MIN_BARS_RV_1M
     dense_5m = pl.col("n_buckets") >= MIN_BARS_RV_5M
     dense_shape = pl.col("n_bars") >= MIN_BARS_SHAPE
+    dense_spread = pl.col("n_bars") >= MIN_BARS_SPREAD
     or_range = pl.col("or_high") - pl.col("or_low")
 
     out = agg.with_columns(
@@ -109,6 +114,8 @@ def aggregate_session(bars: pl.DataFrame, b: SessionBounds) -> pl.DataFrame:
         rv_1m=pl.when(dense_1m).then(pl.col("rv_1m")).otherwise(None),
         rv_5m=pl.when(dense_5m).then(pl.col("rv_5m")).otherwise(None),
         hl_range_mean=pl.when(dense_shape).then(pl.col("hl_range_mean")).otherwise(None),
+        spread_cs=pl.when(dense_spread).then(pl.col("spread_cs")).otherwise(None),
+        spread_ar=pl.when(dense_spread).then(pl.col("spread_ar")).otherwise(None),
         or_range_pct=pl.when(dense_shape & (or_range > 0)).then(or_range / pl.col("or_low")).otherwise(None),
         close_vs_or=pl.when(dense_shape & (or_range > 0))
         .then((pl.col("close_reg") - pl.col("or_low")) / or_range)
@@ -127,6 +134,7 @@ def aggregate_session(bars: pl.DataFrame, b: SessionBounds) -> pl.DataFrame:
         .then(pl.col("auction_volume") / (pl.col("volume_reg") + pl.col("auction_volume")))
         .otherwise(None),
     )
+    out = out.with_columns(spread_est=spread_estimate_expr())
     for c in ("ret_open30", "ret_mid", "ret_close30"):
         out = out.with_columns(pl.when(dense_shape).then(pl.col(c)).otherwise(None).alias(c))
     return out.select(
@@ -161,6 +169,9 @@ def aggregate_session(bars: pl.DataFrame, b: SessionBounds) -> pl.DataFrame:
         "rv_1m",
         "rv_5m",
         "hl_range_mean",
+        "spread_cs",
+        "spread_ar",
+        "spread_est",
         "max_abs_1m_ret",
         "or_high",
         "or_low",
