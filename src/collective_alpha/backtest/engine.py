@@ -21,7 +21,7 @@ import polars as pl
 @dataclass(frozen=True)
 class CostModel:
     commission_bps: float = 0.5
-    half_spread_bps: float = 3.0
+    half_spread_bps: float = 3.0  # fallback when no per-name estimate is supplied
     slippage_bps: float = 2.0
     borrow_rate: float = 0.005  # per year, on short notional
     impact_coef: float = 0.0  # cost (fraction) = coef * sqrt(trade_notional / ADV); 0 disables
@@ -29,6 +29,11 @@ class CostModel:
     @property
     def linear_bps(self) -> float:
         return self.commission_bps + self.half_spread_bps + self.slippage_bps
+
+    @property
+    def fixed_bps(self) -> float:
+        """Everything except the spread, which may vary by name."""
+        return self.commission_bps + self.slippage_bps
 
 
 @dataclass(frozen=True)
@@ -116,10 +121,13 @@ def run_backtest(
     config: BacktestConfig | None = None,
     adv: pl.DataFrame | None = None,
     keep_holdings: bool = False,
+    spreads: pl.DataFrame | None = None,
 ) -> BacktestResult:
     """targets: (security_id, date, weight) on rebalance dates (signal dates).
     panel: (security_id, date, ret, is_last_trade) for every session a security traded.
-    adv: optional (security_id, date, adv) dollar ADV for the impact model."""
+    adv: optional (security_id, date, adv) dollar ADV for the impact model.
+    spreads: optional (security_id, date, spread_bps), the *round-trip* spread in basis points.
+    Half of it is charged per trade; names without an estimate fall back to costs.half_spread_bps."""
     cfg = config or BacktestConfig()
     dates = sorted(set(panel["date"].to_list()))
     ids = sorted(set(panel["security_id"].to_list()) | set(targets["security_id"].to_list()))
@@ -132,6 +140,11 @@ def run_backtest(
     W_t = _wide(targets, "weight", dates, ids)  # NaN when no target that day
     target_days = ~np.all(np.isnan(W_t), axis=1)
     ADV = _wide(adv, "adv", dates, ids) if adv is not None else None
+    if spreads is not None:
+        HS = _wide(spreads, "spread_bps", dates, ids) / 2.0
+        HS = np.where(np.isnan(HS), cfg.costs.half_spread_bps, HS)
+    else:
+        HS = None
 
     w = np.zeros(N)  # weights at start of day (before day's return)
     pending: dict[int, np.ndarray] = {}  # execution day -> target weights
@@ -163,7 +176,10 @@ def run_backtest(
             tgt = np.where(has_bar[i], tgt, w)
             trade = tgt - w
             turnover = float(np.abs(trade).sum())
-            cost = turnover * cfg.costs.linear_bps / 1e4
+            if HS is None:
+                cost = turnover * cfg.costs.linear_bps / 1e4
+            else:
+                cost = float(np.sum(np.abs(trade) * (cfg.costs.fixed_bps + HS[i]))) / 1e4
             if ADV is not None and cfg.costs.impact_coef > 0:
                 notional = np.abs(trade) * cfg.capital
                 adv_i = ADV[i]

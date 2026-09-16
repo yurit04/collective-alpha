@@ -225,7 +225,12 @@ ca features list
 | size | `shares` (SEC, as-of filed date), `cap`, `log_cap`, `turnover_21d` |
 | fund | TTM `revenue_ttm`, `net_income_ttm`, `cfo_ttm` (Q4 derived from the 10-K), `equity`, `assets`, `earnings_yield`, `book_to_market`, `sales_to_price`, `cfo_yield`, `roe`, `asset_growth`, `accruals`, `leverage` |
 | short | `si_shares`, `si_ratio`, `si_days_to_cover`, `si_change` (settlement + 10-day publication lag), `sv_ratio`, `sv_ratio_5d`, `sv_ratio_21d` |
+| intra | `rv_5m`, `rv_21d`, `rv_ratio`, `spread_est`, `spread_21d`, `close_to_vwap`, `share_open30`, `share_close30`, `share_auction`, `or_range_pct`, `close_vs_or`, `ret_open30`, `ret_close30`, `overnight`, `intraday`, `overnight_21d`, `intraday_21d`, `overnight_minus_intraday_21d`, `bar_coverage` |
 | news | `news_count`, `news_count_5d`, `news_count_21d`, `news_sent_5d`, `news_sent_21d` (articles after 16:00 New York count toward the next session) |
+
+The overnight and intraday legs are split-adjusted and recombine into the daily price return exactly.
+On liquid_1500 since 2025 the overnight leg averages 4.4 bp a day against 1.7 bp intraday, which is the
+documented overnight effect and a useful check that the split is right.
 
 Load with `collective_alpha.features.base.load_features(["price", "size"], universe="liquid_1500")`.
 Cross-sectional transforms live in `features/signals.py`: `cs_rank`, `cs_zscore` (winsorised),
@@ -255,6 +260,7 @@ trading inside the horizon the return compounds to its last bar and then a confi
 
 ```bash
 ca backtest feature mom_12_1 --universe liquid_1500 --rebalance 21            # long-short deciles, monthly
+ca backtest feature mom_12_1 --spreads                                         # per-name estimated spreads
 ca backtest feature ret_5d --sign -1 --rebalance 5 --scheme signal_weighted    # rank-weighted book, weekly
 ca backtest feature si_ratio --sign -1 --impact --half-spread-bps 5             # with sqrt impact on ADV
 ```
@@ -268,13 +274,28 @@ ca backtest feature si_ratio --sign -1 --impact --half-spread-bps 5             
   first earns the following session; weights drift with prices between rebalances; a security's last bar
   is followed by liquidation at `delist_return`
 * **costs**: commission + half-spread + slippage in bps on traded notional, an annual borrow rate on the
-  short leg, and an optional square-root impact term on ADV participation
+  short leg, and an optional square-root impact term on ADV participation. `--spreads` replaces the flat
+  half-spread with each name's own estimate from the intraday table (21-day median, today's estimate as
+  a fallback, and the flat assumption where neither exists)
 * **output**: daily gross/net returns, cost, borrow, turnover, gross/net exposure and name counts;
   `summary()` (annualised return, vol, Sharpe, max drawdown, Calmar, cost drag) and `by_year()`
 
-Sanity on the store (liquid_1500, 2022-2026, default costs): 12-1 momentum deciles rebalanced monthly earn
-~13% net with Sharpe ~0.45 and 1.1% cost drag; 5-day reversal rebalanced weekly loses money after ~9% of
-annual costs.
+Sanity on the store (2022-2026, default costs): 12-1 momentum deciles rebalanced monthly earn ~16% net
+with Sharpe ~0.5 on liquid_1500; 5-day reversal rebalanced weekly loses money after ~10% of annual costs.
+
+**What per-name spreads change.** The flat 3 bp half-spread is roughly right for large caps and far too
+cheap for everything else, so it flatters any strategy that touches small or cheap names:
+
+| strategy | universe | cost drag flat | cost drag estimated | net return flat | net return estimated |
+|---|---|---|---|---|---|
+| 12-1 momentum, monthly | liquid_1500 | 1.4% | 1.6% | 16.5% | 16.4% |
+| 12-1 momentum, monthly | liquid_3000 | 1.5% | 2.3% | 17.8% | 16.9% |
+| 12-1 momentum, monthly | all_common | 1.5% | 3.8% | 33.8% | 31.6% |
+| 5-day reversal, weekly | all_common | 9.8% | 26.1% | +0.6% | -15.8% |
+
+The last row is the reason this matters. Weekly reversal across the whole market looks marginally
+viable under the flat assumption and is decisively unprofitable once each name is charged its own
+spread. Run `--spreads` on anything that trades outside the large-cap universe.
 
 ## Portfolio construction and risk
 

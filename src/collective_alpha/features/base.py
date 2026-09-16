@@ -49,6 +49,12 @@ class FeatureContext:
         return trading_days(self.panel["date"].min(), self.panel["date"].max())
 
     @cached_property
+    def intraday(self) -> pl.DataFrame:
+        from collective_alpha.intraday.build import load_intraday
+
+        return load_intraday(self.s)
+
+    @cached_property
     def master(self) -> pl.DataFrame:
         return self._latest("security_master")
 
@@ -108,7 +114,7 @@ class FeatureContext:
 
 
 def registry() -> dict[str, Builder]:
-    from collective_alpha.features import fundamentals, news, price, short, size
+    from collective_alpha.features import fundamentals, intraday, news, price, short, size
 
     return {
         "price": price.build,
@@ -116,6 +122,7 @@ def registry() -> dict[str, Builder]:
         "fund": fundamentals.build,
         "short": short.build,
         "news": news.build,
+        "intra": intraday.build,
     }
 
 
