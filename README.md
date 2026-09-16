@@ -155,6 +155,34 @@ Load with `collective_alpha.panel.build.load_panel(start, end, universe="liquid_
 date x security matrix with `to_wide(panel, "ret")`. `ca panel check` prints a sanity report and the
 largest absolute returns.
 
+## Intraday aggregates
+
+The minute bars are condensed into one row per security and session:
+
+```bash
+ca intraday build            # incremental: sessions whose file exists are skipped
+ca intraday check            # session coverage versus the exchange calendar
+```
+
+Output: `curated/intraday/year=YYYY/YYYY-MM-DD.parquet` (view `intraday`), keyed by security_id
+through the security master. Per session: bar count and coverage, regular-session open/high/low/close,
+volume-weighted average price and the close's deviation from it, volume split across pre-market,
+opening thirty minutes, closing thirty minutes and post-market, realised volatility from one-minute
+and five-minute returns, mean log high-low range, largest one-minute move, the opening range and where
+the close sits inside it, and three intraday return legs.
+
+The bar stamped at the close spans a full minute and mixes the closing auction with the first
+after-hours prints, so its close can be an after-hours price. Its first print is the auction price and
+matches the official close exactly for 97% of liquid names, against 27% for the last continuous trade.
+It is exposed as `auction_price` for diagnostics and execution work; the daily panel's `close` stays
+the authoritative closing price.
+
+Two things to know. Session boundaries come from the exchange calendar, so the fifteen or so half-days
+a year with a 13:00 close are handled. Coverage is very uneven: the median name has about 70 of 390
+possible bars, so estimators that need a dense series return null below a bar threshold (120 bars for
+one-minute volatility, 24 five-minute buckets for five-minute volatility, 30 bars for volume shares and
+leg returns). Filter on `bar_coverage` in research code.
+
 ## Features and signals
 
 Feature groups are materialised under `curated/features/<group>/year=YYYY` (views `features_<group>`).
@@ -299,6 +327,7 @@ src/collective_alpha/
   storage/             path layout, manifest ledger, parquet writer, DuckDB catalog
   universe/            security master, point-in-time attributes, universe builder, market cap
   panel/               corporate-action cleaning, daily panel with returns
+  intraday/            session boundaries and per-session aggregates from minute bars
   features/            feature groups (price, size, fund, short, news) and signal transforms
   eval/                forward returns, IC / quantile / turnover diagnostics, signal reports
   backtest/            weight schemes, vectorised daily engine with costs, feature backtests

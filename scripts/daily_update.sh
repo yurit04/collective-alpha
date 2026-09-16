@@ -8,6 +8,7 @@ uv run ca update --days-back 5
 uv run ca master build
 uv run ca universe build all
 uv run ca panel build
+uv run ca intraday build
 uv run ca features build all
 uv run ca eval forward
 for s in config/strategies/*.toml; do
