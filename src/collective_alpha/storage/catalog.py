@@ -83,6 +83,7 @@ class Catalog:
         self._register("universes", "universes", 2)  # hive: name, year
         self._register("panel", "panel", 1)  # hive: year
         self._register("forward_returns", "forward_returns", 1)
+        self._register("intraday", "intraday", 1)
         fdir = self.s.curated_dir / "features"
         if fdir.exists():
             for g in sorted(p for p in fdir.iterdir() if p.is_dir()):

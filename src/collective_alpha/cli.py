@@ -27,6 +27,8 @@ panel_app = typer.Typer(help="Daily security panel with split/dividend-aware ret
 app.add_typer(panel_app, name="panel")
 features_app = typer.Typer(help="Feature groups (price, size, fund, short, news)", no_args_is_help=True)
 app.add_typer(features_app, name="features")
+intraday_app = typer.Typer(help="Intraday aggregates from minute bars", no_args_is_help=True)
+app.add_typer(intraday_app, name="intraday")
 eval_app = typer.Typer(help="Signal evaluation", no_args_is_help=True)
 app.add_typer(eval_app, name="eval")
 bt_app = typer.Typer(help="Backtests", no_args_is_help=True)
@@ -498,6 +500,29 @@ def trade_export(strategy: str, path: Path = Path("orders.csv")):
 
     n = export_orders(StrategyConfig.load(strategy), path)
     console.print(f"{n} pending orders written to {path}")
+
+
+@intraday_app.command("build")
+def intraday_build(
+    start: DateOpt = None, end: DateOpt = None, force: bool = False, workers: int | None = None, verbose: bool = False
+):
+    """Aggregate minute bars into one row per security and session (incremental)."""
+    from collective_alpha.intraday.build import build
+
+    _run(
+        "intraday build",
+        lambda p: build(p.s, start.date() if start else None, end.date() if end else None, force, workers),
+        verbose,
+    )
+
+
+@intraday_app.command("check")
+def intraday_check():
+    """Session coverage of the intraday table."""
+    from collective_alpha.intraday.build import coverage
+
+    c = coverage()
+    console.print("no intraday table yet" if c.height == 0 else c.to_pandas().to_string(index=False))
 
 
 @app.command()
