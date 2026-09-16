@@ -65,6 +65,7 @@ mean-variance portfolio construction, and a paper broker with a persistent ledge
 | [CLI reference](docs/cli.md) | every command |
 | [Operations](docs/operations.md) | nightly refresh, paper trading, troubleshooting |
 | [Architecture](docs/architecture.md) | design decisions, what was tried and rejected, limitations |
+| [Research sprint 1](docs/research-sprint.md) | a full screen of the feature library, pre-registered, with a negative result |
 | [`examples/`](examples) | three runnable scripts |
 | [`notebooks/`](notebooks) | data inspection and a research template |
 

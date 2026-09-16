@@ -37,6 +37,8 @@ pf_app = typer.Typer(help="Portfolio construction with a risk model", no_args_is
 app.add_typer(pf_app, name="portfolio")
 trade_app = typer.Typer(help="Paper/live trading pipeline", no_args_is_help=True)
 app.add_typer(trade_app, name="trade")
+research_app = typer.Typer(help="Research sprints: screening and combination", no_args_is_help=True)
+app.add_typer(research_app, name="research")
 console = Console()
 
 
@@ -545,6 +547,40 @@ def intraday_check():
 
     c = coverage()
     console.print("no intraday table yet" if c.height == 0 else c.to_pandas().to_string(index=False))
+
+
+@research_app.command("screen")
+def research_screen(
+    universe: str = "liquid_1500",
+    start: DateOpt = None,
+    end: DateOpt = None,
+    fdr_q: float = 0.10,
+    tag: str = "latest",
+    top: int = 25,
+    verbose: bool = False,
+):
+    """Screen every feature against forward returns, with a Benjamini-Hochberg correction."""
+    from collective_alpha.research.screen import ScreenConfig, run_screen, screen_path
+
+    _setup_logging(verbose)
+    cfg = ScreenConfig(
+        universe=universe,
+        start=start.date() if start else None,
+        end=end.date() if end else None,
+        fdr_q=fdr_q,
+    )
+    res = run_screen(cfg)
+    if res.height == 0:
+        console.print("nothing to screen: build features and forward returns first")
+        return
+    out = screen_path(get_settings(), tag)
+    res.write_parquet(out)
+    n_tests, n_sig, n_surv = res.height, int(res["bh_significant"].sum()), int(res["survivor"].sum())
+    console.print(f"{n_tests} tests, {n_sig} significant at q={fdr_q}, {n_surv} survivors -> {out}")
+    show = res.select(
+        "feature", "group", "horizon", "ic_mean", "t_stat", "hit_rate", "consistent_years", "coverage", "survivor"
+    ).head(top)
+    console.print(show.to_pandas().to_string(index=False))
 
 
 @app.command()
