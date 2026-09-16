@@ -94,8 +94,8 @@ def test_half_day_windows():
 
 
 def test_closing_auction_is_separated_from_post_market():
-    """The bar stamped at the close carries the auction: it must not count as post-market, and the
-    official close comes from it."""
+    """The bar stamped at the close carries the auction: it must not count as post-market, and its
+    first print (not its close, which can be an after-hours price) is the auction price."""
     b = session_bounds(DEFAULT_DAY)
     bars = pl.concat(
         [
@@ -105,12 +105,12 @@ def test_closing_auction_is_separated_from_post_market():
         ]
     )
     r = aggregate_session(bars, b).row(0, named=True)
-    assert r["close_reg"] == 20.0 and r["auction_close"] == 20.5 and r["close_final"] == 20.5
+    assert r["close_reg"] == 20.0 and r["auction_price"] == 20.5
     assert r["auction_volume"] == 5000.0 and r["volume_post"] == 200.0
     assert abs(r["share_auction"] - 5000.0 / (390 * 100.0 + 5000.0)) < 1e-12
     # a name with no auction print falls back to the last continuous close
     only_reg = aggregate_session(_minute_bars("B", list(range(570, 960)), lambda m: 7.0), b).row(0, named=True)
-    assert only_reg["auction_close"] is None and only_reg["close_final"] == 7.0 and only_reg["auction_volume"] == 0.0
+    assert only_reg["auction_price"] is None and only_reg["auction_volume"] == 0.0
 
 
 def test_bars_outside_the_session_are_excluded_from_regular_stats():

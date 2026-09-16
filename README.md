@@ -171,6 +171,12 @@ opening thirty minutes, closing thirty minutes and post-market, realised volatil
 and five-minute returns, mean log high-low range, largest one-minute move, the opening range and where
 the close sits inside it, and three intraday return legs.
 
+The bar stamped at the close spans a full minute and mixes the closing auction with the first
+after-hours prints, so its close can be an after-hours price. Its first print is the auction price and
+matches the official close exactly for 97% of liquid names, against 27% for the last continuous trade.
+It is exposed as `auction_price` for diagnostics and execution work; the daily panel's `close` stays
+the authoritative closing price.
+
 Two things to know. Session boundaries come from the exchange calendar, so the fifteen or so half-days
 a year with a 13:00 close are handled. Coverage is very uneven: the median name has about 70 of 390
 possible bars, so estimators that need a dense series return null below a bar threshold (120 bars for

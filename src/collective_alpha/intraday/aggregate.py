@@ -71,15 +71,18 @@ def aggregate_session(bars: pl.DataFrame, b: SessionBounds) -> pl.DataFrame:
     )
     agg = agg.join(rv5, on="ticker", how="left")
 
-    # The bar stamped exactly at the close carries the closing auction. It is neither continuous
-    # trading nor post-market: report it separately, and take the official close from it.
+    # The bar stamped at the close spans a full minute and mixes the closing auction with the first
+    # after-hours prints, so its *close* can be an after-hours price. Its *open* is the auction print
+    # and matches the official close (the daily panel's `close`) for 90% of dense names, against 27%
+    # for the last continuous trade. Reported as a diagnostic only: the daily panel close stays
+    # authoritative.
     outside = df.filter((pl.col("mod") < b.open_min) | (pl.col("mod") >= b.close_min))
     if outside.height:
         ext = outside.group_by("ticker").agg(
             volume_pre=pl.col("volume").filter(pl.col("mod") < b.open_min).sum(),
             volume_post=pl.col("volume").filter(pl.col("mod") > b.close_min).sum(),
             auction_volume=pl.col("volume").filter(pl.col("mod") == b.close_min).sum(),
-            auction_close=pl.col("close").filter(pl.col("mod") == b.close_min).last(),
+            auction_price=pl.col("open").filter(pl.col("mod") == b.close_min).first(),
         )
         agg = agg.join(ext, on="ticker", how="left")
     else:
@@ -87,7 +90,7 @@ def aggregate_session(bars: pl.DataFrame, b: SessionBounds) -> pl.DataFrame:
             volume_pre=pl.lit(0.0),
             volume_post=pl.lit(0.0),
             auction_volume=pl.lit(0.0),
-            auction_close=pl.lit(None, dtype=pl.Float64),
+            auction_price=pl.lit(None, dtype=pl.Float64),
         )
 
     dense_1m = pl.col("n_bars") >= MIN_BARS_RV_1M
@@ -102,7 +105,6 @@ def aggregate_session(bars: pl.DataFrame, b: SessionBounds) -> pl.DataFrame:
         volume_pre=pl.col("volume_pre").fill_null(0.0),
         volume_post=pl.col("volume_post").fill_null(0.0),
         auction_volume=pl.col("auction_volume").fill_null(0.0),
-        close_final=pl.coalesce(pl.col("auction_close"), pl.col("close_reg")),
         vwap=pl.col("dollar_vol_reg") / pl.col("volume_reg"),
         rv_1m=pl.when(dense_1m).then(pl.col("rv_1m")).otherwise(None),
         rv_5m=pl.when(dense_5m).then(pl.col("rv_5m")).otherwise(None),
@@ -140,8 +142,7 @@ def aggregate_session(bars: pl.DataFrame, b: SessionBounds) -> pl.DataFrame:
         "high_reg",
         "low_reg",
         "close_reg",
-        "close_final",
-        "auction_close",
+        "auction_price",
         "vwap",
         "close_to_vwap",
         "volume_reg",

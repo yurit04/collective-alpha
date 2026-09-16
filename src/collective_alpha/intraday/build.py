@@ -39,6 +39,11 @@ def minute_path(s: Settings, d: dt.date) -> Path:
     return layout.curated_bars_path(s, "minute_aggs_v1", d)
 
 
+def earliest_minute_session(s: Settings) -> dt.date | None:
+    files = sorted((layout.curated_table_dir(s, "minute_aggs")).glob("year=*/month=*/*.parquet"))
+    return dt.date.fromisoformat(files[0].stem) if files else None
+
+
 def build_session(s: Settings, d: dt.date, master: pl.DataFrame, force: bool = False) -> dict:
     """Aggregate one session and write its Parquet file. Returns a small status dict."""
     out_path = session_path(s, d)
@@ -77,7 +82,11 @@ def build(
     from collective_alpha.universe.builder import load_master
 
     master = load_master(s)
-    start = start or (dt.date.today().replace(year=dt.date.today().year - s.history_years))
+    # Default to whatever minute data exists, not a rolling window: a rolling default silently
+    # leaves the oldest sessions on an older schema when the table is rebuilt.
+    start = (
+        start or earliest_minute_session(s) or (dt.date.today().replace(year=dt.date.today().year - s.history_years))
+    )
     end = end or dt.date.today()
     days = trading_days(start, end)
     workers = workers or s.max_workers
