@@ -68,6 +68,16 @@ Useful backtest options: `--scheme ls_quantile|long_top|signal_weighted`, `--reb
 or `monthly`/`weekly`, `--gross`, `--max-weight`, `--delay`, `--commission-bps`, `--half-spread-bps`,
 `--slippage-bps`, `--borrow-rate`, `--spreads`, `--impact`, `--start`, `--end`, `--as-json`.
 
+## Research sprints
+
+```bash
+ca research screen --universe liquid_1500 --end 2024-12-31 --tag is_liquid1500
+```
+
+Screens every feature against forward returns at four horizons, applies a Benjamini-Hochberg
+correction across the whole family, and writes the table to `<data_root>/research/`. See
+[research sprint 1](research-sprint.md) for a worked example including its negative result.
+
 ## Trading
 
 ```bash
