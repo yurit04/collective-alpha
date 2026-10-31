@@ -1,0 +1,36 @@
+[project]
+name = "collective-alpha"
+version = "0.1.0"
+description = "Borg-themed quant research, backtesting and execution monorepo. Resistance to alpha decay is futile."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+    "pre-commit>=4.0",
+]
+
+[tool.uv]
+# The root is only a workspace container, not an installable package.
+package = false
+
+[tool.uv.workspace]
+members = ["core/*", "projects/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "core", "projects"]
+addopts = "--import-mode=importlib -m 'not live'"
+markers = [
+    "live: hits the real Massive API (needs credentials); run with -m live",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501", "SIM105", "B905"]

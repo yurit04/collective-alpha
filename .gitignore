@@ -218,3 +218,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- collective-alpha ---
+.venv/
+.env
+*.env
+collective.toml
+# Market data never lives in the repo (default root: ~/market_data/massive)
+market_data/
+.DS_Store

@@ -1,0 +1,21 @@
+# Copy to collective.toml (git-ignored) and edit. Credentials do NOT go here:
+# they come from the environment or ~/.massive.env.
+
+[massive_subspace_stream]
+# data_root = "~/market_data/massive"
+# env_file = "~/.massive.env"
+# backfill_since = "2003-09-10"      # earliest flat file
+# download_workers = 4               # Massive throttles above ~4-8 parallel downloads
+# tick_workers = 1                   # trades/quotes files are 3-9 GB each
+# keep_raw = false                   # keep downloaded .csv.gz after conversion
+
+# Live stream: channels for ALL tickers, plus heavier channels for a watchlist only.
+# stream_channels = ["AM", "A"]      # AM = minute bars, A = second bars
+# stream_watchlist = ["SPY", "QQQ", "AAPL"]
+# stream_watchlist_channels = ["T", "Q"]   # T = trades, Q = quotes
+# stream_flush_seconds = 30
+# keep_live_days = 7                 # 0 keeps live data forever
+
+# launchd daily sync time (local), Tue-Sat
+# sync_hour = 6
+# sync_minute = 30

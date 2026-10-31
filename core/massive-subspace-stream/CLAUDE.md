@@ -1,0 +1,48 @@
+# massive-subspace-stream (core, depends on nothing in the repo)
+
+Massive (formerly Polygon.io) US equity data: download, store as Parquet, query.
+User docs: README.md in this folder.
+
+## Public API (`from massive_subspace_stream import ...`)
+
+| Name | Use |
+|---|---|
+| `Store(root=None, settings=None)` | all reads; see below |
+| `load_settings(config_file=None, **overrides)` / `Settings` | resolved configuration |
+| `Ingestor(settings)` | `.flat(dataset, start, end, tickers)`, `.rest(names, full)`, `.initial()`, `.sync()`, `.verify()` |
+| `StreamService(settings, channels, watchlist, watch_channels)` | `await .run()`; prefer the CLI |
+| `ConfigError`, `JobResult` | errors / job summaries |
+
+`Store` methods (all take `backend="polars"|"pandas"`):
+- `bars(tickers, start, end, freq="1d"|"1min", adjust=None|"splits"|"all", session="all"|"regular"|"extended", include_live=False, lazy=False)`
+- `trades(tickers, start, end)`, `quotes(...)` (end defaults to start; warns if not downloaded)
+- `universe(on, types=None)`: tickers that traded that day (survivorship-free) + reference info
+- `tickers(active, types)`, `splits()`, `dividends()`, `financials("income"|"balance"|"cash_flow", tickers, start, end)`,
+  `short_interest()`, `short_volume()`, `news()`, `dataset(name, ...)` for any REST dataset
+- `trading_days(start, end)`, `sessions(start, end)` (NYSE, incl. early closes)
+- `live(kind, tickers, start, end)`, `scan(dataset)` (lazy polars), `coverage()`, `datasets()`
+
+## Internals (private; for work inside this package only)
+
+```
+_config.py      settings + env-file parsing (credentials never in toml or repr)
+_layout.py      every on-disk path
+_catalog.py     SQLite record of stored partitions + incremental state
+_storage.py     atomic Parquet writes, upserts
+_sources/       rest.py (httpx, retries, cursor pagination), flatfiles.py (boto3 S3)
+_datasets/      flat.py (CSV -> canonical schema), rest.py (REST dataset specs + normalization)
+_ingest/        backfill.py (Ingestor), stream.py (websocket service, live writer)
+_adjust.py      split/dividend factors (as-of joins)
+_sessions.py    exchange_calendars XNYS wrapper
+_store.py       Store
+_services.py    launchd plists
+cli.py          `subspace` (typer)
+```
+
+Invariants:
+- A partition is marked in the catalog only after its file is safely renamed into place.
+- Stored prices are unadjusted; adjustment happens in `_adjust.py` at query time.
+- Timestamps are UTC ns; `date` is the US/Eastern trading date.
+- Adding a REST dataset = one `RestSpec` entry in `_datasets/rest.py` (+ optional `Store` helper).
+- Flat-file throttling (HTTP 429) is retried with backoff in `FlatFileClient.download`;
+  keep `download_workers` at about 4.

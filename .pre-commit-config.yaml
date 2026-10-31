@@ -1,0 +1,15 @@
+# Enable with: uv run pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff
+        entry: uv run ruff check --force-exclude
+        language: system
+        types: [python]
+      - id: architecture
+        name: dependency rules (core DAG, independent projects)
+        entry: uv run python tools/check_architecture.py
+        language: system
+        pass_filenames: false
+        files: \.(py|toml)$
