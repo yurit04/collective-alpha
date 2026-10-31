@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/logo.webp" alt="collective-alpha logo" width="300"></p>
+
 # collective-alpha
 Assimilation of multi-asset market data, quantitative signals, and systematic execution algorithms. Resistance to alpha decay is futile.
 
