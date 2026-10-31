@@ -21,6 +21,9 @@ User docs: README.md in this folder.
   `short_interest()`, `short_volume()`, `news()`, `dataset(name, ...)` for any REST dataset
 - `trading_days(start, end)`, `sessions(start, end)` (NYSE, incl. early closes)
 - `live(kind, tickers, start, end)`, `scan(dataset)` (lazy polars), `coverage()`, `datasets()`
+- `follow(kind, tickers, poll_seconds=5, since=None, timeout=None)`: generator of new live rows
+  (reads the stream service's files; never open a second websocket)
+- `stream_status()`: is the stream service running, what it subscribes to, its counters
 
 ## Internals (private; for work inside this package only)
 
@@ -43,6 +46,10 @@ Invariants:
 - A partition is marked in the catalog only after its file is safely renamed into place.
 - Stored prices are unadjusted; adjustment happens in `_adjust.py` at query time.
 - Timestamps are UTC ns; `date` is the US/Eastern trading date.
+- Minute bars exclude the closing auction print; daily bars include it (verified with trades).
+- Financials: one row per period from Massive, dated by the latest filing; `filing_date` is in
+  the storage key so re-filed versions accumulate. Not point-in-time before the first download.
+- Every live row has `received_at` (its flush time); compaction keeps it. `follow()` relies on it.
 - Adding a REST dataset = one `RestSpec` entry in `_datasets/rest.py` (+ optional `Store` helper).
 - Flat-file throttling (HTTP 429) is retried with backoff in `FlatFileClient.download`;
   keep `download_workers` at about 4.

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import time
 import warnings
-from collections.abc import Iterable
-from datetime import date, timedelta
+from collections.abc import Iterable, Iterator
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -14,7 +15,8 @@ from ._adjust import adjust_bars
 from ._catalog import Catalog
 from ._config import Settings, load_settings
 from ._datasets.rest import REST_DATASETS
-from ._dates import to_date, today_et
+from ._dates import ET, to_date, today_et
+from ._ingest.stream import TIME_COLUMN, read_status
 from ._layout import Layout
 from ._sessions import filter_session, session_table, trading_days
 
@@ -252,7 +254,13 @@ class Store:
 
     def financials(self, statement: Literal["income", "balance", "cash_flow"] = "income", tickers=None,
                    start: Any = None, end: Any = None, backend: Backend = "polars"):
-        """Financial statements; start/end filter on filing_date (point-in-time safe)."""
+        """Financial statements; start/end filter on filing_date.
+
+        Massive serves one row per fiscal period, dated by the *latest* filing that reported it
+        (often the next year's report, which repeats the period for comparison). So filtering on
+        filing_date never looks ahead, but older periods appear about a year late. The store keeps
+        every version it downloads (filing_date is part of the key), so exact point-in-time
+        history builds up from the first download onward. See the subspace-probe notebook 04."""
         name = {"income": "income_statements", "balance": "balance_sheets",
                 "cash_flow": "cash_flow_statements"}[statement]
         return self.dataset(name, tickers, start, end, backend=backend)
@@ -316,6 +324,62 @@ class Store:
         if tickers:
             lf = lf.filter(pl.col("ticker").is_in(tickers))
         return self._out(lf, backend, lazy)
+
+    def stream_status(self) -> dict[str, Any]:
+        """Whether the live stream service is running, plus its last stats
+        (subscriptions, connected, messages, rows_written, last_error)."""
+        return read_status(self.layout)
+
+    def follow(self, kind: str = "bars_1m", tickers=None, poll_seconds: float = 5.0,
+               since: datetime | None = None, timeout: float | None = None,
+               settle_seconds: float = 2.0, backend: Backend = "polars") -> Iterator:
+        """Yield new live rows as the stream service writes them (one DataFrame per batch).
+
+        Reads the files the stream service writes (it holds the only websocket connection),
+        so new data shows up once per flush (`stream_flush_seconds`, default 30 s).
+
+        since          only rows received after this UTC time (default: now, i.e. new rows only).
+                       For today's history first, call `live(kind, start=today)`.
+        timeout        stop after this many seconds (default: run until interrupted).
+        settle_seconds a flush is read only once it is this old, so a flush is never half-read.
+
+        Example:
+            for batch in store.follow("bars_1m", ["SPY", "QQQ"], timeout=600):
+                print(batch.select("ticker", "timestamp", "close"))
+        """
+        if kind not in LIVE_KINDS:
+            raise ValueError(f"kind must be one of {LIVE_KINDS}")
+        tickers = self._tickers(tickers)
+        watermark = since or datetime.now(UTC)
+        if watermark.tzinfo is None:
+            raise ValueError("since must be timezone-aware (UTC)")
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        while True:
+            cutoff = datetime.now(UTC) - timedelta(seconds=settle_seconds)
+            batch = self._live_between(kind, tickers, watermark, cutoff)
+            if batch is not None and batch.height:
+                watermark = batch["received_at"].max()
+                yield batch.to_pandas() if backend == "pandas" else batch
+            if deadline is not None and time.monotonic() >= deadline:
+                return
+            pause = poll_seconds if deadline is None else min(poll_seconds, max(0.0, deadline - time.monotonic()))
+            time.sleep(pause)
+
+    def _live_between(self, kind: str, tickers: list[str] | None, after: datetime,
+                      until: datetime) -> pl.DataFrame | None:
+        """Live rows with after < received_at <= until (day folders from the day before `after`)."""
+        first_day = (after.astimezone(ET) - timedelta(days=1)).date().isoformat()
+        files = []
+        for day_dir in sorted(self.layout.live_dir(kind).glob("date=*")):
+            if day_dir.name.split("=", 1)[1] >= first_day:
+                files += live_files(day_dir)
+        if not files:
+            return None
+        lf = pl.scan_parquet(files, missing_columns="insert", extra_columns="ignore")
+        lf = lf.filter(pl.col("received_at") > after, pl.col("received_at") <= until)
+        if tickers:
+            lf = lf.filter(pl.col("ticker").is_in(tickers))
+        return lf.sort("received_at", TIME_COLUMN[kind], "ticker").collect()
 
     def scan(self, dataset: str) -> pl.LazyFrame:
         """Lazy polars frame over every stored file of a dataset (bars_day, bars_minute, trades,

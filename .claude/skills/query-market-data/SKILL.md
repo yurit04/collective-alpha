@@ -20,6 +20,8 @@ store.bars("SPY", start="2024-06-03", end="2024-06-07", freq="1min", session="re
 store.bars(start="2024-06-03", end="2024-06-03", freq="1min", lazy=True)         # all tickers, lazy
 ```
 - Raw prices are as traded. Use `adjust=` for anything spanning splits or dividends.
+- Minute bars leave out the closing auction print; take daily volume and the official close
+  from daily bars.
 - `timestamp` is the bar start in UTC; `date` is the US/Eastern trading date.
 - Point-in-time universe: `store.universe("2010-06-30", types=["CS"])` (includes later delistings).
 
@@ -27,13 +29,20 @@ store.bars(start="2024-06-03", end="2024-06-03", freq="1min", lazy=True)        
 ```python
 store.trades("AAPL", start="2024-03-01")          # needs: subspace backfill history --dataset trades --start ... --symbols AAPL
 store.quotes("AAPL", start="2024-03-01")
-store.financials("income", tickers="AAPL", start="2020-01-01")   # filters on filing_date (no look-ahead)
+store.financials("income", tickers="AAPL", start="2020-01-01")   # filters on filing_date (see caveat below)
 store.short_interest("GME"); store.short_volume("GME"); store.news("TSLA", start="2025-01-01")
 store.splits("AAPL"); store.dividends("AAPL"); store.tickers(active=True, types=["ETF"])
 store.trading_days("2024-01-01", "2024-12-31"); store.sessions("2024-11-29")
 store.scan("bars_minute")                         # lazy polars over everything, for custom queries
+store.live("bars_1m", "SPY", start="2026-11-02")  # live capture (stream service must be running)
+for batch in store.follow("bars_1m", ["SPY"], timeout=300): ...   # new live rows as they land
 ```
 Every method takes `backend="pandas"` for pandas output.
+
+Financials caveat: each fiscal period is dated by the *latest* filing that reported it (often a
+year after the original). `filing_date` never looks ahead but makes older periods appear late.
+For backtests, use an estimated availability date (period_end + 45 days for quarterly, + 90 for
+annual) or exact SEC filing dates. Versions stored since 2026-10-31 accumulate.
 
 ## When data is missing
 - Check `store.coverage()` or `uv run subspace status`.

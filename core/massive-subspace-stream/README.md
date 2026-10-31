@@ -57,6 +57,8 @@ income = store.financials("income", tickers="AAPL")
 si = store.short_interest("GME", start="2020-01-01")
 news = store.news("TSLA", start="2025-01-01")
 live = store.bars("SPY", start="2026-10-30", freq="1min", include_live=True)
+for batch in store.follow("bars_1m", ["SPY"], timeout=600):  # new live rows as the service writes them
+    print(batch)
 lf = store.scan("bars_minute")                              # lazy polars over everything
 store.coverage()                                            # what is stored
 ```
@@ -68,6 +70,11 @@ Conventions:
 - Timestamps are UTC (`timestamp` = bar start). `date` is the US/Eastern trading date.
 - `session="regular"` uses the NYSE calendar, including early closes.
 - Delisted tickers are kept (no survivorship bias).
+- Minute bars do **not** include the closing auction print (daily bars do). Use daily bars for
+  daily volume and the official close.
+- Financial statements: Massive keeps one row per fiscal period, dated by the *latest* filing
+  that reported it, so `filing_date` is often a year after the original filing. The store keeps
+  every version it downloads, so point-in-time history accumulates from the first download.
 
 ## Datasets
 
@@ -75,7 +82,7 @@ Conventions:
 |---|---|---|
 | `bars_day`, `bars_minute` | flat files | full history from 2003-09-10; minute bars are about 100 GB |
 | `trades`, `quotes` | flat files | on demand only: about 3 GB (trades) and 9 GB (quotes) per day compressed |
-| `tickers`, `ticker_types`, `exchanges`, `market_holidays` | REST | reference data |
+| `tickers`, `ticker_types`, `exchanges`, `conditions`, `market_holidays` | REST | reference data (`conditions`: trade/quote condition codes and how they affect bars) |
 | `splits`, `dividends`, `ipos` | REST | corporate actions |
 | `income_statements`, `balance_sheets`, `cash_flow_statements`, `ratios`, `float` | REST | fundamentals |
 | `short_interest`, `short_volume`, `news` | REST | incremental |

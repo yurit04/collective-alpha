@@ -87,3 +87,63 @@ def test_service_run_end_to_end(settings, monkeypatch):
     assert df["close"].to_list() == [1.5] and df["vwap"].to_list() == [1.2]
     status = json.loads(svc.status_file.read_text())
     assert status["messages"] == {"AM": 1} and not svc.pid_file.exists()
+
+
+def _bar(sym, ts_ms, close):
+    return {"ev": "AM", "sym": sym, "s": ts_ms, "e": ts_ms + 60_000, "o": close, "h": close, "l": close,
+            "c": close, "v": 100}
+
+
+def test_follow_yields_only_new_rows(settings, monkeypatch):
+    from massive_subspace_stream import Store
+
+    layout = Layout(settings.data_root)
+    writer = LiveWriter(layout)
+    store = Store(settings=settings)
+    old = datetime(2024, 12, 2, 14, 31, tzinfo=UTC)
+    writer.add(_bar("SPY", T0, 1.0))
+    writer.flush(now=old)  # already there before following starts
+
+    # Each poll: write one new flush (SPY + QQQ), then let follow() read it.
+    flushes = iter([datetime(2024, 12, 2, 14, 32, tzinfo=UTC), datetime(2024, 12, 2, 15, 1, tzinfo=UTC)])
+
+    def fake_sleep(_):
+        now = next(flushes, None)
+        if now is None:
+            return
+        writer.add(_bar("SPY", T0 + 60_000, 2.0))
+        writer.add(_bar("QQQ", T0 + 60_000, 3.0))
+        writer.flush(now=now)  # the 15:01 flush also compacts the 14:xx parts into an hour file
+
+    monkeypatch.setattr("massive_subspace_stream._store.time.sleep", fake_sleep)
+    real_now = datetime(2024, 12, 2, 16, 0, tzinfo=UTC)
+
+    class FakeDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return real_now
+
+    monkeypatch.setattr("massive_subspace_stream._store.datetime", FakeDatetime)
+    gen = store.follow("bars_1m", tickers="SPY", poll_seconds=0, since=old, settle_seconds=0)
+    first, second = next(gen), next(gen)
+    assert first["close"].to_list() == [2.0] and first["ticker"].to_list() == ["SPY"]
+    assert second["close"].to_list() == [2.0]  # the 15:01 flush, not re-reading compacted rows
+    assert len(list(layout.live_dir("bars_1m", date(2024, 12, 2)).glob("hour-*.parquet"))) == 1
+
+
+def test_follow_timeout_and_validation(settings):
+    import pytest
+    from massive_subspace_stream import Store
+
+    store = Store(settings=settings)
+    assert list(store.follow("bars_1m", poll_seconds=0.01, timeout=0.05)) == []
+    with pytest.raises(ValueError):
+        next(store.follow("nope"))
+    with pytest.raises(ValueError):
+        next(store.follow(since=datetime(2024, 1, 1)))
+
+
+def test_stream_status_when_not_running(settings):
+    from massive_subspace_stream import Store
+
+    assert Store(settings=settings).stream_status() == {"running": False}

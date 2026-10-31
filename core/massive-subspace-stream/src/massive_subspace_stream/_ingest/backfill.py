@@ -36,7 +36,7 @@ REST_WRITE_ROWS = 3_000_000  # merge into year files this often (each merge rewr
 DISK_MARGIN_BYTES = 50 * 1024**3
 # Parquet output relative to the downloaded .csv.gz size (measured; used for disk checks).
 OUTPUT_RATIO = {"bars": 1.0, "ticks": 1.3}
-REFERENCE_FIRST = ("tickers", "ticker_types", "exchanges", "market_holidays", "splits", "dividends", "ipos")
+REFERENCE_FIRST = ("tickers", "ticker_types", "exchanges", "conditions", "market_holidays", "splits", "dividends", "ipos")
 
 
 class DiskSpaceError(RuntimeError):
