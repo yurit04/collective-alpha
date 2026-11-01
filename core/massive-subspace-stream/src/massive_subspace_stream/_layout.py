@@ -15,6 +15,8 @@ class Layout:
     <rest dataset path>/part.parquet            (snapshot datasets)
     <rest dataset path>/year=YYYY/part.parquet  (time-series datasets)
     live/{bars_1m,bars_1s,trades,quotes,luld}/date=YYYY-MM-DD/*.parquet
+    identity/snapshots/year=YYYY/part.parquet  (month-end point-in-time reference)
+    identity/{lookups,security_master,securities,security_attributes,splits,dividends}.parquet
     raw/flatfiles/<s3 key>                      (downloads, deleted after conversion by default)
     _catalog/catalog.sqlite  _logs/  _run/
     """
@@ -47,6 +49,18 @@ class Layout:
     def live_dir(self, kind: str, day: date | None = None) -> Path:
         base = self.root / "live" / kind
         return base / f"date={day.isoformat()}" if day else base
+
+    # Security master (identity layer)
+    @property
+    def identity_dir(self) -> Path:
+        return self.root / "identity"
+
+    def snapshot_file(self, year: int) -> Path:
+        return self.identity_dir / "snapshots" / f"year={year}" / "part.parquet"
+
+    def identity_file(self, name: str) -> Path:
+        """lookups, security_master, securities, security_attributes, splits, dividends."""
+        return self.identity_dir / f"{name}.parquet"
 
     # Bookkeeping
     @property

@@ -1,0 +1,5 @@
+action,ticker,date,other_ticker,other_date,split_from,split_to,note
+break,GOOG,2014-04-03,,,,,"Google's class A moved from GOOG to GOOGL on 2014-04-03; from then on GOOG is the new class C"
+link,GOOG,2014-04-02,GOOGL,2014-04-03,,,"Class A history before 2014-04-03 (traded as GOOG) continues as GOOGL"
+split,GOOGL,2014-04-03,,,1,2,"Class C distribution (one class C share per class A share) roughly halved the class A price; Massive has no record of it"
+link,UTX,2020-04-02,RTX,2020-04-03,,,"United Technologies became Raytheon Technologies (same CIK) after spinning off Carrier and Otis; spin-offs are not adjustment events, so adjusted prices drop that day"

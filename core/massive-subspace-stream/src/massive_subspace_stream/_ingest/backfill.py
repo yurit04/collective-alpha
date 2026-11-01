@@ -393,7 +393,25 @@ class Ingestor:
         removed = prune_live(self.layout, self.catalog, self.settings.keep_live_days)
         if removed:
             log.info("pruned %d old live partition(s)", removed)
+        if self.catalog.get("identity", "all"):
+            results.append(self.identity())
+        else:
+            results.append(JobResult("identity", note="skipped: never built (run `subspace identity build`)"))
         return results
+
+    def identity(self, fetch: bool = True) -> JobResult:
+        """(Re)build the security master. New month-end snapshots and dated lookups are fetched
+        when fetch=True; everything already downloaded is reused."""
+        from .._identity.run import build_identity
+
+        try:
+            s = build_identity(self.layout, self.catalog, self.rest_client if fetch else None, fetch=fetch)
+        except (RestError, FileNotFoundError) as exc:
+            log.error("identity: %s", exc)
+            return JobResult("identity", failed={"build": str(exc)})
+        note = (f"{s['securities']:,} securities; fetched {s['snapshots_fetched']} snapshot(s), "
+                f"{s['lookups_fetched']:,} lookup(s)")
+        return JobResult("identity", done=1, rows=s["segments"], note=note)
 
     def verify(self, dataset: str, start: Any = None, end: Any = None, repair: bool = False) -> dict[str, list[str]]:
         """Compare the catalog with the bucket and the files on disk.

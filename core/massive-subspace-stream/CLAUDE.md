@@ -9,14 +9,18 @@ User docs: README.md in this folder.
 |---|---|
 | `Store(root=None, settings=None)` | all reads; see below |
 | `load_settings(config_file=None, **overrides)` / `Settings` | resolved configuration |
-| `Ingestor(settings)` | `.flat(dataset, start, end, tickers)`, `.rest(names, full)`, `.initial()`, `.sync()`, `.verify()` |
+| `Ingestor(settings)` | `.flat(dataset, start, end, tickers)`, `.rest(names, full)`, `.initial()`, `.sync()`, `.verify()`, `.identity(fetch)` |
 | `StreamService(settings, channels, watchlist, watch_channels)` | `await .run()`; prefer the CLI |
 | `ConfigError`, `JobResult` | errors / job summaries |
 
 `Store` methods (all take `backend="polars"|"pandas"`):
-- `bars(tickers, start, end, freq="1d"|"1min", adjust=None|"splits"|"all", session="all"|"regular"|"extended", include_live=False, lazy=False)`
+- `bars(tickers, start, end, freq="1d"|"1min", adjust=None|"splits"|"all", session="all"|"regular"|"extended", include_live=False, by="ticker"|"security", lazy=False)`
+  (with a security master every row has `security_id`; `by="security"` returns a security's whole
+  history across renames, e.g. `bars("META", by="security")` includes the FB years)
 - `trades(tickers, start, end)`, `quotes(...)` (end defaults to start; warns if not downloaded)
-- `universe(on, types=None)`: tickers that traded that day (survivorship-free) + reference info
+- `universe(on, types=None)`: tickers that traded that day (survivorship-free) + point-in-time
+  reference info and `security_id`
+- `resolve(tickers, on)`, `securities(tickers, active)`, `security_master(tickers)`: the identity layer
 - `tickers(active, types)`, `splits()`, `dividends()`, `financials("income"|"balance"|"cash_flow", tickers, start, end)`,
   `short_interest()`, `short_volume()`, `news()`, `dataset(name, ...)` for any REST dataset
 - `trading_days(start, end)`, `sessions(start, end)` (NYSE, incl. early closes)
@@ -35,7 +39,10 @@ _storage.py     atomic Parquet writes, upserts
 _sources/       rest.py (httpx, retries, cursor pagination), flatfiles.py (boto3 S3)
 _datasets/      flat.py (CSV -> canonical schema), rest.py (REST dataset specs + normalization)
 _ingest/        backfill.py (Ingestor), stream.py (websocket service, live writer)
-_adjust.py      split/dividend factors (as-of joins)
+_adjust.py      split/dividend factors (as-of joins), keyed by security_id or ticker
+_identity/      security master: fetch.py (snapshots, dated lookups), build.py (episodes, segments,
+                linking, ids), actions.py (splits/dividends per security), checks.py, run.py,
+                overrides.csv (manual corrections, one documented row each)
 _sessions.py    exchange_calendars XNYS wrapper
 _store.py       Store
 _services.py    launchd plists
@@ -50,6 +57,12 @@ Invariants:
 - Financials: one row per period from Massive, dated by the latest filing; `filing_date` is in
   the storage key so re-filed versions accumulate. Not point-in-time before the first download.
 - Every live row has `received_at` (its flush time); compaction keeps it. `follow()` relies on it.
+- Tickers are not identifiers. `security_id` (earliest composite FIGI, else share-class FIGI, else
+  `CIK:<cik>:<ticker>`, else `SYM:<ticker>:<first date>`) is; ids must stay stable across
+  rebuilds. Rebuilt nightly by `sync` once `subspace identity build` has run. Design:
+  docs/decisions/0002-security-master.md.
+- Corporate actions are filed by Massive under the company's current ticker; the master maps
+  them to securities, and adjustment uses those (never ticker-keyed factors when a master exists).
 - Adding a REST dataset = one `RestSpec` entry in `_datasets/rest.py` (+ optional `Store` helper).
 - Flat-file throttling (HTTP 429) is retried with backoff in `FlatFileClient.download`;
   keep `download_workers` at about 4.

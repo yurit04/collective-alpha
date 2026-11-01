@@ -11,11 +11,17 @@ from typing import Any, Literal
 
 import polars as pl
 
-from ._adjust import adjust_bars
+from ._adjust import (
+    adjust_bars,
+    adjust_with_tables,
+    dividend_factor_table_from_steps,
+    split_factor_table,
+)
 from ._catalog import Catalog
 from ._config import Settings, load_settings
 from ._datasets.rest import REST_DATASETS
 from ._dates import ET, to_date, today_et
+from ._identity.build import map_to_security
 from ._ingest.stream import TIME_COLUMN, read_status
 from ._layout import Layout
 from ._sessions import filter_session, session_table, trading_days
@@ -38,6 +44,7 @@ class Store:
         self.layout = Layout(root or self.settings.data_root)
         self.root = self.layout.root
         self.catalog = Catalog(self.layout.catalog_path)
+        self._identity_cache: dict[str, tuple[float, pl.DataFrame]] = {}
 
     def __repr__(self) -> str:
         return f"Store(root='{self.root}')"
@@ -86,6 +93,77 @@ class Store:
             lf = lf.filter(pl.col("ticker").is_in(tickers))
         return lf
 
+    # ------------------------------------------------------------------ security master
+    def _identity(self, name: str) -> pl.DataFrame | None:
+        """A security-master table (cached until its file changes), or None if not built."""
+        path = self.layout.identity_file(name)
+        try:
+            mtime = path.stat().st_mtime
+        except FileNotFoundError:
+            return None
+        hit = self._identity_cache.get(name)
+        if hit is None or hit[0] != mtime:
+            hit = (mtime, pl.read_parquet(path))
+            self._identity_cache[name] = hit
+        return hit[1]
+
+    def _identity_or_empty(self, name: str) -> pl.DataFrame:
+        df = self._identity(name)
+        return df if df is not None else pl.DataFrame()
+
+    def _require_identity(self, name: str) -> pl.DataFrame:
+        df = self._identity(name)
+        if df is None:
+            raise FileNotFoundError("the security master is not built yet. Run: subspace identity build")
+        return df
+
+    @staticmethod
+    def _resolve_ids(names: list[str], on: date, master: pl.DataFrame) -> list[str]:
+        """Security ids for a mix of security ids and tickers (tickers as of `on`)."""
+        known = set(master["security_id"].to_list())
+        out = []
+        for n in names:
+            if n in known:
+                out.append(n)
+                continue
+            rows = master.filter(pl.col("ticker") == n).sort("valid_from")
+            if not rows.height:
+                raise ValueError(f"unknown ticker or security id: {n}")
+            hit = rows.filter(pl.col("valid_from") <= on).tail(1)
+            out.append((hit if hit.height else rows.head(1))["security_id"][0])
+        return list(dict.fromkeys(out))
+
+    def resolve(self, tickers, on: Any = None, backend: Backend = "polars"):
+        """Which security each ticker meant on a day (default: the latest stored day).
+
+        Returns ticker, date, security_id, name, type (null security_id: not trading then).
+        """
+        master = self._require_identity("security_master")
+        tickers = self._tickers(tickers) or []
+        day = to_date(on) or self._require_identity("securities")["last_trade"].max()
+        df = map_to_security(pl.DataFrame({"ticker": tickers, "date": [day] * len(tickers)},
+                                          schema={"ticker": pl.String, "date": pl.Date}), master)
+        secs = self._require_identity("securities").select("security_id", "name", "type")
+        return self._out(df.join(secs, on="security_id", how="left").lazy(), backend, False)
+
+    def securities(self, tickers=None, active: bool | None = None, backend: Backend = "polars"):
+        """One row per security: latest attributes, every ticker it used, first/last trade."""
+        df = self._require_identity("securities")
+        tickers = self._tickers(tickers)
+        if tickers:
+            df = df.filter(pl.col("tickers").list.eval(pl.element().is_in(tickers)).list.any())
+        if active is not None:
+            df = df.filter(pl.col("active") == active)
+        return self._out(df.lazy(), backend, False)
+
+    def security_master(self, tickers=None, backend: Backend = "polars"):
+        """One row per ticker and validity window: which security a ticker meant when."""
+        df = self._require_identity("security_master")
+        tickers = self._tickers(tickers)
+        if tickers:
+            df = df.filter(pl.col("ticker").is_in(tickers))
+        return self._out(df.lazy(), backend, False)
+
     # ------------------------------------------------------------------ bars
     def bars(
         self,
@@ -97,6 +175,7 @@ class Store:
         session: Literal["all", "regular", "extended"] = "all",
         columns: list[str] | None = None,
         include_live: bool = False,
+        by: Literal["ticker", "security"] = "ticker",
         backend: Backend = "polars",
         lazy: bool = False,
     ):
@@ -106,11 +185,29 @@ class Store:
         start/end inclusive trading dates ('YYYY-MM-DD', date, datetime, Timestamp).
         freq      '1d' (daily) or '1min'. Other bar sizes belong in feature packages.
         adjust    None (raw, as traded), 'splits', or 'all' (splits + dividends = total return).
+                  With a security master, factors follow the security, not the symbol.
         session   minute bars only: 'regular' (exchange hours, early closes respected),
                   'extended' (pre/post market), or 'all'.
         include_live  minute bars only: append live-stream bars for days not yet in the official files.
+        by        'ticker': rows traded under these symbols (a reused symbol returns several
+                  securities; tell them apart with `security_id`).
+                  'security': each ticker (as of `end`) or security id names a security, and its
+                  whole history is returned across renames, e.g. 'META' includes the FB years.
+
+        With a security master (`subspace identity build`), every row has a `security_id`.
         """
         tickers = self._tickers(tickers)
+        if by not in ("ticker", "security"):
+            raise ValueError("by must be 'ticker' or 'security'")
+        master = self._identity("security_master")
+        wanted: list[str] | None = None
+        if by == "security":
+            if master is None:
+                raise FileNotFoundError("by='security' needs the security master. Run: subspace identity build")
+            if not tickers:
+                raise ValueError("by='security' needs tickers or security ids")
+            wanted = self._resolve_ids(tickers, to_date(end) or today_et(), master)
+            tickers = master.filter(pl.col("security_id").is_in(wanted))["ticker"].unique().sort().to_list()
         if freq in ("1d", "day", "D"):
             start_d, end_d = self._range(start, end)
             files = [self.layout.bars_day_file(y) for y in range(start_d.year, end_d.year + 1)]
@@ -135,11 +232,19 @@ class Store:
         lf = self._filter(lf, tickers, start_d, end_d)
         if freq not in ("1d", "day", "D"):
             lf = filter_session(lf, session, start_d, end_d)
-        if adjust:
+        if master is not None:
+            lf = map_to_security(lf, master)
+            if wanted is not None:
+                lf = lf.filter(pl.col("security_id").is_in(wanted))
+        if adjust and master is not None:
+            div_table = dividend_factor_table_from_steps(self._identity_or_empty("dividends")) \
+                if adjust == "all" else None
+            split_table = split_factor_table(self._identity_or_empty("splits"), key="security_id")
+            lf = adjust_with_tables(lf, adjust, split_table, div_table, key="security_id")
+        elif adjust:
             lf = adjust_bars(lf, adjust, self._reference_frame("splits"),
                              self._reference_frame("dividends") if adjust == "all" else None)
-        else:
-            lf = lf.sort("ticker", "timestamp")
+        lf = lf.sort("security_id", "timestamp") if by == "security" else lf.sort("ticker", "timestamp")
         if columns:
             lf = lf.select(columns)
         return self._out(lf, backend, lazy)
@@ -277,12 +382,20 @@ class Store:
     # ------------------------------------------------------------------ universe and calendar
     def universe(self, on: Any, types: Iterable[str] | None = None, backend: Backend = "polars"):
         """Tickers that traded on a given day (from day bars, so delisted names are included),
-        joined with reference info. `types` filters by ticker type, e.g. ['CS', 'ETF', 'ADRC']."""
+        joined with reference info. `types` filters by ticker type, e.g. ['CS', 'ETF', 'ADRC'].
+
+        With a security master the info is point in time: the security behind each ticker that
+        day and its attributes from the nearest month-end snapshot (the security's latest known
+        value where the snapshot has none; old snapshots rarely carry `type`).
+        """
         day = to_date(on)
         lf = self._scan([self.layout.bars_day_file(day.year)])
         if lf is None:
             raise FileNotFoundError(f"no day bars for {day.year}. Run: subspace backfill history --dataset bars_day")
         traded = lf.filter(pl.col("date") == day).select("ticker", "close", "volume")
+        master = self._identity("security_master")
+        if master is not None:
+            return self._out(self._universe_pit(traded.collect(), day, master, types).lazy(), backend, False)
         ref = self._dataset_lazy("tickers")
         if ref is not None:
             ref_cols = ["ticker", "name", "type", "primary_exchange", "active", "composite_figi", "cik"]
@@ -295,6 +408,30 @@ class Store:
         elif types:
             raise FileNotFoundError("filtering by type needs reference tickers. Run: subspace backfill rest tickers")
         return self._out(traded.sort("ticker"), backend, False)
+
+    def _universe_pit(self, traded: pl.DataFrame, day: date, master: pl.DataFrame,
+                      types: Iterable[str] | None) -> pl.DataFrame:
+        cols = ["name", "type", "primary_exchange", "cik", "composite_figi"]
+        mapped = map_to_security(traded.with_columns(pl.lit(day).alias("date")), master).drop("date")
+        secs = self._require_identity("securities").select(
+            "security_id", "active", *[pl.col(c).alias(f"__latest_{c}") for c in cols])
+        out = mapped.join(secs, on="security_id", how="left")
+        attrs = self._identity("security_attributes")
+        if attrs is not None and attrs.height:
+            before = (attrs.filter(pl.col("as_of") <= day).sort("as_of").group_by("security_id")
+                      .agg(*[pl.col(c).last().alias(f"__before_{c}") for c in cols]))
+            after = (attrs.filter(pl.col("as_of") > day).sort("as_of").group_by("security_id")
+                     .agg(*[pl.col(c).first().alias(f"__after_{c}") for c in cols]))
+            out = out.join(before, on="security_id", how="left").join(after, on="security_id", how="left")
+            out = out.with_columns(*[pl.coalesce(f"__before_{c}", f"__after_{c}", f"__latest_{c}").alias(c)
+                                     for c in cols])
+        else:
+            out = out.with_columns(*[pl.col(f"__latest_{c}").alias(c) for c in cols])
+        out = out.select("ticker", "close", "volume", "security_id", "name", "type", "primary_exchange",
+                         "active", "composite_figi", "cik")
+        if types:
+            out = out.filter(pl.col("type").is_in(list(types)))
+        return out.sort("ticker")
 
     def trading_days(self, start: Any, end: Any = None) -> list[date]:
         start_d, end_d = self._range(start, end)

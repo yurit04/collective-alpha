@@ -28,6 +28,9 @@ backfill_app = typer.Typer(help="Download historical data.", no_args_is_help=Tru
 stream_app = typer.Typer(help="Live websocket stream service.", no_args_is_help=True)
 service_app = typer.Typer(help="Install background services (macOS launchd).", no_args_is_help=True)
 query_app = typer.Typer(help="Quick look at stored data.", no_args_is_help=True)
+identity_app = typer.Typer(help="Security master: which company each ticker meant on each day.",
+                           no_args_is_help=True)
+app.add_typer(identity_app, name="identity")
 app.add_typer(backfill_app, name="backfill")
 app.add_typer(stream_app, name="stream")
 app.add_typer(service_app, name="service")
@@ -180,6 +183,15 @@ def status() -> None:
                        f"{r['rows'] or 0:>16,}{_fmt_bytes(r['bytes']):>12}")
     disk = disk_report(layout)
     typer.echo(f"\nOn disk: {_fmt_bytes(disk['data_bytes'])}   Free: {_fmt_bytes(disk['free_bytes'])}")
+    build = catalog.get_state("identity", "last_build")
+    if build:
+        import json
+
+        b = json.loads(build)
+        typer.echo(f"Security master: {b['securities']:,} securities, built {b['built_at']} "
+                   f"(bars through {b['data_end']})")
+    else:
+        typer.echo("Security master: not built (run `subspace identity build`)")
     info = read_status(layout)
     if info["running"]:
         last = info.get("last_status", {})
@@ -372,6 +384,67 @@ def service_status() -> None:
         typer.echo(f"{name}: {_services.status(name)}")
 
 
+# ---------------------------------------------------------------------- identity
+@identity_app.command("build")
+def identity_build(
+    fetch: Annotated[bool, typer.Option(help="Download missing snapshots and dated lookups first.")] = True,
+) -> None:
+    """Build or refresh the security master (first run downloads ~210 snapshots and tens of
+    thousands of dated lookups, 10-20 minutes; later runs only fetch what is new)."""
+    _report([_ingestor().identity(fetch=fetch)])
+
+
+@identity_app.command("check")
+def identity_check() -> None:
+    """Coverage, consistency and regression checks on the built security master."""
+    import json
+
+    import polars as pl
+
+    from ._identity.checks import run_checks
+    from ._store import Store
+
+    store = Store(settings=_settings())
+    try:
+        master, secs = store.security_master(), store.securities()
+    except FileNotFoundError as exc:
+        _fail(str(exc))
+    layout = store.layout
+    bars = store.scan("bars_day").select("ticker", "date").collect()
+    report = run_checks(master, secs, bars, pl.read_parquet(layout.identity_file("splits")),
+                        pl.read_parquet(layout.identity_file("dividends")))
+    cases = report.pop("regression")
+    typer.echo(json.dumps(report, indent=2, default=str))
+    failed = 0
+    for c in cases:
+        color = {"pass": typer.colors.GREEN, "FAIL": typer.colors.RED}.get(c["result"], typer.colors.YELLOW)
+        typer.secho(f"  {c['result']:<7} {c['case']}  ({c.get('detail', '')})", fg=color)
+        failed += c["result"] == "FAIL"
+    if failed:
+        raise typer.Exit(1)
+
+
+@identity_app.command("show")
+def identity_show(ticker: Annotated[str, typer.Argument(help="A ticker or security id.")]) -> None:
+    """Every security a ticker has meant, and every ticker those securities used."""
+    import polars as pl
+
+    from ._store import Store
+
+    store = Store(settings=_settings())
+    try:
+        master = store.security_master()
+    except FileNotFoundError as exc:
+        _fail(str(exc))
+    ticker = ticker.strip().upper()
+    ids = master.filter((pl.col("ticker") == ticker) | (pl.col("security_id") == ticker))["security_id"].unique()
+    if not ids.len():
+        _fail(f"{ticker}: not in the security master")
+    rows = master.filter(pl.col("security_id").is_in(ids.to_list())).sort("security_id", "valid_from").select(
+        "security_id", "ticker", "valid_from", "valid_to", "name", "type", "cik", "method", "linked_by")
+    _show(rows, None, 50)
+
+
 # ---------------------------------------------------------------------- query
 def _show(df, csv: Path | None, rows: int) -> None:
     import polars as pl
@@ -392,6 +465,7 @@ def query_bars(
     freq: Annotated[str, typer.Option(help="1d or 1min.")] = "1d",
     adjust: Annotated[str | None, typer.Option(help="splits or all.")] = None,
     session: Annotated[str, typer.Option(help="all, regular, or extended (minute bars).")] = "all",
+    by: Annotated[str, typer.Option(help="ticker, or security (whole history across renames).")] = "ticker",
     csv: Annotated[Path | None, typer.Option(help="Write to CSV instead of printing.")] = None,
     rows: Annotated[int, typer.Option(help="Rows to print.")] = 20,
 ) -> None:
@@ -399,7 +473,11 @@ def query_bars(
     from ._store import Store
 
     store = Store(settings=_settings())
-    _show(store.bars(tickers, start, end, freq=freq, adjust=adjust, session=session), csv, rows)
+    try:
+        df = store.bars(tickers, start, end, freq=freq, adjust=adjust, session=session, by=by)
+    except (FileNotFoundError, ValueError) as exc:
+        _fail(str(exc))
+    _show(df, csv, rows)
 
 
 @query_app.command("dataset")

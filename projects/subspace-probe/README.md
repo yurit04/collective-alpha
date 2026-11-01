@@ -19,6 +19,7 @@ src/subspace_probe/   small shared helpers (chart style, timing)
 | `03_trades_quotes.ipynb` | On-demand tick data: trade sizes and conditions, bid-ask spreads, bars rebuilt from trades |
 | `04_reference_fundamentals.ipynb` | Tickers, splits, dividends, IPOs, financial statements (point-in-time), short data, news |
 | `05_realtime.ipynb` | The live stream service: status, today's live data, following new rows as they arrive |
+| `06_identity.ipynb` | The security master: renamed and reused tickers, `security_id`, history by security, adjustment and universes that follow the company |
 
 ## Running
 

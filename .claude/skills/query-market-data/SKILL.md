@@ -25,6 +25,19 @@ store.bars(start="2024-06-03", end="2024-06-03", freq="1min", lazy=True)        
 - `timestamp` is the bar start in UTC; `date` is the US/Eastern trading date.
 - Point-in-time universe: `store.universe("2010-06-30", types=["CS"])` (includes later delistings).
 
+## Companies, not tickers (security master)
+Tickers are renamed and reused (`FB` = Meta until 2022-06-08, an unrelated ETF since 2025-06;
+`META` = a Roundhill ETF in 2021-22). Every bar row has a `security_id`; follow companies by it.
+```python
+store.bars("META", start="2012-01-01", by="security", adjust="all")  # Meta's full history (FB + META)
+store.resolve(["FB"], on="2015-06-30")      # which security a ticker meant on a day
+store.securities(tickers="FB")              # all securities that used a ticker, with all their tickers
+```
+- Group, join and de-duplicate by `security_id`, never by `ticker`, in anything spanning time.
+- `by="security"` resolves tickers as of `end` (default today): use the current ticker or an id.
+- If `security_id` is missing, the master is not built: ask the user before running
+  `uv run subspace identity build` (first run is a 10-20 minute download).
+
 ## Other data
 ```python
 store.trades("AAPL", start="2024-03-01")          # needs: subspace backfill history --dataset trades --start ... --symbols AAPL
