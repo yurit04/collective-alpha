@@ -20,7 +20,15 @@ from typing import Any
 
 import polars as pl
 
-from ._client import BULK_URL, FACTS_URL, INDEX_URL, SecClient, SecError
+from ._client import (
+    BULK_URL,
+    FACTS_URL,
+    INDEX_URL,
+    SUBMISSIONS_BULK_URL,
+    SUBMISSIONS_URL,
+    SecClient,
+    SecError,
+)
 from ._config import Settings
 from ._layout import BUCKETS, Layout, bucket_of
 from ._parse import (
@@ -32,12 +40,16 @@ from ._parse import (
     parse_chunk,
     parse_companyfacts,
     parse_master_index,
+    parse_profiles_chunk,
+    parse_submission,
+    profiles_frame,
     quarter_of,
     write_atomic,
 )
 
 log = logging.getLogger("edgar_cortical_node")
 CHUNK_MEMBERS = 400  # companies per conversion task
+PROFILE_CHUNK = 5000  # submissions documents per conversion task
 
 
 @dataclass
@@ -150,6 +162,81 @@ class Ingestor:
         result.note = f"{comp.height:,} companies"
         return result
 
+    # ------------------------------------------------------------------ profiles
+    def profiles(self, force: bool = False, download: bool = True) -> JobResult:
+        """Company profiles and name histories from the SEC's bulk submissions.zip (~1.6 GB)."""
+        result = JobResult("profiles")
+        state = self.layout.read_state()
+        zip_path = self.layout.submissions_zip
+        if download:
+            remote = self.client.last_modified(SUBMISSIONS_BULK_URL)
+            if not force and state.get("profiles_loaded_at") and remote == state.get("profiles_last_modified"):
+                result.note = "submissions file unchanged; nothing to do"
+                return result
+            if force or not zip_path.exists() or remote != state.get("profiles_zip_modified"):
+                log.info("profiles: downloading submissions.zip (%s)", remote)
+                self.client.download(SUBMISSIONS_BULK_URL, zip_path)
+                state["profiles_zip_modified"] = remote
+                self.layout.write_state(state)
+        else:
+            if not zip_path.exists():
+                raise FileNotFoundError(f"{zip_path} is missing; run with download enabled")
+            remote = state.get("profiles_zip_modified")
+        with zipfile.ZipFile(zip_path) as zf:
+            # CIK##########.json is the main document; -submissions-NNN.json pages only hold old filings.
+            members = sorted(n for n in zf.namelist() if n.endswith(".json") and "-submissions-" not in n)
+        chunks = [members[i:i + PROFILE_CHUNK] for i in range(0, len(members), PROFILE_CHUNK)]
+        log.info("profiles: reading %d documents in %d chunks", len(members), len(chunks))
+        profiles: list[dict] = []
+        names: list[dict] = []
+        with ProcessPoolExecutor(max_workers=self.settings.parse_workers) as pool:
+            for n, fut in enumerate(as_completed([pool.submit(parse_profiles_chunk, str(zip_path), c)
+                                                  for c in chunks]), 1):
+                p, nm = fut.result()
+                profiles += p
+                names += nm
+                if n % 20 == 0 or n == len(chunks):
+                    log.info("profiles: %d/%d chunks, %s companies", n, len(chunks), f"{len(profiles):,}")
+        prof, nm = profiles_frame(profiles, names)
+        result.bytes = write_atomic(prof, self.layout.profiles_file) + write_atomic(nm, self.layout.names_file)
+        state = self.layout.read_state()
+        state.update({"profiles_last_modified": remote,
+                      "profiles_loaded_at": datetime.now(UTC).isoformat(timespec="seconds")})
+        self.layout.write_state(state)
+        result.done, result.rows = len(members), prof.height
+        result.note = f"{prof.height:,} companies with periodic reports or tickers"
+        return result
+
+    def refresh_profiles(self, ciks: list[str]) -> list[str]:
+        """Re-fetch submissions for some CIKs and replace their profile and names. Returns failed CIKs."""
+        if not ciks or not self.layout.profiles_file.exists():
+            return []
+        profiles: list[dict] = []
+        names: list[dict] = []
+        failed: list[str] = []
+        with ThreadPoolExecutor(max_workers=self.settings.workers) as pool:
+            futures = {pool.submit(self.client.get_json, SUBMISSIONS_URL.format(cik=c)): c for c in ciks}
+            for fut in as_completed(futures):
+                try:
+                    doc = fut.result()
+                except SecError as exc:
+                    log.warning("submissions %s: %s", futures[fut], exc)
+                    failed.append(futures[fut])
+                    continue
+                parsed = parse_submission(doc) if doc else None
+                if parsed:
+                    profiles.append(parsed[0])
+                    names += parsed[1]
+        if profiles:
+            prof, nm = profiles_frame(profiles, names)
+            done = prof["cik"].to_list()
+            for path, new in ((self.layout.profiles_file, prof), (self.layout.names_file, nm)):
+                cur = pl.read_parquet(path)
+                write_atomic(pl.concat([cur.filter(~pl.col("cik").is_in(done)), new])
+                             .sort("cik", *(["valid_from"] if "valid_from" in new.columns else []),
+                                   nulls_last=True), path)
+        return failed
+
     # ------------------------------------------------------------------ incremental
     def filers(self, day: date) -> list[str]:
         """CIKs that filed a financial report on `day` (empty on weekends and holidays)."""
@@ -205,6 +292,21 @@ class Ingestor:
             write_atomic(pl.concat([cur.filter(~pl.col("cik").is_in(upd["cik"].to_list())), upd]).sort("cik"), path)
         return rows, failed
 
+    def _sync_profiles(self, ciks: list[str]) -> str:
+        """Profiles follow the facts: monthly bulk reload, otherwise re-fetch today's filers."""
+        state = self.layout.read_state()
+        if not state.get("profiles_loaded_at"):
+            return ""
+        loaded = datetime.fromisoformat(state["profiles_loaded_at"])
+        try:
+            if datetime.now(UTC) - loaded > timedelta(days=self.settings.bulk_refresh_days):
+                return self.profiles().line()
+            failed = self.refresh_profiles(ciks)
+        except SecError as exc:
+            log.warning("profiles: %s", exc)
+            return "profiles refresh failed (retried next sync)"
+        return f"{len(ciks) - len(failed)} profile(s) refreshed" if ciks else ""
+
     def sync(self, through: date | None = None) -> JobResult:
         state = self.layout.read_state()
         if not state.get("bulk_loaded_at"):
@@ -225,13 +327,14 @@ class Ingestor:
             day += timedelta(days=1)
             days += 1
         rows, failed = self.refresh_ciks(sorted(ciks))
+        profile_note = self._sync_profiles(sorted(ciks))
         state = self.layout.read_state()
         state.update({"sync_through": max(end, date.fromisoformat(state["sync_through"])).isoformat(),
                       "retry_ciks": failed, "last_sync": datetime.now(UTC).isoformat(timespec="seconds")})
         self.layout.write_state(state)
         result.done = len(ciks) - len(failed)
         result.rows = rows
-        result.note = f"{days} day(s) of filings"
+        result.note = f"{days} day(s) of filings" + (f"; {profile_note}" if profile_note else "")
         if failed:
             result.failed = {c: "fetch failed (retried next sync)" for c in failed}
         return result

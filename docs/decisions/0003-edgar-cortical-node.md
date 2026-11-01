@@ -32,8 +32,11 @@ CIK) is the job of a later package.
   filers get halves; trailing twelve months from four quarters or two halves, available once the
   last was filed. Negative derived periods of non-negative items (revenue, capex, dividends) are
   dropped: they come from restatements between the 10-Q and the 10-K.
-- **Shares:** cover page (`dei`) > balance sheet > weighted average basic, one concept per
-  issuer (most filings), values more than 20x from the latest count dropped. Multi-class
+- **Shares:** cover page (`dei`) > balance sheet > weighted average basic as tie-break; main
+  concept per issuer (most filings), gaps filled from concepts agreeing within 1.5x, isolated
+  outliers dropped. (Until 2026-11-01: one concept only and values more than 20x from the latest
+  dropped, which cut 44% of current stocks' histories at big splits and concept switches; see
+  0004.) Multi-class
   issuers (Meta, Alphabet) have no cover-page count in company facts (per-class values are
   dimensional and excluded), so they fall back to the weighted average of all classes.
 - **SEC access:** a User-Agent with a contact address is required. The default is a placeholder;
@@ -53,6 +56,11 @@ Massive's filing date is later than the original filing in 91% (median: 365 days
   They stay an option for exact acceptance times and per-class share counts.
 - **Only security-master CIKs:** the bulk file contains every company anyway; filtering would
   make this package depend on Massive.
+
+## Company profiles (added 2026-11-01)
+The bulk submissions file (1.6 GB, monthly; filers re-fetched daily) gives profiles and dated
+name histories for 48,000 companies that filed periodic reports or list a ticker. vinculum uses
+them to check and repair Massive's CIKs; SIC codes give an industry for delisted companies too.
 
 ## Known limits
 - XBRL starts in 2009 (large filers) to 2011 (small): no EDGAR fundamentals before that.

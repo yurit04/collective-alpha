@@ -16,7 +16,7 @@ from .._catalog import Catalog
 from .._layout import Layout
 from .._sessions import trading_days
 from .._storage import upsert_parquet, write_parquet
-from .actions import mapped_dividends, mapped_splits
+from .actions import check_splits_against_prices, mapped_dividends, mapped_splits
 from .build import (
     BarIndex,
     anchors,
@@ -146,6 +146,8 @@ def build_identity(layout: Layout, catalog: Catalog, client=None, fetch: bool = 
     attrs = attributes_table(data["snapshots"], master)
     closes = map_to_security(bars.lazy().select("ticker", "date", "close"), master)
     splits = mapped_splits(data["splits"], master, securities, overrides)
+    n_splits = splits.height
+    splits = check_splits_against_prices(splits, closes)
     dividends = mapped_dividends(data["dividends"], master, securities, closes) if data["dividends"].height \
         else pl.DataFrame()
 
@@ -165,6 +167,7 @@ def build_identity(layout: Layout, catalog: Catalog, client=None, fetch: bool = 
         "lookups_needed_left": len(final.needed),
         "boundaries_from_prices": final.unresolved_boundaries,
         "links": link_stats,
+        "splits_dropped_by_price": n_splits - splits.height,
         "seconds": round((datetime.now(UTC) - started).total_seconds(), 1),
     }
     catalog.mark("identity", "all", master.height, total, source="build")

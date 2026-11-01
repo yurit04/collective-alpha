@@ -95,6 +95,8 @@ store.resolve(["FB", "META"], on="2015-06-30")   # which security each ticker me
 store.securities(tickers="FB")                   # every security that used FB, with all its tickers
 store.security_master("GOOG")                    # ticker x validity window -> security_id
 store.universe("2015-06-30", types=["CS"])       # point-in-time types and names (FB is Facebook here)
+store.security_attributes("BBG000MM2P62")        # month-end attributes (name, type, CIK) of a security
+store.security_actions("splits")                 # splits as mapped to securities (what adjust= uses)
 ```
 
 Once built, the master is used automatically:
@@ -108,6 +110,11 @@ or pass a `security_id`. `subspace sync` refreshes the master nightly (new month
 lookups only). Corrections Massive cannot supply (like Google's 2014 share-class switch) live in
 `src/massive_subspace_stream/_identity/overrides.csv`, one documented row each.
 
+Splits are checked against each security's own price: a recorded split the close does not
+reflect is dropped (185 of 6,234 testable, 3%: actions filed under the wrong company or wrong),
+and stock dividends Massive records as 1 -> N with N > 10 are read as (N-1) -> N (TotalEnergies'
+scrip dividends appear as 1 -> 91.6).
+
 Limits: spin-offs are not adjustment events (adjusted prices drop on the spin-off date);
 non-USD dividends (0.5%, mostly CAD) are not adjusted for; old
 snapshots rarely have `type`, so the security's latest known type fills the gap; ambiguous
@@ -120,6 +127,7 @@ corporate actions are counted by `subspace identity check`, not guessed.
 | `bars_day`, `bars_minute` | flat files | full history from 2003-09-10; minute bars are about 100 GB |
 | `trades`, `quotes` | flat files | on demand only: about 3 GB (trades) and 9 GB (quotes) per day compressed |
 | `tickers`, `ticker_types`, `exchanges`, `conditions`, `market_holidays` | REST | reference data (`conditions`: trade/quote condition codes and how they affect bars) |
+| `ticker_details` | REST | daily snapshot per active stock/ADR (~5,700 calls): market cap, share-class and weighted shares (ADS counts for ADRs), SIC; history builds up from the first run |
 | `splits`, `dividends`, `ipos` | REST | corporate actions |
 | `income_statements`, `balance_sheets`, `cash_flow_statements`, `ratios`, `float` | REST | fundamentals |
 | `short_interest`, `short_volume`, `news` | REST | incremental |

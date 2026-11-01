@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "massive-subspace-stream",
     "edgar-cortical-node",
+    "vinculum",
     "matplotlib>=3.9",
     "ipykernel>=6.29",
 ]
@@ -14,6 +15,7 @@ dependencies = [
 [tool.uv.sources]
 massive-subspace-stream = { workspace = true }
 edgar-cortical-node = { workspace = true }
+vinculum = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

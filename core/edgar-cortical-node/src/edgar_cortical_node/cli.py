@@ -90,6 +90,17 @@ def backfill(
 
 
 @app.command()
+def profiles(
+    force: Annotated[bool, typer.Option(help="Reload even if the file has not changed.")] = False,
+    download: Annotated[bool, typer.Option(help="Download submissions.zip (else re-parse the stored one).")] = True,
+) -> None:
+    """Load company profiles and name histories from the SEC's bulk submissions file (1.6 GB)."""
+    from ._ingest import Ingestor
+
+    _report(Ingestor(_settings()).profiles(force=force, download=download))
+
+
+@app.command()
 def sync() -> None:
     """Re-fetch companies that filed since the last sync (full reload once a month)."""
     from ._ingest import Ingestor
@@ -128,6 +139,17 @@ def show(
     with pl.Config(tbl_rows=rows * 4, tbl_width_chars=200):
         typer.echo(s.sort("item", "end").group_by("item", maintain_order=True).tail(rows)
                    .select("item", "period", "end", "value", "ttm", "filed", "source", "tag"))
+    try:
+        prof = store.profiles(cik)
+        if prof.height:
+            p = prof.row(0, named=True)
+            typer.echo(f"SIC {p['sic']} {p['sic_description'] or ''}; fiscal year end {p['fiscal_year_end']}; "
+                       f"tickers {', '.join(p['tickers']) or '-'}")
+            former = store.names(cik).filter(pl.col("valid_to").is_not_null())
+            for r in former.iter_rows(named=True):
+                typer.echo(f"  formerly {r['name']} ({r['valid_from']} to {r['valid_to']})")
+    except FileNotFoundError:
+        pass
     sh = store.shares(cik)
     if sh.height:
         typer.echo(f"shares outstanding: {sh['shares'][-1]:,.0f} at {sh['end'][-1]} ({sh['tag'][-1]})")

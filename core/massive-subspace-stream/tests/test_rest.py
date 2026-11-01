@@ -96,3 +96,35 @@ def test_rest_not_entitled_is_skipped(settings):
     rest = fake_rest({"/stocks/v1/short-volume": NotEntitledError(403, "/x", "no")})
     (result,) = Ingestor(settings, rest_client=rest).rest(["short_volume"])
     assert result.ok and "not in your plan" in result.note
+
+
+def test_ticker_details_daily_snapshot(settings):
+    rest = fake_rest({"/v3/reference/tickers": [[
+        {"ticker": "TSM", "type": "ADRC", "active": True}, {"ticker": "BRK.B", "type": "CS", "active": True},
+        {"ticker": "SPY", "type": "ETF", "active": True}, {"ticker": "GONE", "type": "CS", "active": True}]]})
+    details = {"TSM": {"ticker": "TSM", "type": "ADRC", "market_cap": 2.1e12, "share_class_shares_outstanding": 5186474000,
+                       "weighted_shares_outstanding": 5186474013, "list_date": "1997-10-09", "homepage_url": "x"},
+               "BRK.B": {"ticker": "BRK.B", "type": "CS", "market_cap": 1.16e12, "sic_code": "6331",
+                         "share_class_shares_outstanding": 1408035161, "weighted_shares_outstanding": 2140709794}}
+    gets = []
+
+    def get(path, params=None):
+        gets.append(path)
+        t = path.rsplit("/", 1)[1].replace("%2E", ".")
+        if t not in details:
+            from massive_subspace_stream._sources.rest import RestError
+            raise RestError(404, path, "not found")
+        return {"results": details[t]}
+
+    rest.get = get
+    ing = Ingestor(settings, rest_client=rest)
+    ing.rest(["tickers"])
+    (res,) = ing.rest(["ticker_details"])
+    assert res.ok and res.rows == 2 and len(gets) == 3          # ETF skipped, 404 left out
+    from massive_subspace_stream import Store
+    df = Store(settings=settings).ticker_details().sort("ticker")
+    assert df["ticker"].to_list() == ["BRK.B", "TSM"]
+    assert df.filter(pl.col("ticker") == "TSM")["share_class_shares_outstanding"][0] == 5186474000
+    assert "homepage_url" not in df.columns and df.schema["as_of"] == pl.Date
+    (again,) = ing.rest(["ticker_details"])                    # once per day
+    assert again.note == "already fetched today" and len(gets) == 3

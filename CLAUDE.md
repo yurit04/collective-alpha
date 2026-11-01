@@ -32,8 +32,9 @@ Current core graph:
 |---|---|---|
 | `massive-subspace-stream` | Massive market data: backfill, live stream, queries, security master | nothing in repo |
 | `edgar-cortical-node` | SEC EDGAR company facts: point-in-time fundamentals and share counts by CIK | nothing in repo |
+| `vinculum` | Massive x EDGAR join: checked CIKs, market cap, size universes, fundamentals per security | massive-subspace-stream, edgar-cortical-node |
 
-Planned names (not built): `vinculum` (features/signals), `unimatrix-zero` (backtesting),
+Planned names (not built): features/signals (in `vinculum` or a new package), `unimatrix-zero` (backtesting),
 `transwarp-conduit` (broker/execution), `borg-queen` (portfolio/risk/orchestration).
 
 ## Commands
@@ -45,6 +46,7 @@ uv run ruff check .                    # lint
 uv run python tools/check_architecture.py
 uv run subspace --help                 # data CLI (see core/massive-subspace-stream/README.md)
 uv run cortical --help                 # SEC EDGAR CLI (see core/edgar-cortical-node/README.md)
+uv run vinculum --help                 # market cap / universes (see core/vinculum/README.md)
 ```
 
 ## Market data
@@ -54,6 +56,8 @@ uv run cortical --help                 # SEC EDGAR CLI (see core/edgar-cortical-
   in project code. See `.claude/skills/query-market-data/SKILL.md`.
 - Bars are stored unadjusted. Pass `adjust="splits"` or `adjust="all"` when a
   study needs continuous prices.
+- Market cap, size universes and fundamentals per security come from `vinculum.Vinculum`;
+  never join EDGAR to Massive by ticker.
 
 ## Safety rules for agents
 
@@ -61,7 +65,8 @@ uv run cortical --help                 # SEC EDGAR CLI (see core/edgar-cortical-
   them, and never put them in `collective.toml` (the code rejects that).
 - Do not delete anything under the data root without asking.
 - Ask before starting long or large jobs: `backfill initial`, minute-bar history, any
-  `trades`/`quotes` download without `--symbols` (3–9 GB per day), or `service install`.
+  `trades`/`quotes` download without `--symbols` (3–9 GB per day), `cortical backfill` /
+  `cortical profiles` (1.4 / 1.6 GB), or `service install`.
 - Only one websocket connection per API key: use the stream service, don't open another.
 
 ## Conventions

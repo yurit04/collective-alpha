@@ -17,6 +17,8 @@ log = logging.getLogger("edgar_cortical_node")
 RETRY_STATUS = {429, 500, 502, 503, 504}
 BULK_URL = "https://www.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip"
 FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+SUBMISSIONS_BULK_URL = "https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip"
+SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 INDEX_URL = "https://www.sec.gov/Archives/edgar/daily-index/{year}/QTR{q}/master.{ymd}.idx"
 
 

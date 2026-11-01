@@ -35,7 +35,8 @@ TRUTH = [
     Life("REU", D(2020, 1, 2), D(2020, 7, 13), 10.0, figi="F3", cik="C3"),    # reused without a gap
     Life("REU", D(2020, 7, 14), D(2020, 12, 31), 50.0, figi="F4", cik="C4"),
     Life("AAA", D(2020, 1, 2), D(2020, 3, 31), 20.0, cik="C5"),               # renamed, no FIGI
-    Life("BBB", D(2020, 4, 1), D(2020, 12, 31), 20.2, cik="C5"),
+    Life("BBB", D(2020, 4, 1), D(2020, 5, 29), 20.2, cik="C5"),
+    Life("BBB", D(2020, 6, 1), D(2020, 12, 31), 10.1, cik="C5"),              # 2-for-1 split on 06-01
     Life("REO", D(2020, 1, 2), D(2020, 5, 29), 30.0, cik="C6"),               # reorganized, new CIK
     Life("REO", D(2020, 6, 1), D(2020, 12, 31), 30.1, cik="C7"),
     Life("GAP", D(2020, 1, 2), D(2020, 3, 31), 40.0, figi="F8", cik="C8"),    # gap, same security
@@ -113,8 +114,8 @@ def built(settings):
     catalog = Catalog(layout.catalog_path)
     bars = make_bars(TRUTH)
     write_parquet(bars, layout.bars_day_file(2020))
-    write_parquet(pl.DataFrame({"ticker": ["BBB"], "execution_date": [D(2020, 6, 1)],
-                                "split_from": [1.0], "split_to": [2.0]}),
+    write_parquet(pl.DataFrame({"ticker": ["BBB", "PAR"], "execution_date": [D(2020, 6, 1), D(2020, 9, 1)],
+                                "split_from": [1.0, 1.0], "split_to": [2.0, 3.0]}),   # PAR's: price says no
                   layout.rest_file("corporate_actions/splits"))
     write_parquet(pl.DataFrame({
         "ticker": ["NEW", "OLD", "OLD", "GAP"],
@@ -195,8 +196,10 @@ def test_overrides_break_link_and_split(built):
     splits = pl.read_parquet(layout.identity_file("splits"))
     ov = splits.filter(pl.col("source") == "override").row(0, named=True)
     assert ov["security_id"] == cla and ov["execution_date"] == date(2020, 7, 1)
-    # Massive's BBB split lands on the AAA/BBB security.
+    # Massive's BBB split lands on the AAA/BBB security; PAR's is contradicted by its price.
     assert splits.filter(pl.col("ticker") == "BBB")["security_id"][0] == "CIK:C5:AAA"
+    assert splits.filter(pl.col("ticker") == "BBB")["price_check"][0] == "confirmed"
+    assert splits.filter(pl.col("ticker") == "PAR").is_empty()
 
 
 def test_dividends_follow_current_ticker_and_dedupe(built):
@@ -270,3 +273,12 @@ def test_universe_resolve_and_securities(store):
     assert dict(zip(r["ticker"], r["security_id"])) == {"OLD": "F2", "NEW": "F1"}
     assert store.securities(tickers="OLD").height == 2
     assert store.security_master("REU").height == 2
+
+
+def test_malformed_stock_dividends_are_read_as_small_dividends():
+    from massive_subspace_stream._identity.actions import fix_stock_dividends
+
+    s = pl.DataFrame({"split_from": [1.0, 1.0, 1.0], "split_to": [91.625, 2.0, 50.0],
+                      "adjustment_type": ["stock_dividend", "stock_dividend", "forward_split"]})
+    out = fix_stock_dividends(s)
+    assert out["split_from"].to_list() == [90.625, 1.0, 1.0]   # 1 -> 91.6 is a 1.1% dividend; 2:1 and splits kept

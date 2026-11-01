@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
 
 import polars as pl
@@ -17,7 +18,11 @@ STALE_DAYS = 400
 QUARTER = (80, 100)     # days in a fiscal quarter (52/53-week years included)
 HALF = (170, 195)
 YEAR = (350, 380)
-MAX_SHARE_JUMP = 20.0   # share counts this far from the latest are filing errors
+SHARE_MATCH = 1.5       # two share concepts (or neighbouring values) "agree" within this factor
+SHARE_NEAR_DAYS = 120   # concept values this close in time are compared
+SHARE_FILL_DAYS = 100   # another concept fills in where the main one has nothing this close
+SPIKE_JUMP = 5.0        # an isolated value this far from both neighbours is a filing error
+EDGE_SLIP = 200.0       # first/last value this far from its neighbour is a unit slip
 
 SERIES_SCHEMA = {
     "cik": pl.String, "item": pl.String, "unit": pl.String, "period": pl.String,
@@ -185,29 +190,84 @@ SHARES_SCHEMA = {"cik": pl.String, "end": pl.Date, "shares": pl.Float64, "filed"
                  "available_from": pl.Date, "tag": pl.String}
 
 
-def build_shares(facts: pl.DataFrame, policy: str = "first") -> pl.DataFrame:
-    """Shares outstanding per company: one concept per company, outliers removed."""
-    f = facts.filter(_tag_col().is_in(list(SHARE_TAGS)) & (pl.col("unit") == "shares")).with_columns(
-        _tag_col().alias("__tag"))
-    if f.is_empty():
-        return pl.DataFrame(schema=SHARES_SCHEMA)
+def _share_concepts(facts: pl.DataFrame, policy: str) -> pl.DataFrame:
+    """One series per company and share concept: unit 'shares', per-class concepts dropped,
+    first-filed (or latest) value per period end, shortest duration for weighted averages."""
+    f = facts.filter(_tag_col().is_in(list(SHARE_TAGS)) & (pl.col("unit") == "shares")
+                     & (pl.col("val") > 0)).with_columns(_tag_col().alias("__tag"))
     # A concept with several values for the same filing and period is per share class
     # (dimension dropped): not usable as a company total.
     amb = (f.group_by("cik", "__tag", "accn", "start", "end").agg(pl.col("val").n_unique().alias("n"))
            .filter(pl.col("n") > 1).select("cik", "__tag").unique())
     f = f.join(amb, on=["cik", "__tag"], how="anti")
+    filings = f.group_by("cik", "__tag").agg(pl.col("accn").n_unique().alias("__filings"))
+    f = choose(f, policy)
+    return (f.with_columns(_days().fill_null(0).alias("__dur")).sort("__dur")
+            .unique(["cik", "__tag", "end"], keep="first", maintain_order=True)
+            .join(filings, on=["cik", "__tag"])
+            .select("cik", "__tag", "end", "val", "filed", "__filings").sort("cik", "end"))
+
+
+def _stitch(s: pl.DataFrame) -> pl.DataFrame:
+    """Main concept per company (reported in the most filings, then precedence), with gaps filled from other
+    concepts that agree with it: within SHARE_MATCH of the main concept at nearby dates (or at
+    the nearest date when they never overlap). A concept that disagrees (depositary vs ordinary
+    shares, a different class) is never mixed in."""
     rank = {t: i for i, t in enumerate(SHARE_TAGS)}
-    pick = (f.group_by("cik", "__tag").agg(pl.col("accn").n_unique().alias("filings"))
+    counts = (s.group_by("cik", "__tag").agg(pl.col("__filings").first().alias("n"))
+              .with_columns(pl.col("__tag").replace_strict(rank, return_dtype=pl.Int32).alias("__rank")))
+    main = (counts.sort("n", "__rank", descending=[True, False]).unique("cik", keep="first", maintain_order=True)
+            .select("cik", pl.col("__tag").alias("__main")))
+    s = s.join(main, on="cik")
+    primary = s.filter(pl.col("__tag") == pl.col("__main"))
+    other = s.filter(pl.col("__tag") != pl.col("__main"))
+    if other.is_empty():
+        return primary.drop("__main", "__filings")
+    ref = primary.select("cik", pl.col("end").alias("__pend"), pl.col("val").alias("__pval")).sort("__pend")
+    near = (other.sort("end").join_asof(ref, left_on="end", right_on="__pend", by="cik", strategy="nearest",
+                                       check_sortedness=False)
+            .with_columns((pl.col("end") - pl.col("__pend")).dt.total_days().abs().alias("__dist"),
+                          (pl.col("val") / pl.col("__pval")).alias("__ratio")))
+    close = pl.col("__dist") <= SHARE_NEAR_DAYS
+    fit = (near.filter(pl.col("__dist").is_not_null()).group_by("cik", "__tag")
+           .agg(pl.when(close.any()).then(pl.col("__ratio").filter(close).median())
+                .otherwise(pl.col("__ratio").sort_by("__dist").first()).alias("__fit")))
+    ok = fit.filter(pl.col("__fit").is_between(1 / SHARE_MATCH, SHARE_MATCH)).select("cik", "__tag")
+    fill = (near.join(ok, on=["cik", "__tag"])
+            .filter(pl.col("__dist").is_null() | (pl.col("__dist") > SHARE_FILL_DAYS))
             .with_columns(pl.col("__tag").replace_strict(rank, return_dtype=pl.Int32).alias("__rank"))
-            .sort("filings", "__rank", descending=[True, False])
-            .unique("cik", keep="first", maintain_order=True).select("cik", "__tag"))
-    s = choose(f.join(pick, on=["cik", "__tag"]), policy)
-    # Weighted averages come in several durations per period end: keep the shortest.
-    s = (s.with_columns(_days().fill_null(0).alias("__dur")).sort("__dur")
-         .unique(["cik", "end"], keep="first", maintain_order=True).sort("cik", "end"))
-    latest = pl.col("val").last().over("cik")
-    ratio = pl.col("val") / latest
-    s = s.filter((pl.col("val") > 0) & ratio.is_between(1 / MAX_SHARE_JUMP, MAX_SHARE_JUMP))
+            .sort("__rank").unique(["cik", "end"], keep="first", maintain_order=True)
+            .select(primary.columns))
+    out = pl.concat([primary, fill]).sort("cik", "end").drop("__main", "__filings")
+    # Two fill concepts can still land close together; keep one value per ~quarter.
+    gap = (pl.col("end") - pl.col("end").shift(1).over("cik")).dt.total_days()
+    return out.filter(gap.is_null() | (gap > 0))
+
+
+def _drop_spikes(s: pl.DataFrame) -> pl.DataFrame:
+    """Drop isolated filing errors (unit slips): a value far from both neighbours while the
+    neighbours agree with each other. Lasting jumps (splits, reverse splits) are kept; this
+    package has no split data to judge them (vinculum does)."""
+    lv = pl.col("val").log()
+    prev, nxt = lv.shift(1).over("cik"), lv.shift(-1).over("cik")
+    inner = (((lv - prev).abs() > math.log(SPIKE_JUMP)) & ((lv - nxt).abs() > math.log(SPIKE_JUMP))
+             & ((prev - nxt).abs() < math.log(SHARE_MATCH)))
+    # First or last value: only gross slips (a thousandfold error, not a split).
+    edge = ((prev.is_null() & ((lv - nxt).abs() > math.log(EDGE_SLIP)))
+            | (nxt.is_null() & ((lv - prev).abs() > math.log(EDGE_SLIP))))
+    for _ in range(2):
+        s = s.sort("cik", "end").filter(~inner.fill_null(False))
+    s = s.sort("cik", "end").filter(~edge.fill_null(False))
+    return s
+
+
+def build_shares(facts: pl.DataFrame, policy: str = "first") -> pl.DataFrame:
+    """Shares outstanding per company, as reported (not split-adjusted): main concept with gaps
+    filled from agreeing concepts, isolated filing errors removed."""
+    s = _share_concepts(facts, policy)
+    if s.is_empty():
+        return pl.DataFrame(schema=SHARES_SCHEMA)
+    s = _drop_spikes(_stitch(s))
     return s.select("cik", "end", pl.col("val").alias("shares"), "filed",
                     available(pl.col("filed")).alias("available_from"), pl.col("__tag").alias("tag"))
 

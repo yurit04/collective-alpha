@@ -7,6 +7,7 @@ notebook folder, so new sources can be added without crowding the project.
 notebooks/
   massive/        Massive (formerly Polygon.io) equity data via massive-subspace-stream
   edgar/          SEC EDGAR company facts via edgar-cortical-node
+  vinculum/       the Massive x EDGAR join: market cap, size universes, fundamentals per security
 src/subspace_probe/   small shared helpers (chart style, timing)
 ```
 
@@ -28,6 +29,12 @@ src/subspace_probe/   small shared helpers (chart style, timing)
 |---|---|
 | `00_tour.ipynb` | What is stored, point-in-time series, how often numbers are restated, shares outstanding, coverage of the tradable universe, cross-check against Massive's financials |
 
+## Vinculum notebooks
+
+| Notebook | What it shows |
+|---|---|
+| `00_tour.ipynb` | Checked CIKs (repaired and rejected Massive CIKs), share counts across splits and unit errors, ADR and class ratios, market cap history, agreement with Massive, size universes over time, point-in-time valuation ratios |
+
 ## Running
 
 ```bash
@@ -38,7 +45,7 @@ uv run jupyter lab projects/subspace-probe/notebooks
 In VS Code or Cursor, open a notebook and pick the workspace `.venv` kernel.
 
 Notes:
-- Notebooks read data only through `massive_subspace_stream.Store` (public API).
+- Notebooks read data only through the core packages' public APIs (`Store`, `EdgarStore`, `Vinculum`).
 - Outputs are committed so the notebooks read well on GitHub. Re-run them to refresh.
 - Real-time data comes from the stream service (`subspace stream status`). The notebooks
   never open their own websocket, because Massive allows one connection per API key.

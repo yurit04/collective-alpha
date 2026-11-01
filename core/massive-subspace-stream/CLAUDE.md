@@ -21,6 +21,10 @@ User docs: README.md in this folder.
 - `universe(on, types=None)`: tickers that traded that day (survivorship-free) + point-in-time
   reference info and `security_id`
 - `resolve(tickers, on)`, `securities(tickers, active)`, `security_master(tickers)`: the identity layer
+- `security_attributes(security_ids)`: month-end point-in-time attributes (name, type, CIK, FIGIs)
+- `security_actions("splits"|"dividends", security_ids)`: actions mapped to securities (adjust= input)
+- `ticker_details(tickers, start, end)`: daily snapshots (`as_of`) of market cap, share-class and
+  weighted shares outstanding, SIC for active CS/ADRC/OS (history only from the first refresh)
 - `tickers(active, types)`, `splits()`, `dividends()`, `financials("income"|"balance"|"cash_flow", tickers, start, end)`,
   `short_interest()`, `short_volume()`, `news()`, `dataset(name, ...)` for any REST dataset
 - `trading_days(start, end)`, `sessions(start, end)` (NYSE, incl. early closes)
@@ -63,6 +67,9 @@ Invariants:
   docs/decisions/0002-security-master.md.
 - Corporate actions are filed by Massive under the company's current ticker; the master maps
   them to securities, and adjustment uses those (never ticker-keyed factors when a master exists).
+  Mapped splits the security's own price contradicts are dropped; stock dividends recorded as
+  1 -> N (N > 10) are read as (N-1) -> N.
 - Adding a REST dataset = one `RestSpec` entry in `_datasets/rest.py` (+ optional `Store` helper).
+  Mode "details" = one request per active ticker per day (`ticker_details`).
 - Flat-file throttling (HTTP 429) is retried with backoff in `FlatFileClient.download`;
   keep `download_workers` at about 4.

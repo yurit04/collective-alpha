@@ -303,3 +303,89 @@ def test_tag_switch_keeps_the_original_filing_date():
     assert (row["value"], row["filed"]) == (200, D(2017, 8, 1))       # known in 2017, under the old tag
     latest = build_series(parse_companyfacts(doc), "revenue", CONCEPTS["revenue"], policy="latest").row(0, named=True)
     assert latest["value"] == 201
+
+
+def test_shares_keep_splits_fill_gaps_and_skip_disagreeing_concepts():
+    from edgar_cortical_node._pit import build_shares
+
+    def rows(tag, vals):
+        tax, name = tag.split(":")
+        return [{"cik": "0000004444", "taxonomy": tax, "tag": name, "unit": "shares", "start": None,
+                 "end": date.fromisoformat(e), "val": v, "accn": a, "fy": 2020, "fp": "Q1", "form": "10-Q",
+                 "filed": date.fromisoformat(f), "frame": None} for e, v, a, f in vals]
+
+    dei = rows("dei:EntityCommonStockSharesOutstanding", [
+        ("2019-04-20", 1.00e8, "D1", "2019-05-01"), ("2019-07-20", 1.01e8, "D2", "2019-08-01"),
+        ("2019-10-20", 1.01e5, "D3", "2019-11-01"),                       # isolated unit slip
+        ("2020-01-20", 1.02e8, "D4", "2020-02-01"), ("2020-04-20", 4.08e8, "D5", "2020-05-01"),  # 4:1 split
+        ("2020-07-20", 4.10e8, "D6", "2020-08-01")])
+    bs = rows("us-gaap:CommonStockSharesOutstanding", [
+        ("2017-12-31", 0.95e8, "B0", "2018-02-15"), ("2018-12-31", 0.98e8, "B1", "2019-02-15"),
+        ("2019-03-31", 1.00e8, "D1", "2019-05-01")])                       # overlaps dei: agrees
+    ads = rows("us-gaap:WeightedAverageNumberOfSharesOutstandingBasic", [
+        ("2016-12-31", 5.0e8, "W0", "2017-02-15"), ("2019-03-31", 5.0e8, "D1", "2019-05-01")])  # 5x off: never mixed
+    facts = pl.DataFrame(dei + bs + ads, schema=FACT_SCHEMA_FOR_TEST)
+    sh = build_shares(facts).sort("end")
+    assert sh["end"].min() == date(2017, 12, 31)                        # filled from the balance sheet
+    assert 5.0e8 not in sh["shares"].to_list()                          # disagreeing concept left out
+    assert 1.01e5 not in sh["shares"].to_list()                         # slip dropped
+    assert 4.08e8 in sh["shares"].to_list() and 1.00e8 in sh["shares"].to_list()   # split kept (no 20x rule)
+
+
+FACT_SCHEMA_FOR_TEST = {"cik": pl.String, "taxonomy": pl.String, "tag": pl.String, "unit": pl.String,
+                        "start": pl.Date, "end": pl.Date, "val": pl.Float64, "accn": pl.String, "fy": pl.Int32,
+                        "fp": pl.String, "form": pl.String, "filed": pl.Date, "frame": pl.String}
+
+
+def submission(cik, name, forms, former=(), tickers=()):
+    return {"cik": f"{cik:010d}", "name": name, "entityType": "operating", "sic": "3571",
+            "sicDescription": "Electronic Computers", "category": "Large accelerated filer", "fiscalYearEnd": "0930",
+            "stateOfIncorporation": "CA", "tickers": list(tickers), "exchanges": ["Nasdaq"] * len(tickers),
+            "formerNames": [{"name": n, "from": f"{a}T00:00:00.000Z", "to": f"{b}T00:00:00.000Z"} for n, a, b in former],
+            "filings": {"recent": {"form": [f for f, _ in forms], "filingDate": [d for _, d in forms]}}}
+
+
+class FakeSecWithProfiles(FakeSec):
+    def __init__(self, docs, subs):
+        super().__init__(docs)
+        self.subs = {s["cik"]: s for s in subs}
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for s in subs:
+                zf.writestr(f"CIK{s['cik']}.json", orjson.dumps(s))
+                zf.writestr(f"CIK{s['cik']}-submissions-001.json", b"{}")   # old-filings page: skipped
+        self.sub_zip = buf.getvalue()
+
+    def download(self, url, dest: Path):
+        if "submissions" not in url:
+            return super().download(url, dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(self.sub_zip)
+        return len(self.sub_zip)
+
+    def get_json(self, url):
+        if "/submissions/" in url:
+            self.requests.append(url)
+            return self.subs.get(url.split("CIK")[1][:10])
+        return super().get_json(url)
+
+
+def test_profiles_bulk_and_refresh(settings):
+    subs = [submission(1111, "ACME CORP", [("10-Q", "2023-05-01"), ("10-K", "2024-02-15")],
+                       former=[("ACME WIDGETS INC", "2001-01-01", "2015-06-30")], tickers=["ACME"]),
+            submission(7777, "JOHN SMITH", [("4", "2023-01-01")])]                     # an individual: left out
+    fake = FakeSecWithProfiles([acme()], subs)
+    ing = Ingestor(settings, client=fake)
+    res = ing.profiles()
+    store = EdgarStore(settings=settings)
+    p = store.profiles()
+    assert res.ok and p["cik"].to_list() == ["0000001111"]
+    row = p.row(0, named=True)
+    assert row["sic"] == "3571" and row["tickers"] == ["ACME"] and row["last_periodic"] == date(2024, 2, 15)
+    names = store.names(1111).sort("valid_from", nulls_last=True)
+    assert names["name"].to_list() == ["ACME WIDGETS INC", "ACME CORP"]
+    assert names["valid_to"][0] == date(2015, 6, 30) and names["valid_from"][1] == date(2015, 6, 30)
+    assert ing.profiles().note.startswith("submissions file unchanged")
+    fake.subs["0000001111"]["name"] = "ACME HOLDINGS INC"
+    assert ing.refresh_profiles(["0000001111"]) == []
+    assert store.profiles(1111)["name"][0] == "ACME HOLDINGS INC"

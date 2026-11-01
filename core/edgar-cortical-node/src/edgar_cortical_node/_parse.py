@@ -106,6 +106,74 @@ def parse_chunk(zip_path: str, members: list[str], out_dir: str, chunk_id: int) 
     return rows, companies
 
 
+# Company profiles (SEC submissions). Kept for companies that filed periodic reports or list a ticker.
+PERIODIC_FORMS = {"10-K", "10-Q", "10-K405", "10-KSB", "10-QSB", "10-KT", "10-QT", "20-F", "40-F",
+                  "10-K/A", "10-Q/A", "10-KSB/A", "10-QSB/A", "20-F/A", "40-F/A"}
+PROFILE_SCHEMA = {
+    "cik": pl.String, "name": pl.String, "entity_type": pl.String, "sic": pl.String,
+    "sic_description": pl.String, "category": pl.String, "fiscal_year_end": pl.String,
+    "state_of_incorporation": pl.String, "tickers": pl.List(pl.String), "exchanges": pl.List(pl.String),
+    "first_periodic": pl.Date, "last_periodic": pl.Date,
+}
+NAME_SCHEMA = {"cik": pl.String, "name": pl.String, "valid_from": pl.Date, "valid_to": pl.Date}
+
+
+def _day(s: Any) -> str | None:
+    return str(s)[:10] if s else None
+
+
+def parse_submission(doc: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    """One submissions document -> (profile row, name history rows), or None for entities that
+    never filed a periodic report and list no ticker (individuals, funds' series, ...)."""
+    recent = (doc.get("filings") or {}).get("recent") or {}
+    forms, dates = recent.get("form") or [], recent.get("filingDate") or []
+    periodic = sorted(d for f, d in zip(forms, dates, strict=False) if f in PERIODIC_FORMS and d)
+    tickers = [t for t in (doc.get("tickers") or []) if t]
+    if not periodic and not tickers:
+        return None
+    cik = pad_cik(doc.get("cik", 0))
+    profile = {
+        "cik": cik, "name": doc.get("name"), "entity_type": doc.get("entityType") or None,
+        "sic": doc.get("sic") or None, "sic_description": doc.get("sicDescription") or None,
+        "category": doc.get("category") or None, "fiscal_year_end": doc.get("fiscalYearEnd") or None,
+        "state_of_incorporation": doc.get("stateOfIncorporation") or None,
+        "tickers": tickers, "exchanges": [e for e in (doc.get("exchanges") or []) if e],
+        "first_periodic": periodic[0] if periodic else None, "last_periodic": periodic[-1] if periodic else None,
+    }
+    names = [{"cik": cik, "name": f.get("name"), "valid_from": _day(f.get("from")), "valid_to": _day(f.get("to"))}
+             for f in (doc.get("formerNames") or []) if f.get("name")]
+    since = max((n["valid_to"] for n in names if n["valid_to"]), default=None)
+    names.append({"cik": cik, "name": doc.get("name"), "valid_from": since, "valid_to": None})
+    return profile, names
+
+
+def profiles_frame(profiles: list[dict], names: list[dict]) -> tuple[pl.DataFrame, pl.DataFrame]:
+    strings = {"first_periodic": pl.String, "last_periodic": pl.String}
+    p = pl.DataFrame(profiles, schema={**PROFILE_SCHEMA, **strings}, orient="row").with_columns(
+        pl.col(c).str.to_date("%Y-%m-%d", strict=False) for c in strings)
+    n = pl.DataFrame(names, schema={**NAME_SCHEMA, "valid_from": pl.String, "valid_to": pl.String},
+                     orient="row").with_columns(
+        pl.col(c).str.to_date("%Y-%m-%d", strict=False) for c in ("valid_from", "valid_to"))
+    return (p.unique("cik", keep="last").sort("cik"),
+            n.filter(pl.col("name").is_not_null()).unique().sort("cik", "valid_from", nulls_last=True))
+
+
+def parse_profiles_chunk(zip_path: str, members: list[str]) -> tuple[list[dict], list[dict]]:
+    """Worker (runs in a subprocess): parse some submissions.zip members."""
+    profiles: list[dict] = []
+    names: list[dict] = []
+    with zipfile.ZipFile(zip_path) as zf:
+        for name in members:
+            try:
+                parsed = parse_submission(orjson.loads(zf.read(name)))
+            except (orjson.JSONDecodeError, KeyError, ValueError):
+                continue
+            if parsed:
+                profiles.append(parsed[0])
+                names += parsed[1]
+    return profiles, names
+
+
 def parse_master_index(text: str) -> pl.DataFrame:
     """SEC daily master index: CIK|Company Name|Form Type|Date Filed|Filename."""
     rows = []

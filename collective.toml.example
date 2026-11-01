@@ -27,3 +27,9 @@
 # requests_per_second = 8          # SEC limit is 10
 # bulk_refresh_days = 30           # full reload of the bulk file this often
 # sync_hour = 7                    # launchd daily sync (local), Tue-Sat
+
+[vinculum]
+# data_root = "~/market_data/vinculum"
+# start_year = 2003                # first year of the market-cap table
+# build_hour = 7                   # launchd nightly build (local), Tue-Sat, after both syncs
+# build_minute = 45

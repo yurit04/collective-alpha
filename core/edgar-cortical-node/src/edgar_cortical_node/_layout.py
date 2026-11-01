@@ -2,8 +2,11 @@
 
 facts/bucket=NN/part.parquet   every numeric XBRL fact, CIKs split into BUCKETS by cik % BUCKETS
 companies.parquet              cik, name, facts, last_filed, fetched_at
+profiles.parquet               company profiles (SIC, fiscal year end, tickers, ...) from submissions
+names.parquet                  company name history: cik, name, valid_from, valid_to
 state.json                     bulk file date, how far the daily sync got, CIKs to retry
 raw/companyfacts.zip           last bulk download (kept for re-parsing)
+raw/submissions.zip            last profiles bulk download
 _logs/
 """
 
@@ -35,6 +38,18 @@ class Layout:
     @property
     def companies_file(self) -> Path:
         return self.root / "companies.parquet"
+
+    @property
+    def profiles_file(self) -> Path:
+        return self.root / "profiles.parquet"
+
+    @property
+    def names_file(self) -> Path:
+        return self.root / "names.parquet"
+
+    @property
+    def submissions_zip(self) -> Path:
+        return self.root / "raw" / "submissions.zip"
 
     @property
     def state_file(self) -> Path:

@@ -1,6 +1,6 @@
 ---
 name: query-market-data
-description: How to load stored market data (Massive bars, trades, quotes, short data, news; SEC EDGAR point-in-time fundamentals and share counts) into pandas or polars, check what is downloaded, and fetch what is missing. Use for any analysis that needs market or fundamental data.
+description: How to load stored market data (Massive bars, trades, quotes, short data, news; SEC EDGAR point-in-time fundamentals and share counts; vinculum market cap, size universes and fundamentals per security) into pandas or polars, check what is downloaded, and fetch what is missing. Use for any analysis that needs market or fundamental data.
 ---
 
 # Querying market data
@@ -65,12 +65,33 @@ ciks = u["cik"].drop_nulls().to_list()
 edgar.as_of("2020-06-30", ciks=ciks, items=["revenue", "net_income", "equity"])  # knowable that day
 edgar.series("revenue", ciks=[320193])     # quarters (+ttm), halves, years; filed / available_from
 edgar.shares([320193])                     # shares outstanding history (as reported, not split-adjusted)
+edgar.profiles([320193]); edgar.names([1326801])   # SIC, fiscal year end, tickers; name history
 ```
-- Join to bars through the security master's `cik` (point in time), never by ticker.
+- Join to bars through the security master's `cik` (point in time), never by ticker; or use
+  vinculum (below), which also checks the CIK against the SEC's own name history.
 - Values are usable from `available_from` (day after filing); default is first-filed values.
 - Not split-adjusted: compare share counts across splits with Massive's splits.
 - Coverage starts 2009-2011 (XBRL); foreign filers from 2014-15; many funds/BDCs have none.
 - Refresh: `uv run cortical sync` (the first `cortical backfill` is a 1.4 GB download: ask first).
+
+## Market cap, size universes, fundamentals per security (vinculum)
+Use this instead of joining EDGAR to bars yourself: it checks CIKs, applies splits, ADR ratios
+and share classes, and fixes unit errors in filings.
+```python
+from vinculum import Vinculum
+v = Vinculum()
+v.market_cap("AAPL", start="2015-01-01")                 # daily, point in time
+v.market_cap("META", start="2012-01-01", by="security")  # across renames
+v.universe("2015-06-15", top=500)                         # ranked on the previous month end
+v.universe("2015-06-15", size="small")                    # large 1-200, mid 201-1000, small 1001-3000, micro 3001+
+v.ranks("2020-12-31")                                     # one row per company (GOOG/GOOGL once)
+v.fundamentals(["revenue", "net_income", "equity"], start="2015-01-01", freq="1m")  # TTM flows + ratios
+v.scan()                                                  # lazy polars over the whole table
+```
+- `issuer_market_cap` + `is_primary` for company-level work (ranks, size); `market_cap` per class.
+- No market cap before XBRL (2009-2011; foreign filers about 2017-18); none for delisted ADRs.
+- Ratios only for USD reporters (`currency` column). Check `cik_status` / `basis` when in doubt.
+- Rebuilt nightly (`vinculum build`, ~30 s); `vinculum check` runs the regression checks.
 
 ## When data is missing
 - Check `store.coverage()` or `uv run subspace status`.

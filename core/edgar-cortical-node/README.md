@@ -14,6 +14,7 @@ may be restated, so backtests on them look ahead. EDGAR keeps the original filin
 uv sync --all-packages
 uv run cortical init         # folders, SEC contact check
 uv run cortical backfill     # first load: 1.4 GB bulk file, converted in parallel (~10-20 min)
+uv run cortical profiles     # company profiles and name history (1.6 GB submissions file)
 uv run cortical sync         # daily: only companies that filed since the last sync
 uv run cortical status
 ```
@@ -39,6 +40,8 @@ store.shares([320193, 1326801])                         # shares outstanding his
 store.as_of("2020-06-30", ciks=[320193])                # everything knowable that day
 store.facts(320193, tags="us-gaap:Revenues")            # raw facts, every filing
 store.companies()                                       # cik, name, facts, last filing
+store.profiles([320193])                                # SIC, fiscal year end, tickers, ... (current)
+store.names([1326801])                                  # name history: Facebook Inc -> Meta Platforms
 ```
 
 CIKs can be ints or zero-padded strings. To start from a ticker, get the CIK from the security
@@ -74,17 +77,26 @@ on, 70% in 2014 (foreign filers started XBRL in 2014-15; closed-end funds and BD
 XBRL statements), 29% in mid-2011 (small companies were just starting).
 
 ### Shares outstanding
-Cover page (`dei:EntityCommonStockSharesOutstanding`) > balance sheet
-(`us-gaap:CommonStockSharesOutstanding`) > weighted average basic, one concept per company (the
-one in most filings), values more than 20x away from the latest dropped (unit slips).
+Main concept per company: the one in most filings, with ties broken by cover page
+(`dei:EntityCommonStockSharesOutstanding`) > balance sheet (`us-gaap:CommonStockSharesOutstanding`)
+> weighted average basic. Gaps are filled from other concepts that agree with it within 1.5x
+(a concept that disagrees, such as depositary vs ordinary shares, is never mixed in). Isolated
+values far from both neighbours are dropped (unit slips). Splits stay as lasting jumps: counts
+are as reported, not split-adjusted (`vinculum` converts them with each security's splits).
 Multi-class companies (Meta, Alphabet) report per-class cover counts that company facts leave
-out, so they use the weighted average of all classes. Values are as reported (not split-adjusted).
+out, so they use the weighted average of all classes.
+
+### Company profiles
+`cortical profiles` loads the SEC's bulk submissions file (monthly; the daily sync re-fetches
+companies that filed): every company that ever filed a 10-K/10-Q/20-F/40-F or lists a ticker
+(48,000), with SIC code, fiscal year end, filer category, state, current tickers and the name
+history with dates. Values are current, not point in time (the name history is dated).
 
 ## Limits
 - XBRL starts 2009 (large filers) to 2011 (small): nothing earlier.
 - Foreign filers use their own currency (`unit` column) and often `ifrs-full` tags; no FX here.
 - Several listed share classes share one CIK: mapping issuer-level shares to each traded class
-  (and not double counting market cap) is left to the package that joins EDGAR with Massive.
+  (and not double counting market cap) is done by `vinculum`.
 - No analyst estimates, earnings surprises or transcripts.
 
 ## Storage layout
@@ -93,7 +105,9 @@ out, so they use the weighted average of all classes. Values are as reported (no
 ~/market_data/edgar/
   facts/bucket=NN/part.parquet   all numeric facts, CIKs split into 64 buckets
   companies.parquet              cik, name, facts, last_filed, fetched_at
+  profiles.parquet  names.parquet   company profiles and name history (submissions)
   state.json                     bulk file date, sync progress, CIKs to retry
   raw/companyfacts.zip           last bulk download (kept for re-parsing)
+  raw/submissions.zip            last profiles download
   _logs/
 ```

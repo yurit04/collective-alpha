@@ -69,3 +69,10 @@ Massive's to within 0.2% for 99% of dividends.
 - Ambiguous corporate actions (several possible securities) are counted, not guessed silently.
 - Attributes like `type` are mostly empty in old snapshots; the security's latest known value
   fills the gap, which is a mild look-ahead for classification only.
+
+## Addendum (2026-11-01): split checks
+Found while building vinculum (0004): 185 of 6,234 testable mapped splits (3%) are not reflected
+in the security's own price (actions filed under the wrong company, or wrong); they are now
+dropped, and kept only when the close moves by about the split ratio or cannot be tested.
+Massive records some stock dividends as 1 -> N (TotalEnergies 1 -> 91.6); with N > 10 they are
+read as (N-1) -> N. Both change `adjust=` results for the securities concerned.

@@ -164,6 +164,27 @@ class Store:
             df = df.filter(pl.col("ticker").is_in(tickers))
         return self._out(df.lazy(), backend, False)
 
+    def security_attributes(self, security_ids=None, backend: Backend = "polars"):
+        """Point-in-time attributes per security at each month end (`as_of`): ticker, name, type,
+        primary_exchange, cik, FIGIs, as Massive's reference data showed them that day."""
+        df = self._require_identity("security_attributes")
+        ids = self._tickers(security_ids)
+        if ids:
+            df = df.filter(pl.col("security_id").is_in(ids))
+        return self._out(df.lazy(), backend, False)
+
+    def security_actions(self, kind: Literal["splits", "dividends"] = "splits", security_ids=None,
+                         backend: Backend = "polars"):
+        """Splits or dividends mapped to securities (what `adjust=` uses): security_id, ticker,
+        execution_date / ex_dividend_date, split_from, split_to / cash_amount, factor, ..."""
+        if kind not in ("splits", "dividends"):
+            raise ValueError("kind must be 'splits' or 'dividends'")
+        df = self._require_identity(kind)
+        ids = self._tickers(security_ids)
+        if ids:
+            df = df.filter(pl.col("security_id").is_in(ids))
+        return self._out(df.lazy(), backend, False)
+
     # ------------------------------------------------------------------ bars
     def bars(
         self,
@@ -313,7 +334,7 @@ class Store:
     def _dataset_lazy(self, name: str) -> pl.LazyFrame | None:
         spec = REST_DATASETS[name]
         base = self.layout.rest_dir(spec.path)
-        files = sorted(base.glob("year=*/part.parquet")) if spec.mode == "timeseries" else [base / "part.parquet"]
+        files = sorted(base.glob("year=*/part.parquet")) if spec.mode in ("timeseries", "details") else [base / "part.parquet"]
         return self._scan(files)
 
     def dataset(self, name: str, tickers=None, start: Any = None, end: Any = None,
@@ -372,6 +393,12 @@ class Store:
 
     def short_interest(self, tickers=None, start: Any = None, end: Any = None, backend: Backend = "polars"):
         return self.dataset("short_interest", tickers, start, end, backend=backend)
+
+    def ticker_details(self, tickers=None, start: Any = None, end: Any = None, backend: Backend = "polars"):
+        """Daily snapshots (`as_of`) of Massive's ticker details for active stocks and ADRs:
+        market cap, share-class and weighted shares outstanding (ADS counts for ADRs), SIC.
+        History starts at the first `ticker_details` refresh; Massive keeps no past counts."""
+        return self.dataset("ticker_details", tickers, start, end, backend=backend)
 
     def short_volume(self, tickers=None, start: Any = None, end: Any = None, backend: Backend = "polars"):
         return self.dataset("short_volume", tickers, start, end, backend=backend)

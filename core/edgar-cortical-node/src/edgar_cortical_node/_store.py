@@ -106,6 +106,27 @@ class EdgarStore:
         df = pl.read_parquet(path) if path.exists() else pl.DataFrame(schema=COMPANY_SCHEMA)
         return self._out(df, backend)
 
+    def profiles(self, ciks: Any = None, backend: Backend = "polars"):
+        """Company profiles from SEC submissions (current values, not point in time): name, entity
+        type, SIC code and description, filer category, fiscal year end (MMDD), state of
+        incorporation, current tickers and exchanges, first and last periodic report dates.
+        Covers every company that ever filed a 10-K/10-Q/20-F/40-F or lists a ticker."""
+        path = self.layout.profiles_file
+        if not path.exists():
+            raise FileNotFoundError("no profiles yet. Run: cortical profiles (1.6 GB download)")
+        df = pl.read_parquet(path)
+        ciks = self._ciks(ciks)
+        return self._out(df.filter(pl.col("cik").is_in(ciks)) if ciks else df, backend)
+
+    def names(self, ciks: Any = None, backend: Backend = "polars"):
+        """Company name history: cik, name, valid_from, valid_to (null = unknown start / current)."""
+        path = self.layout.names_file
+        if not path.exists():
+            raise FileNotFoundError("no profiles yet. Run: cortical profiles (1.6 GB download)")
+        df = pl.read_parquet(path)
+        ciks = self._ciks(ciks)
+        return self._out(df.filter(pl.col("cik").is_in(ciks)) if ciks else df, backend)
+
     @staticmethod
     def concepts() -> dict[str, dict]:
         return {k: {"kind": c.kind, "unit": c.unit, "tags": list(c.tags), "description": c.description}
@@ -132,10 +153,11 @@ class EdgarStore:
         return self._out(df, backend)
 
     def shares(self, ciks: Any = None, policy: Policy = "first", backend: Backend = "polars"):
-        """Shares outstanding over time: cover page (dei) > balance sheet > weighted average basic,
-        one concept per company (the one in most filings), values >20x off the latest dropped.
-        Multi-class companies have no cover-page total in company facts and use the weighted
-        average of all classes. As reported: not split-adjusted."""
+        """Shares outstanding over time, as reported (not split-adjusted: splits show as lasting
+        jumps). Main concept per company (in most filings; cover page > balance sheet > weighted
+        average on ties), gaps filled from other concepts that agree with it within 1.5x, isolated
+        filing errors (a value far from both neighbours) dropped. Multi-class companies have no
+        cover-page total in company facts and use the weighted average of all classes."""
         from ._concepts import SHARE_TAGS
 
         facts = self.facts(ciks, tags=list(SHARE_TAGS))
@@ -167,4 +189,6 @@ class EdgarStore:
         size = sum(p.stat().st_size for p in self.layout.facts_dir.rglob("*.parquet")) \
             if self.layout.facts_dir.exists() else 0
         comps = self.companies()
-        return {**state, "companies": comps.height, "facts_bytes": size, "root": str(self.root)}
+        profiles = (pl.scan_parquet(self.layout.profiles_file).select(pl.len()).collect().item()
+                    if self.layout.profiles_file.exists() else 0)
+        return {**state, "companies": comps.height, "profiles": profiles, "facts_bytes": size, "root": str(self.root)}

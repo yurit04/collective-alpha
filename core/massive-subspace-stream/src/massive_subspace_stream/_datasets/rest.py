@@ -7,6 +7,8 @@ accumulate  Full pull every refresh; rows are merged into one file by `keys`, so
             history builds up over time (e.g. float, upcoming holidays).
 timeseries  Incremental pull from the last seen date (minus `overlap_days`);
             rows are merged into per-year files by `keys`.
+details     One request per active ticker (of DETAIL_TYPES), once per day; rows dated
+            `as_of` are merged into per-year files, so a daily history builds up.
 """
 
 from __future__ import annotations
@@ -51,6 +53,12 @@ def _fin(name: str, endpoint: str, description: str) -> RestSpec:
     )
 
 
+# Ticker types whose details (share counts, market cap) are snapshotted daily.
+DETAIL_TYPES = ("CS", "ADRC", "OS")
+DETAIL_FIELDS = ("ticker", "name", "type", "cik", "composite_figi", "share_class_figi", "market_cap",
+                 "share_class_shares_outstanding", "weighted_shares_outstanding", "sic_code",
+                 "sic_description", "total_employees", "currency_name", "list_date")
+
 REST_DATASETS: dict[str, RestSpec] = {
     s.name: s
     for s in [
@@ -60,6 +68,10 @@ REST_DATASETS: dict[str, RestSpec] = {
             params={"market": "stocks"}, param_sets=({"active": "true"}, {"active": "false"}),
             sort=("ticker",),
         ),
+        RestSpec("ticker_details", "/v3/reference/tickers/{ticker}", "reference/ticker_details", "details",
+                 "Daily snapshot of share counts, market cap and SIC per active stock/ADR "
+                 "(history builds up from the first run)",
+                 date_field="as_of", keys=("ticker", "as_of"), sort=("as_of", "ticker")),
         RestSpec("ticker_types", "/v3/reference/tickers/types", "reference/ticker_types", "snapshot",
                  "Ticker type codes (CS, ETF, ADRC, ...)", params={"asset_class": "stocks", "locale": "us"},
                  limit=None),

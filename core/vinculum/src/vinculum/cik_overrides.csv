@@ -1,0 +1,3 @@
+# Manual CIK corrections, one documented row each. A row sets the CIK of a security from
+# valid_from (YYYY-MM-DD; 1900-01-01 = from the start) until its next run or override.
+security_id,valid_from,cik,note

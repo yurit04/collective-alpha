@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 
 import polars as pl
 import pyarrow.parquet as pq
@@ -22,7 +23,7 @@ import pyarrow.parquet as pq
 from .._catalog import Catalog
 from .._config import Settings
 from .._datasets.flat import FLAT_DATASETS, FlatSpec, convert_ticks, read_bars_csv
-from .._datasets.rest import REST_DATASETS, RestSpec, to_frame
+from .._datasets.rest import DETAIL_FIELDS, DETAIL_TYPES, REST_DATASETS, RestSpec, to_frame
 from .._dates import to_date, today_et
 from .._layout import Layout
 from .._sources.flatfiles import FlatFileClient, RemoteFile
@@ -275,6 +276,8 @@ class Ingestor:
         return results
 
     def _refresh_rest(self, spec: RestSpec, full: bool) -> JobResult:
+        if spec.mode == "details":
+            return self._refresh_details(spec, full)
         result = JobResult(spec.name)
         base = dict(spec.params)
         if spec.limit:
@@ -343,6 +346,62 @@ class Ingestor:
                 self.catalog.set_state(spec.name, "last_date", max_date.isoformat())
         self.catalog.set_state(spec.name, "last_refresh", datetime.now(UTC).isoformat(timespec="seconds"))
         log.info("%s: %s rows fetched", spec.name, f"{result.rows:,}")
+        return result
+
+    def _refresh_details(self, spec: RestSpec, full: bool, workers: int = 8) -> JobResult:
+        """One details request per active ticker of DETAIL_TYPES (from the stored reference
+        tickers), at most once per day unless `full`."""
+        result = JobResult(spec.name)
+        today = today_et()
+        if not full and self.catalog.get_state(spec.name, "last_date") == today.isoformat():
+            result.note = "already fetched today"
+            return result
+        ref = self.layout.rest_file(REST_DATASETS["tickers"].path)
+        if not ref.exists():
+            return JobResult(spec.name, note="skipped: needs reference tickers (subspace backfill rest tickers)")
+        tickers = (pl.read_parquet(ref, columns=["ticker", "type", "active"])
+                   .filter(pl.col("active").fill_null(True) & pl.col("type").is_in(list(DETAIL_TYPES)))
+                   ["ticker"].unique().sort().to_list())
+        log.info("%s: fetching details for %d tickers", spec.name, len(tickers))
+
+        def one(ticker: str) -> dict | None:
+            try:
+                res = self.rest_client.get(spec.endpoint.format(ticker=quote(ticker, safe=""))).get("results") or {}
+            except NotEntitledError:
+                raise
+            except RestError as exc:
+                if exc.status == 404:
+                    return None
+                raise
+            return {k: res.get(k) for k in DETAIL_FIELDS} | {"ticker": ticker}
+
+        rows: list[dict] = []
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(one, t): t for t in tickers}
+            for fut in as_completed(futures):
+                try:
+                    row = fut.result()
+                except NotEntitledError:
+                    raise
+                except RestError as exc:
+                    result.failed[futures[fut]] = str(exc)
+                    continue
+                if row:
+                    rows.append(row)
+        if rows:
+            df = (to_frame(rows).with_columns(pl.lit(today).alias("as_of"))
+                  .with_columns(pl.col(c).cast(pl.Float64) for c in
+                                ("market_cap", "share_class_shares_outstanding", "weighted_shares_outstanding")))
+            years, _ = self._write_timeseries(spec, df)
+            for year in sorted(years):
+                path = self.layout.rest_file(spec.path, year)
+                self.catalog.mark(spec.name, str(year), pq.read_metadata(path).num_rows, path.stat().st_size,
+                                  source=spec.endpoint)
+            result.rows, result.done = len(rows), 1
+            self.catalog.set_state(spec.name, "last_date", today.isoformat())
+        self.catalog.set_state(spec.name, "last_refresh", datetime.now(UTC).isoformat(timespec="seconds"))
+        if len(result.failed) > len(tickers) // 10:
+            log.error("%s: %d of %d requests failed", spec.name, len(result.failed), len(tickers))
         return result
 
     def _write_timeseries(self, spec: RestSpec, df: pl.DataFrame) -> tuple[set[int], date | None]:
