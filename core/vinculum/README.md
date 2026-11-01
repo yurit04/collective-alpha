@@ -52,6 +52,13 @@ SEC count usable that day (the day after filing; stale after 400 days). Columns 
 `issuer_market_cap` (the whole company, valued through its primary class) and `is_primary`
 (the company's most traded class; size ranks use only these rows, so GOOG and GOOGL count once).
 
+The panel holds common stock and ADRs: Massive's CS/ADRC/OS types plus old untyped securities
+whose name looks like equity. MLP units and preferred-share ADRs (Energy Transfer, Banco
+Bradesco) count as equity when Massive types them so; warrants, SPAC units, notes and baby
+bonds are left out by name, when-issued lines (HONw, DHR.WD) by ticker. `ranks()` and
+`universe()` keep securities without a recorded type (companies delisted before Massive's
+snapshots carried one, such as Dell or Broadcom); filter on `types` only to narrow further.
+
 ### CIK statuses
 
 | status | meaning |

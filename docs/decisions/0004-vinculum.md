@@ -63,3 +63,15 @@ of common-stock dollar volume since 2010; market cap on 92%+ since 2012; nothing
 No market cap before XBRL (2009-2011; foreign filers about 2017-18). ADR and class ratios use
 today's counts, so delisted ADRs have none. Ratios only for USD reporters. Size by market cap,
 not free float.
+
+## Addendum (2026-11-01): the equity filter was too eager
+A code review found three filters silently dropping companies. The when-issued regex matched
+every ticker ending in `WI` (597 securities: BBWI, AWI, POWI, SWI). The name screen rejected
+MLP "Common Units" (ET, PAA, EPD), ADRs on preferred shares (BBD, ABV), "Senior" and "Unit"
+in company names, and BDCs called "Fund": 409 CS/ADRC securities, 84 of them liquid. And
+`ranks`/`universe` filtered on `type in (CS, ADRC)`, which excluded every company delisted
+before Massive's snapshots carried a type (607 of 3,930 companies on 2012-06-29, among them
+Dell, Broadcom, Altera, SanDisk): exactly the acquired names a survivorship-free universe must
+keep. Now: a bare `WI` is not when-issued; typed CS/ADRC names are screened only for warrants,
+units-with-warrants, notes and baby bonds (the wider screen stays for untyped securities); a
+null type passes the `types` filter. The panel grew by 465k rows; all 22 checks still pass.

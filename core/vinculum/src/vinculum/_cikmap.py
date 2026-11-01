@@ -109,8 +109,9 @@ class _Edgar:
 
 
 def _equity(runs: pl.DataFrame) -> pl.Expr:
-    return ((pl.col("type").is_null() | pl.col("type").is_in(EQUITY_TYPES))
-            & pl.col("names").list.eval(pl.element().map_elements(looks_equity, return_dtype=pl.Boolean)).list.all())
+    by_name = pl.struct("names", "type").map_elements(
+        lambda s: all(looks_equity(n, s["type"]) for n in s["names"]), return_dtype=pl.Boolean)
+    return (pl.col("type").is_null() | pl.col("type").is_in(EQUITY_TYPES)) & by_name
 
 
 def _conflicts(runs: pl.DataFrame) -> set[tuple[str, int]]:

@@ -30,6 +30,8 @@ SECURITIES = [
     ("S5", "OMGA", "OMEGA INC Class A", "CS", "0000000005", 3000.0, 1_000),
     ("S6", "OMGB", "OMEGA INC Class B", "CS", "0000000005", 2.0, 5_000_000),
     ("S7", "ALPHw", "ALPHA CORP WHEN ISSUED", "CS", "0000000001", 25.0, 10_000),
+    ("S8", "ETWI", "Eta Transfer LP Common Units", "CS", "0000000008", 10.0, 200_000),   # MLP, ticker ends in WI
+    ("S9", "NULT", "NULL TYPE CO", None, "0000000009", 8.0, 300_000),                   # delisted before types
 ]
 
 
@@ -100,8 +102,14 @@ class FakeStore:
         return [d for d in DAYS if start <= d <= end]
 
     def resolve(self, tickers, on=None):
-        ids = {t: sid for sid, t, *_ in SECURITIES}
+        ids = {t: sid for sid, t, *_ in SECURITIES}   # OLDA (ALPHA's former ticker) no longer trades
         return pl.DataFrame({"ticker": list(tickers), "security_id": [ids.get(t) for t in tickers]})
+
+    def security_master(self, tickers=None):
+        rows = [(t, DAYS[0], None, sid) for sid, t, *_ in SECURITIES] + [("OLDA", D(2015, 1, 1), D(2019, 12, 31), "S1")]
+        df = pl.DataFrame(rows, schema={"ticker": pl.String, "valid_from": pl.Date, "valid_to": pl.Date,
+                                        "security_id": pl.String}, orient="row")
+        return df.filter(pl.col("ticker").is_in(list(tickers))) if tickers else df
 
 
 def count(cik, end, shares, filed, tag="dei:EntityCommonStockSharesOutstanding"):
@@ -112,14 +120,15 @@ class FakeEdgar:
     """The parts of edgar_cortical_node.EdgarStore that vinculum uses."""
 
     def profiles(self):
-        return pl.DataFrame({"cik": ["0000000001", "0000000002", "0000000004", "0000000005"],
-                             "tickers": [["ALPH"], ["BETA"], ["DLTA"], ["OMGA", "OMGB"]],
-                             "first_periodic": [D(2010, 1, 1)] * 4, "last_periodic": [D(2022, 3, 1)] * 4})
+        return pl.DataFrame({"cik": ["0000000001", "0000000002", "0000000004", "0000000005", "0000000008", "0000000009"],
+                             "tickers": [["ALPH"], ["BETA"], ["DLTA"], ["OMGA", "OMGB"], ["ETWI"], []],
+                             "first_periodic": [D(2010, 1, 1)] * 6, "last_periodic": [D(2022, 3, 1)] * 6})
 
     def names(self):
-        return pl.DataFrame({"cik": ["0000000001", "0000000002", "0000000004", "0000000005"],
-                             "name": ["ALPHA CORP", "BETA HOLDINGS INC", "DELTA PLC", "OMEGA INC"],
-                             "valid_from": [None] * 4, "valid_to": [None] * 4},
+        return pl.DataFrame({"cik": ["0000000001", "0000000002", "0000000004", "0000000005", "0000000008", "0000000009"],
+                             "name": ["ALPHA CORP", "BETA HOLDINGS INC", "DELTA PLC", "OMEGA INC", "ETA TRANSFER LP",
+                                      "NULL TYPE CO"],
+                             "valid_from": [None] * 6, "valid_to": [None] * 6},
                             schema={"cik": pl.String, "name": pl.String, "valid_from": pl.Date, "valid_to": pl.Date})
 
     def shares(self, ciks):
@@ -135,6 +144,8 @@ class FakeEdgar:
             count("0000000004", D(2021, 12, 31), 500e6, D(2022, 3, 1)),
             count("0000000005", D(2020, 12, 31), 1e6, D(2021, 2, 15), "us-gaap:WeightedAverageNumberOfSharesOutstandingBasic"),
             count("0000000005", D(2021, 9, 30), 1e6, D(2021, 11, 5), "us-gaap:WeightedAverageNumberOfSharesOutstandingBasic"),
+            count("0000000008", D(2020, 12, 31), 100e6, D(2021, 2, 15)),
+            count("0000000009", D(2020, 12, 31), 100e6, D(2021, 2, 15)),
         ]
         df = pl.DataFrame(rows, schema={"cik": pl.String, "end": pl.Date, "shares": pl.Float64, "filed": pl.Date,
                                         "available_from": pl.Date, "tag": pl.String}, orient="row")
@@ -173,8 +184,13 @@ def test_names():
     assert names_match("QUALITY SYS INC", "QUALITY SYSTEMS INC")
     assert names_match("HILFIGER TOMMY CORP", "TOMMY HILFIGER CORP")
     assert not names_match("DOVER MOTORSPORTS INC", "DOVER DOWNS GAMING & ENTERTAINMENT INC")
-    assert not looks_equity("B. Riley Financial, Inc. 5.00% Senior Notes due 2026")
+    assert not looks_equity("B. Riley Financial, Inc. 5.00% Senior Notes due 2026", "CS")
+    assert not looks_equity("Acme Acquisition Corp Units, each consisting of one share and one warrant", "CS")
     assert looks_equity("Apple Inc.")
+    # Massive's type decides for CS/ADRC; the wider net is for untyped old securities only.
+    for name in ("Energy Transfer LP Common Units", "Banco Bradesco S.A. ADS (Each representing one Preferred Share)",
+                 "Senior Housing Properties Trust", "UNIT Corporation", "Blackstone Secured Lending Fund"):
+        assert looks_equity(name, "CS") and not looks_equity(name, None)
 
 
 def test_cik_map_verifies_repairs_and_rejects(v):
@@ -183,7 +199,9 @@ def test_cik_map_verifies_repairs_and_rejects(v):
     assert st["S1"] == ("0000000001", "verified")
     assert st["S2"] == ("0000000002", "repaired")   # bogus shared CIK, found by name
     assert st["S3"] == (None, "rejected")
-    assert "S7" not in v.market_cap()["security_id"].to_list()   # when-issued line left out
+    ids = set(v.market_cap()["security_id"])
+    assert "S7" not in ids                        # when-issued line left out
+    assert {"S8", "S9"} <= ids                    # ...but not tickers ending in WI, MLP units or untyped names
 
 
 def test_split_and_unit_slip(v):
@@ -219,6 +237,9 @@ def test_ranks_and_universe(v):
     r = v.ranks(D(2021, 6, 1))
     assert r["ticker"].to_list()[:3] == ["ALPH", "OMGB", "BETA"] or r["ticker"][0] == "ALPH"
     assert "OMGA" not in r["ticker"].to_list()                       # one row per company
+    assert "NULT" in r["ticker"].to_list()                           # no recorded type still counts
+    adr_only = v.ranks(D(2021, 6, 1), types=("ADRC",))["ticker"].to_list()
+    assert "NULT" in adr_only and "ALPH" not in adr_only
     assert set(r["size"]) == {"large"} and SIZE_BUCKETS["large"] == (1, 200)
     u = v.universe(D(2021, 6, 15), top=2)
     assert u["rank_date"][0] == D(2021, 5, 31) and u.height == 2
@@ -237,6 +258,12 @@ def test_fundamentals_point_in_time(v):
     assert day(D(2021, 11, 8))["book_to_market"] == pytest.approx(2000 / 5e9)
     m = v.fundamentals(["revenue"], start=D(2021, 1, 1), end=D(2021, 12, 31))   # month ends
     assert m["date"].n_unique() == 12
+
+
+def test_delisted_ticker_by_security(v):
+    old = v.market_cap("OLDA", by="security", start=D(2021, 6, 1), end=D(2021, 6, 1))
+    assert old["security_id"].to_list() == ["S1"]                    # ALPHA's former ticker finds ALPHA
+    assert v.market_cap("OLDA", start=D(2021, 6, 1), end=D(2021, 6, 1)).is_empty()
 
 
 def test_checks_and_status_run(v):

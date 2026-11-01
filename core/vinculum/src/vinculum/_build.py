@@ -35,14 +35,17 @@ PANEL_SCHEMA = {
 PLAUSIBLE = (10 ** -5.5, 3.0)   # median daily turnover outside this: market cap withheld
 
 
-WHEN_ISSUED = r"(w|\.WD|\.WI|WI)$"
+# Massive's when-issued suffixes: a lowercase w (HONw) or .WD / .WI (DHR.WD). Never a bare
+# "WI": BBWI, AWI and POWI are ordinary tickers.
+WHEN_ISSUED = r"(w|\.WD|\.WI)$"
 
 
 def equity_securities(securities: pl.DataFrame) -> pl.DataFrame:
     """Common stock and ADRs (and untyped old securities whose name looks like equity). Baby
     bonds, warrants and units typed CS are left out by name, when-issued listings (HONw,
     DHR.WD) by ticker."""
-    ok = securities["name"].map_elements(looks_equity, return_dtype=pl.Boolean, skip_nulls=False)
+    ok = pl.Series([looks_equity(n, t) for n, t in zip(securities["name"], securities["type"], strict=True)],
+                   dtype=pl.Boolean)
     wi = pl.col("tickers").list.eval(pl.element().str.contains(WHEN_ISSUED)).list.all()
     return (securities.with_columns(ok.fill_null(True).alias("__eq"))
             .filter((pl.col("type").is_in(EQUITY_TYPES) | pl.col("type").is_null()) & pl.col("__eq") & ~wi)
@@ -213,9 +216,11 @@ def build(store, edgar, layout: Layout, start_year: int = 2003, years: list[int]
         implausible += panel.filter(pl.col("implausible")).select("security_id", "shares_end").n_unique()
         log.info("market cap %d: %s rows, %.0f%% with market cap", y, f"{panel.height:,}",
                  100 * panel["market_cap"].is_not_null().mean() if panel.height else 0)
+    all_years = [int(p.parent.name.split("=")[1]) for p in layout.market_cap_files()]
     info = {
         "built_at": datetime.now(UTC).isoformat(timespec="seconds"), "seconds": round(time.time() - t0, 1),
-        "through": last.isoformat(), "years": [min(todo), max(todo)], "rows": rows,
+        "through": last.isoformat(), "years": [min(all_years), max(all_years)], "rewritten": [min(todo), max(todo)],
+        "rows": rows,
         "cik_status": dict(cik_map.group_by("status").len().iter_rows()),
         "basis": dict(basis.group_by("basis").len().iter_rows()),
         "share_counts": counts.height, "share_jumps": int(counts["jump"].sum()),

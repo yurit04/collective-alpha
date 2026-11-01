@@ -20,7 +20,8 @@ User docs: README.md in this folder. Design: docs/decisions/0004-vinculum.md.
   date, security_id, ticker, type, cik, cik_status, close (raw), volume, dollar_volume,
   split_factor, shares (that day's units), shares_end, shares_filed, shares_tag, shares_jump,
   basis_ratio, basis, market_cap, issuer_market_cap, is_primary, implausible
-- `ranks(on, types=("CS","ADRC"))`: one row per company (primary class), rank, size
+- `ranks(on, types=("CS","ADRC"))`: one row per company (primary class), rank, size; a null
+  `type` (delisted before Massive carried types) always passes the `types` filter
 - `universe(on, top=None, size=None, types=..., rebalance="monthly"|"daily")`: ranked on the
   previous month end (monthly) or `on`; rows of `on` for the chosen companies
 - `fundamentals(items, start, end, tickers=None, by=..., freq="1m"|"1d", primary_only=True,
@@ -50,4 +51,9 @@ Invariants:
 - Market cap uses only SEC counts with available_from <= date and end >= date - 400 days.
 - `shares_now` is in today's units of the security: market cap = adjusted close x shares_now x basis.
 - Size ranks use `is_primary` rows only (one per company) and `issuer_market_cap`.
+- The equity filter trusts Massive's type: the name screen for typed CS/ADRC catches only
+  warrants, SPAC units, notes and baby bonds (MLP "Common Units" and preferred-share ADRs are
+  equity); the wider screen (UNITS, PFD, FUND, SENIOR) applies to untyped securities only.
+  When-issued tickers end in a lowercase `w`, `.WD` or `.WI`; never match a bare `WI`.
+- Tickers given with `by="security"` that no longer trade resolve to their last holder.
 - Everything under the data root is derived: `vinculum build` may overwrite it all.

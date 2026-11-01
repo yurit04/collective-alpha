@@ -91,9 +91,19 @@ class Vinculum:
         return pl.scan_parquet(files)
 
     def _ids(self, tickers: list[str], on: date | None) -> list[str]:
-        """Security ids for tickers as of `on` (ids pass through)."""
+        """Security ids for tickers as of `on` (ids pass through). A ticker not trading on
+        `on` (delisted: TWTR) means the security that last held it by then, as in
+        `Store.bars(by="security")`."""
         res = self.store.resolve(tickers, on=on) if on else self.store.resolve(tickers)
         found = dict(zip(res["ticker"], res["security_id"], strict=False))
+        missing = [t.upper() for t in tickers if not found.get(t.upper())]
+        if missing:
+            m = self.store.security_master(missing)
+            if m.height:
+                before = pl.col("valid_from") <= on if on else pl.lit(True)
+                last = (m.with_columns(before.alias("__ok")).sort("__ok", "valid_from")
+                        .group_by("ticker").agg(pl.col("security_id").last()))
+                found.update(dict(zip(last["ticker"], last["security_id"], strict=False)))
         return [found.get(t.upper()) or t for t in tickers]
 
     # ------------------------------------------------------------------ built tables
@@ -171,11 +181,14 @@ class Vinculum:
 
     def ranks(self, on: Any, types: Iterable[str] | None = ("CS", "ADRC"), backend: Backend = "polars"):
         """Companies ranked by market cap on a day (one row per company: its primary class).
-        Columns: rank, size (large/mid/small/micro), security_id, ticker, cik, issuer_market_cap."""
+        Columns: rank, size (large/mid/small/micro), security_id, ticker, cik, issuer_market_cap.
+        `types` keeps those Massive types plus securities with no recorded type (companies
+        delisted before Massive's snapshots carried one: Dell, Broadcom, SanDisk); the panel
+        already holds equity only, so leaving them out would drop exactly the acquired ones."""
         day = _day(on)
         lf = self.scan().filter((pl.col("date") == day) & pl.col("is_primary") & pl.col("issuer_market_cap").is_not_null())
         if types:
-            lf = lf.filter(pl.col("type").is_in(list(types)))
+            lf = lf.filter(pl.col("type").is_in(list(types)) | pl.col("type").is_null())
         df = (lf.select("date", "security_id", "ticker", "type", "cik", "issuer_market_cap").collect()
               .sort("issuer_market_cap", descending=True).with_row_index("rank", offset=1))
         bucket = pl.lit("micro")

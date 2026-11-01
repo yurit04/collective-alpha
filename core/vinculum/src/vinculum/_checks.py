@@ -58,10 +58,11 @@ def run_checks(v) -> list[tuple[str, bool, str]]:
         j = (cmp.join(mc, on="security_id").filter(pl.col("market_cap").is_not_null())
              .with_columns(((pl.col("market_cap") / pl.col("massive_market_cap") - 1).abs() < 0.1).alias("ok")))
         cal = j.filter(pl.col("basis").is_in(["calibrated", "calibrated_raw", "rescaled", "override"]))
-        out.append((f"calibrated: market cap within 10% of Massive's ({last})", cal["ok"].mean() >= 0.95,
-                    f"{cal['ok'].mean():.1%} of {cal.height:,}"))
+        share = lambda df: df["ok"].mean() or 0.0  # noqa: E731  (None on an empty frame)
+        out.append((f"calibrated: market cap within 10% of Massive's ({last})", share(cal) >= 0.95,
+                    f"{share(cal):.1%} of {cal.height:,}"))
         out.append(("all: market cap within 10% of Massive's (SEC and Massive counts differ for some)",
-                    j["ok"].mean() >= 0.85, f"{j['ok'].mean():.1%} of {j.height:,}"))
+                    share(j) >= 0.85, f"{share(j):.1%} of {j.height:,}"))
 
     m = v.cik_map()
     tasr = m.filter(pl.col("security_id").str.ends_with(":TASR"))
@@ -83,5 +84,6 @@ def run_checks(v) -> list[tuple[str, bool, str]]:
                 f"min {c12['mcap'].min():.1%}"))
 
     biggest = lf.filter(pl.col("is_primary")).select(pl.col("issuer_market_cap").max()).collect().item()
-    out.append(("no company above $8T", biggest is not None and biggest < 8e12, f"max {biggest / 1e12:.2f}T"))
+    out.append(("no company above $8T", biggest is not None and biggest < 8e12,
+                f"max {biggest / 1e12:.2f}T" if biggest is not None else "no market caps"))
     return out

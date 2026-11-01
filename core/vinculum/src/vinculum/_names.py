@@ -101,14 +101,29 @@ def key_expr(col: str) -> pl.Expr:
     return pl.col(col).map_elements(key, return_dtype=pl.String)
 
 
-# Securities that are not common equity even when typed CS (or untyped in old snapshots):
-# warrants, rights, units, notes and baby bonds, preferreds, structured products, funds.
+# Securities that are not common equity even when Massive types them CS or ADRC: warrants,
+# rights, SPAC units, notes and baby bonds, trust preferreds, exchange-traded products.
 NOT_EQUITY = re.compile(
-    r"\b(WTS?|WARRANTS?|WT\d|RIGHTS?|RTS|UNITS?|NOTES?|NTS|DEBENTURES?|DEB|PFD|PREFERRED|PREF|"
-    r"SPARQS|PERQS|TRUPS|QUIPS|TOPRS|CAP SECS|TRUST PFD|SUBORDINATED|SR NT|SENIOR|DUE \d|"
-    r"\d+(\.\d+)?\s?%|ETF|ETN|FUND|INDEX|ISHARES|PROSHARES|SPDR|DEPOSITARY SHARES? EACH REPRESENTING)\b")
+    r"\b(WTS?|WARRANTS?|WT\d|RIGHTS?|RTS|UNITS?,? EACH CONSISTING|NOTES?|NTS|DEBENTURES?|DEB|"
+    r"SPARQS|PERQS|TRUPS|QUIPS|TOPRS|CAP SECS|TRUST PFD|SUBORDINATED|SR NT|SENIOR NT|SENIOR NOTES?|"
+    r"DUE \d|\d+(\.\d+)?\s?%|ETF|ETN|ISHARES|PROSHARES|SPDR)\b")
+# Untyped securities (old snapshots rarely carry `type`) get a wider net: preferreds, funds,
+# partnership and trust units, preferred depositary shares. These words also appear in real
+# equity names (Energy Transfer LP Common Units, Banco Bradesco ADS each representing one
+# preferred share, Senior Housing Properties Trust), so they are not used when Massive's
+# type already says common stock or ADR.
+NOT_EQUITY_UNTYPED = re.compile(
+    r"\b(UNITS?|PFD|PREFERRED|PREF|SENIOR|FUND|INDEX|TRUST UNITS?|DEPOSITARY SHARES? EACH REPRESENTING)\b")
+TYPED_EQUITY = ("CS", "ADRC", "OS", "GDR", "NYRS")
 
 
-def looks_equity(name: str | None) -> bool:
-    """False for names that describe warrants, units, notes, preferreds, funds, ..."""
-    return not (name and NOT_EQUITY.search(name.upper()))
+def looks_equity(name: str | None, sec_type: str | None = None) -> bool:
+    """False for names that describe warrants, units, notes, baby bonds, ... With a Massive
+    equity `type` only those are excluded; untyped names are also screened for preferreds,
+    funds and partnership units."""
+    if not name:
+        return True
+    up = name.upper()
+    if NOT_EQUITY.search(up):
+        return False
+    return sec_type in TYPED_EQUITY or not NOT_EQUITY_UNTYPED.search(up)
