@@ -6,12 +6,14 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "massive-subspace-stream",
+    "edgar-cortical-node",
     "matplotlib>=3.9",
     "ipykernel>=6.29",
 ]
 
 [tool.uv.sources]
 massive-subspace-stream = { workspace = true }
+edgar-cortical-node = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -13,6 +13,7 @@ resolution-markers = [
 [manifest]
 members = [
     "collective-alpha",
+    "edgar-cortical-node",
     "massive-subspace-stream",
     "subspace-probe",
 ]
@@ -615,6 +616,27 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/68/bc/d36966de7304047a1001a7559fbf266c464bb5d8cc85464536ef8c9bcc32/distlib-0.4.4.tar.gz", hash = "sha256:ca4175b4ac7f71223cc30ed7248c45d2b38c2439d8ee6e498ab67ed63cf3508d", size = 621304, upload-time = "2026-10-16T13:56:34.203Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/2b/238f02a4927fa2e27aa995371d240a468b52e42eae44a678434aff736b38/distlib-0.4.4-py2.py3-none-any.whl", hash = "sha256:cf09d55b1e85a89576b036aeb71550bfd68320f3f21761ca329eadadad918638", size = 472099, upload-time = "2026-10-16T13:56:32.053Z" },
+]
+
+[[package]]
+name = "edgar-cortical-node"
+version = "0.1.0"
+source = { editable = "core/edgar-cortical-node" }
+dependencies = [
+    { name = "httpx" },
+    { name = "orjson" },
+    { name = "polars" },
+    { name = "pyarrow" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "orjson", specifier = ">=3.10" },
+    { name = "polars", specifier = ">=1.20" },
+    { name = "pyarrow", specifier = ">=18" },
+    { name = "typer", specifier = ">=0.12" },
 ]
 
 [[package]]
@@ -2532,6 +2554,7 @@ name = "subspace-probe"
 version = "0.1.0"
 source = { editable = "projects/subspace-probe" }
 dependencies = [
+    { name = "edgar-cortical-node" },
     { name = "ipykernel" },
     { name = "massive-subspace-stream" },
     { name = "matplotlib" },
@@ -2539,6 +2562,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "edgar-cortical-node", editable = "core/edgar-cortical-node" },
     { name = "ipykernel", specifier = ">=6.29" },
     { name = "massive-subspace-stream", editable = "core/massive-subspace-stream" },
     { name = "matplotlib", specifier = ">=3.9" },

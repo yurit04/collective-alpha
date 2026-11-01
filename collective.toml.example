@@ -19,3 +19,11 @@
 # launchd daily sync time (local), Tue-Sat
 # sync_hour = 6
 # sync_minute = 30
+
+[edgar_cortical_node]
+# data_root = "~/market_data/edgar"
+# The SEC requires a contact e-mail in the User-Agent; the default is a placeholder.
+# user_agent = "your-name your@email.example"
+# requests_per_second = 8          # SEC limit is 10
+# bulk_refresh_days = 30           # full reload of the bulk file this often
+# sync_hour = 7                    # launchd daily sync (local), Tue-Sat

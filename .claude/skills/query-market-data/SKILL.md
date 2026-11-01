@@ -1,6 +1,6 @@
 ---
 name: query-market-data
-description: How to load stored Massive market data (bars, trades, quotes, fundamentals, short data, news) into pandas or polars, check what is downloaded, and fetch what is missing. Use for any analysis that needs market data.
+description: How to load stored market data (Massive bars, trades, quotes, short data, news; SEC EDGAR point-in-time fundamentals and share counts) into pandas or polars, check what is downloaded, and fetch what is missing. Use for any analysis that needs market or fundamental data.
 ---
 
 # Querying market data
@@ -52,10 +52,25 @@ for batch in store.follow("bars_1m", ["SPY"], timeout=300): ...   # new live row
 ```
 Every method takes `backend="pandas"` for pandas output.
 
-Financials caveat: each fiscal period is dated by the *latest* filing that reported it (often a
-year after the original). `filing_date` never looks ahead but makes older periods appear late.
-For backtests, use an estimated availability date (period_end + 45 days for quarterly, + 90 for
-annual) or exact SEC filing dates. Versions stored since 2026-10-31 accumulate.
+Massive financials caveat: each fiscal period is dated by the *latest* filing that reported it
+(often a year after the original) and may be restated. For backtests use EDGAR (below).
+
+## Point-in-time fundamentals and shares (SEC EDGAR)
+```python
+from edgar_cortical_node import EdgarStore, CONCEPTS
+edgar = EdgarStore()
+u = store.universe("2020-06-30", types=["CS"])                # point-in-time CIK per traded ticker
+cik = u.filter(pl.col("ticker") == "AAPL")["cik"][0]
+ciks = u["cik"].drop_nulls().to_list()
+edgar.as_of("2020-06-30", ciks=ciks, items=["revenue", "net_income", "equity"])  # knowable that day
+edgar.series("revenue", ciks=[320193])     # quarters (+ttm), halves, years; filed / available_from
+edgar.shares([320193])                     # shares outstanding history (as reported, not split-adjusted)
+```
+- Join to bars through the security master's `cik` (point in time), never by ticker.
+- Values are usable from `available_from` (day after filing); default is first-filed values.
+- Not split-adjusted: compare share counts across splits with Massive's splits.
+- Coverage starts 2009-2011 (XBRL); foreign filers from 2014-15; many funds/BDCs have none.
+- Refresh: `uv run cortical sync` (the first `cortical backfill` is a 1.4 GB download: ask first).
 
 ## When data is missing
 - Check `store.coverage()` or `uv run subspace status`.

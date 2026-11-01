@@ -6,6 +6,7 @@ notebook folder, so new sources can be added without crowding the project.
 ```
 notebooks/
   massive/        Massive (formerly Polygon.io) equity data via massive-subspace-stream
+  edgar/          SEC EDGAR company facts via edgar-cortical-node
 src/subspace_probe/   small shared helpers (chart style, timing)
 ```
 
@@ -20,6 +21,12 @@ src/subspace_probe/   small shared helpers (chart style, timing)
 | `04_reference_fundamentals.ipynb` | Tickers, splits, dividends, IPOs, financial statements (point-in-time), short data, news |
 | `05_realtime.ipynb` | The live stream service: status, today's live data, following new rows as they arrive |
 | `06_identity.ipynb` | The security master: renamed and reused tickers, `security_id`, history by security, adjustment and universes that follow the company |
+
+## EDGAR notebooks
+
+| Notebook | What it shows |
+|---|---|
+| `00_tour.ipynb` | What is stored, point-in-time series, how often numbers are restated, shares outstanding, coverage of the tradable universe, cross-check against Massive's financials |
 
 ## Running
 

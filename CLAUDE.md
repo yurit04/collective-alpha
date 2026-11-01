@@ -30,7 +30,8 @@ Current core graph:
 
 | Package | Purpose | Depends on |
 |---|---|---|
-| `massive-subspace-stream` | Massive market data: backfill, live stream, queries | nothing in repo |
+| `massive-subspace-stream` | Massive market data: backfill, live stream, queries, security master | nothing in repo |
+| `edgar-cortical-node` | SEC EDGAR company facts: point-in-time fundamentals and share counts by CIK | nothing in repo |
 
 Planned names (not built): `vinculum` (features/signals), `unimatrix-zero` (backtesting),
 `transwarp-conduit` (broker/execution), `borg-queen` (portfolio/risk/orchestration).
@@ -43,6 +44,7 @@ uv run pytest                          # offline tests (live API tests: uv run p
 uv run ruff check .                    # lint
 uv run python tools/check_architecture.py
 uv run subspace --help                 # data CLI (see core/massive-subspace-stream/README.md)
+uv run cortical --help                 # SEC EDGAR CLI (see core/edgar-cortical-node/README.md)
 ```
 
 ## Market data
