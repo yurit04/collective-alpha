@@ -118,7 +118,8 @@ def show(
         typer.echo(v.basis(sid).select("type", "basis_ratio", "basis", "massive_shares", "sec_shares"))
         month = mc.with_columns(pl.col("date").dt.strftime("%Y-%m").alias("m")).group_by("m").agg(pl.all().last())
         typer.echo(month.sort("date").tail(rows).select("date", "ticker", "close", "shares", "market_cap",
-                                                         "issuer_market_cap", "is_primary", "shares_end"))
+                                                         "issuer_market_cap", "is_primary", "shares_end",
+                                                         "float_fraction", "float_date"))
 
 
 @app.command()
@@ -126,18 +127,20 @@ def universe(
     on: Annotated[str, typer.Argument(help="Date (YYYY-MM-DD).")],
     top: Annotated[int | None, typer.Option(help="The N largest companies.")] = None,
     size: Annotated[str | None, typer.Option(help="large, mid, small or micro (comma-separated).")] = None,
+    by: Annotated[str, typer.Option(help="market_cap or float_market_cap.")] = "market_cap",
     rows: Annotated[int, typer.Option()] = 20,
 ) -> None:
     """A size universe on a day (ranked at the previous month end)."""
     import polars as pl
 
     try:
-        u = _vinculum().universe(on, top=top, size=size.split(",") if size else None)
+        u = _vinculum().universe(on, top=top, size=size.split(",") if size else None, by=by)
     except (FileNotFoundError, ValueError) as exc:
         _fail(str(exc))
     typer.echo(f"{u.height:,} companies (ranked on {u['rank_date'][0] if u.height else '-'})")
     with pl.Config(tbl_rows=rows, tbl_width_chars=160):
-        typer.echo(u.head(rows).select("rank", "size", "ticker", "rank_market_cap", "market_cap", "close"))
+        typer.echo(u.head(rows).select("rank", "size", "ticker", "rank_market_cap", "market_cap", "float_fraction",
+                                       "close"))
 
 
 @service_app.command("install")

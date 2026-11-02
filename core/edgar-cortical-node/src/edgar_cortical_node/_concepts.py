@@ -76,6 +76,11 @@ CONCEPTS: dict[str, Concept] = {
                "ifrs-full:CashAndCashEquivalents"),
     "long_term_debt": _c("instant", "currency", "Long-term debt", "us-gaap:LongTermDebt",
                          "us-gaap:LongTermDebtNoncurrent", "ifrs-full:NoncurrentFinancialLiabilities"),
+    # 10-K cover page
+    "public_float": _c("instant", "currency",
+                       "Market value of common equity held by non-affiliates (10-K cover), as of the "
+                       "last business day of the second fiscal quarter; `end` is that date",
+                       "dei:EntityPublicFloat", nonnegative=True),
 }
 
 # Share counts, in precedence order (see EdgarStore.shares).

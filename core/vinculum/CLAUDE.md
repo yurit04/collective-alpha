@@ -19,11 +19,16 @@ User docs: README.md in this folder. Design: docs/decisions/0004-vinculum.md.
 - `market_cap(tickers, start, end, by="ticker"|"security", primary_only=False, lazy=False)`:
   date, security_id, ticker, type, cik, cik_status, close (raw), volume, dollar_volume,
   split_factor, shares (that day's units), shares_end, shares_filed, shares_tag, shares_jump,
-  basis_ratio, basis, market_cap, issuer_market_cap, is_primary, implausible
-- `ranks(on, types=("CS","ADRC"))`: one row per company (primary class), rank, size; a null
-  `type` (delisted before Massive carried types) always passes the `types` filter
-- `universe(on, top=None, size=None, types=..., rebalance="monthly"|"daily")`: ranked on the
-  previous month end (monthly) or `on`; rows of `on` for the chosen companies
+  basis_ratio, basis, market_cap, issuer_market_cap, is_primary, implausible,
+  float_fraction, float_date, float_market_cap, issuer_float_market_cap (public float from the
+  latest 10-K, usable the day after filing, for 400 days)
+- `ranks(on, types=("CS","ADRC"), by="market_cap"|"float_market_cap")`: one row per company
+  (primary class), rank, size, issuer_market_cap, issuer_float_market_cap; a null `type`
+  (delisted before Massive carried types) always passes the `types` filter
+- `universe(on, top=None, size=None, types=..., rebalance="monthly"|"daily", by=...)`: ranked on
+  the previous month end (monthly) or `on`; rows of `on` for the chosen companies
+- `public_float(tickers, start, end)`: per 10-K: cik, float_date, public_float (USD),
+  available_from, issuer_market_cap on the float date, ratio, unit_factor, float_fraction, status
 - `fundamentals(items, start, end, tickers=None, by=..., freq="1m"|"1d", primary_only=True,
   ratios=True, policy="first")`: flows as TTM, instants latest, stale after 400 days, `currency`,
   ratios over issuer_market_cap for USD reporters
@@ -39,7 +44,8 @@ _layout.py    paths, atomic writes, build.json
 _names.py     company-name tokens and matching (Massive vs SEC names), looks_equity()
 _cikmap.py    CIK runs per security, verification, conflicts, repair by name, overrides, cik_on()
 _shares.py    split attribution, restated-basis choice, spikes, unit levels by turnover, basis ratios
-_build.py     equity filter, liquidity table, calibration, yearly market-cap panels, build()
+_build.py     equity filter, liquidity table, calibration, yearly market-cap panels, public float
+              (float_table after the panels, then add_float rewrites them), scan_panels, build()
 _store.py     Vinculum (reads, ranks, universes, fundamentals)
 _checks.py    `vinculum check`
 _services.py  launchd plist (com.collective-alpha.vinculum.build)
@@ -56,4 +62,9 @@ Invariants:
   equity); the wider screen (UNITS, PFD, FUND, SENIOR) applies to untyped securities only.
   When-issued tickers end in a lowercase `w`, `.WD` or `.WI`; never match a bare `WI`.
 - Tickers given with `by="security"` that no longer trade resolve to their last holder.
+- Float fraction = public float / issuer market cap on the float date (company-wide, every class);
+  kept only within FLOAT_RANGE after a 1000^n unit fix; usable from the 10-K's available_from.
+  It needs the built panels, so it is computed after them and the rewritten years get the columns.
+- Read panels through `scan_panels` (fixed schema): a partial rebuild leaves older files without
+  the float columns.
 - Everything under the data root is derived: `vinculum build` may overwrite it all.

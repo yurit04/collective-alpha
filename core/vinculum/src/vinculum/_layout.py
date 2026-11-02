@@ -5,6 +5,7 @@ cik_map.parquet              CIK per security and validity window, with how it w
 share_counts.parquet         SEC share counts per security, in today's units of the security
 split_attribution.parquet    which of a security's splits apply to the SEC's counts
 basis.parquet                basis ratio per security (traded units per SEC unit)
+public_float.parquet         public float per company and 10-K, as a fraction of market cap
 market_cap/year=YYYY/part.parquet   one row per equity security and trading day
 build.json                   when it was built, from which inputs, check summary
 _logs/

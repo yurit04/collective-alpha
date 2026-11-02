@@ -8,7 +8,8 @@ It depends on `massive-subspace-stream` (prices, the security master) and `edgar
 - **share counts in the security's own units** (splits, ADR ratios, share classes, unit errors);
 - a **daily market cap** for every stock and ADR since XBRL began (2009-2011), point in time;
 - **size universes** (top N, large/mid/small/micro), survivorship free;
-- **point-in-time fundamentals per security**, with valuation ratios.
+- **point-in-time fundamentals per security**, with valuation ratios;
+- **public float** per company from its 10-K, and float-adjusted market cap and size ranks.
 
 Design: `docs/decisions/0004-vinculum.md`.
 
@@ -35,6 +36,8 @@ v.market_cap("AAPL", start="2015-01-01")                 # daily, point in time
 v.market_cap("META", start="2012-01-01", by="security")  # follows the company across renames
 v.universe("2015-06-15", top=500)                         # the 500 largest companies that day
 v.universe("2015-06-15", size=["small", "micro"])         # ranks 1001+
+v.universe("2015-06-15", top=500, by="float_market_cap")  # ranked on float-adjusted size
+v.public_float("WMT")                                     # every 10-K's public float and fraction
 v.ranks("2020-12-31")                                     # every company, ranked by market cap
 v.fundamentals(["revenue", "net_income", "equity"], start="2015-01-01", freq="1m")
 v.cik_map(); v.share_counts("BBG000B9XRY4"); v.basis("BBG000B9XRY4")
@@ -58,6 +61,31 @@ Bradesco) count as equity when Massive types them so; warrants, SPAC units, note
 bonds are left out by name, when-issued lines (HONw, DHR.WD) by ticker. `ranks()` and
 `universe()` keep securities without a recorded type (companies delisted before Massive's
 snapshots carried one, such as Dell or Broadcom); filter on `types` only to narrow further.
+
+### Public float
+
+Each 10-K's cover states the market value of the common equity held by non-affiliates
+(`dei:EntityPublicFloat`), as of the last business day of the second fiscal quarter. Dividing it
+by the company's market cap on that day gives the **float fraction**. That needs no share count
+of its own, and it covers every class, listed or not: Meta's unlisted Class B is outside its
+float. From the day after the 10-K it applies to every class of the company, for up to 400 days:
+
+- `float_fraction`, `float_date`: the latest usable fraction and the date it was measured;
+- `float_market_cap = market_cap x float_fraction`, and `issuer_float_market_cap` for the company;
+- `ranks(..., by="float_market_cap")` and `universe(..., by="float_market_cap")` size companies
+  by float, as indexes do. Companies without a usable float are left out of those ranks.
+
+A fraction above 1.1 or below 0.01 is withheld (`implausible`). Usually that's a share count
+out of date on the float date. A fraction off by a power of 1000 (a filing in thousands) is
+moved back (`unit_fixed`). Fractions between 1 and 1.1 count as 1. `public_float()` lists every
+filing with its status.
+
+How it compares (2026-11-01 build):
+- 54k of 70k filings are usable.
+- The fraction is present on 90-95% of common-stock market cap a year, from 2013.
+- The median gap to Massive's free-float percentage is 4 points. Massive counts per listed class,
+  so it puts Meta at 99.9% where the SEC float says 86%.
+- Known controlled companies come out right: Walmart 54%, Dell 40%.
 
 ### CIK statuses
 
@@ -103,13 +131,16 @@ snapshots carried one, such as Dell or Broadcom); filter on `types` only to narr
 - Multi-class companies without a company-wide SEC count after some date (Berkshire after 2016)
   have no market cap from then on; tracking stocks (Liberty) get none.
 - Ratios only for USD reporters (no FX conversion).
-- Size buckets use market cap, not free float.
+- Size buckets use market cap by default; `by="float_market_cap"` uses the SEC's public float,
+  which counts officers, directors and 10% holders as affiliates (narrower than index free float),
+  is measured once a year, and is missing for foreign filers (ADRs, Canadian 40-F filers) and
+  before 2012.
 
 ## Storage layout
 
 ```
 ~/market_data/vinculum/
-  cik_map.parquet  share_counts.parquet  split_attribution.parquet  basis.parquet
+  cik_map.parquet  share_counts.parquet  split_attribution.parquet  basis.parquet  public_float.parquet
   market_cap/year=YYYY/part.parquet
   build.json   _logs/
 ```

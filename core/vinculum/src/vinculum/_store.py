@@ -13,6 +13,8 @@ from ._config import Settings, load_settings
 from ._layout import Layout
 
 Backend = Literal["polars", "pandas"]
+SizeBy = Literal["market_cap", "float_market_cap"]
+SIZE_COLUMNS = {"market_cap": "issuer_market_cap", "float_market_cap": "issuer_float_market_cap"}
 STALE_DAYS = 400
 # Russell-style size buckets by issuer market-cap rank (1 = largest).
 SIZE_BUCKETS = {"large": (1, 200), "mid": (201, 1000), "small": (1001, 3000), "micro": (3001, None)}
@@ -85,10 +87,12 @@ class Vinculum:
 
     def scan(self) -> pl.LazyFrame:
         """Lazy frame over the whole market-cap table (one row per equity security and day)."""
+        from ._build import scan_panels
+
         files = self.layout.market_cap_files()
         if not files:
             raise FileNotFoundError("market cap table is not built yet. Run: vinculum build")
-        return pl.scan_parquet(files)
+        return scan_panels(files)
 
     def _ids(self, tickers: list[str], on: date | None) -> list[str]:
         """Security ids for tickers as of `on` (ids pass through). A ticker not trading on
@@ -133,6 +137,25 @@ class Vinculum:
         ids = self._list(security_ids)
         return self._out(df.filter(pl.col("security_id").is_in(ids)) if ids else df, backend)
 
+    def public_float(self, tickers=None, start: Any = None, end: Any = None, backend: Backend = "polars"):
+        """Public float per company and 10-K (`dei:EntityPublicFloat`, the market value held by
+        non-affiliates): cik, float_date, public_float (USD as filed), available_from,
+        market_cap_date, issuer_market_cap (on the float date), ratio, unit_factor,
+        float_fraction (null unless plausible), status (ok, unit_fixed, no_market_cap,
+        implausible). `tickers` are resolved to CIKs as of `end`; start/end filter float_date."""
+        df = self._table("public_float")
+        s, e = _day(start), _day(end)
+        if s:
+            df = df.filter(pl.col("float_date") >= s)
+        if e:
+            df = df.filter(pl.col("float_date") <= e)
+        names = self._list(tickers)
+        if names:
+            ids = self._ids(names, e)
+            ciks = self.cik_map(ids)["cik"].drop_nulls().unique().to_list()
+            df = df.filter(pl.col("cik").is_in(ciks))
+        return self._out(df, backend)
+
     def market_cap(self, tickers=None, start: Any = None, end: Any = None, by: Literal["ticker", "security"] = "ticker",
                    primary_only: bool = False, lazy: bool = False, backend: Backend = "polars"):
         """Daily market cap per equity security (point in time: the SEC count usable that day).
@@ -140,7 +163,9 @@ class Vinculum:
         Columns: date, security_id, ticker, type, cik, cik_status, close (raw), volume,
         dollar_volume, split_factor, shares (in that day's units), shares_end, shares_filed,
         shares_tag, shares_jump, basis_ratio, basis, market_cap, issuer_market_cap (all listed
-        classes of the company, from its primary class), is_primary, implausible.
+        classes of the company, from its primary class), is_primary, implausible, float_fraction
+        (the company's public float / market cap from its latest 10-K, usable the day after
+        filing, for 400 days), float_date, float_market_cap, issuer_float_market_cap.
         by='security' follows companies across renames (tickers resolved as of `end`).
         """
         lf = self.scan()
@@ -179,18 +204,24 @@ class Vinculum:
             raise ValueError(f"no market-cap data before {first}")
         return dates[-1]
 
-    def ranks(self, on: Any, types: Iterable[str] | None = ("CS", "ADRC"), backend: Backend = "polars"):
-        """Companies ranked by market cap on a day (one row per company: its primary class).
-        Columns: rank, size (large/mid/small/micro), security_id, ticker, cik, issuer_market_cap.
+    def ranks(self, on: Any, types: Iterable[str] | None = ("CS", "ADRC"), by: SizeBy = "market_cap",
+              backend: Backend = "polars"):
+        """Companies ranked by size on a day (one row per company: its primary class).
+        Columns: rank, size (large/mid/small/micro), security_id, ticker, cik, issuer_market_cap,
+        issuer_float_market_cap. by="market_cap" ranks on issuer_market_cap; by="float_market_cap"
+        on issuer_float_market_cap (companies without a usable public float are left out).
         `types` keeps those Massive types plus securities with no recorded type (companies
         delisted before Massive's snapshots carried one: Dell, Broadcom, SanDisk); the panel
         already holds equity only, so leaving them out would drop exactly the acquired ones."""
+        if by not in SIZE_COLUMNS:
+            raise ValueError(f"unknown by={by!r}; choose from {list(SIZE_COLUMNS)}")
+        col = SIZE_COLUMNS[by]
         day = _day(on)
-        lf = self.scan().filter((pl.col("date") == day) & pl.col("is_primary") & pl.col("issuer_market_cap").is_not_null())
+        lf = self.scan().filter((pl.col("date") == day) & pl.col("is_primary") & pl.col(col).is_not_null())
         if types:
             lf = lf.filter(pl.col("type").is_in(list(types)) | pl.col("type").is_null())
-        df = (lf.select("date", "security_id", "ticker", "type", "cik", "issuer_market_cap").collect()
-              .sort("issuer_market_cap", descending=True).with_row_index("rank", offset=1))
+        df = (lf.select("date", "security_id", "ticker", "type", "cik", "issuer_market_cap", "issuer_float_market_cap")
+              .collect().sort(col, descending=True).with_row_index("rank", offset=1))
         bucket = pl.lit("micro")
         for name, (lo, hi) in reversed(list(SIZE_BUCKETS.items())):
             cond = pl.col("rank") >= lo if hi is None else pl.col("rank").is_between(lo, hi)
@@ -199,14 +230,15 @@ class Vinculum:
 
     def universe(self, on: Any, top: int | None = None, size: str | Iterable[str] | None = None,
                  types: Iterable[str] | None = ("CS", "ADRC"), rebalance: Literal["monthly", "daily"] = "monthly",
-                 backend: Backend = "polars"):
-        """Size universe on a day, survivorship free: companies chosen by market-cap rank on the
+                 by: SizeBy = "market_cap", backend: Backend = "polars"):
+        """Size universe on a day, survivorship free: companies chosen by size rank on the
         rank date (previous month end by default), then their primary class's row on `on` (left
         out if it did not trade that day). top=N for the N largest; size= 'large' (ranks 1-200),
-        'mid' (201-1000), 'small' (1001-3000), 'micro' (3001+), or a list of them."""
+        'mid' (201-1000), 'small' (1001-3000), 'micro' (3001+), or a list of them.
+        by="float_market_cap" ranks on float-adjusted size instead (see `ranks`)."""
         day = _day(on)
         rd = self.rank_date(day, rebalance)
-        r = self.ranks(rd, types)
+        r = self.ranks(rd, types, by=by)
         if top is not None:
             r = r.filter(pl.col("rank") <= top)
         if size is not None:
@@ -216,7 +248,7 @@ class Vinculum:
                 raise ValueError(f"unknown size {sorted(unknown)}; choose from {list(SIZE_BUCKETS)}")
             r = r.filter(pl.col("size").is_in(sizes))
         today = self.scan().filter(pl.col("date") == day).collect()
-        out = (r.select("security_id", "rank", "size", pl.col("issuer_market_cap").alias("rank_market_cap"))
+        out = (r.select("security_id", "rank", "size", pl.col(SIZE_COLUMNS[by]).alias("rank_market_cap"))
                .join(today, on="security_id").with_columns(pl.lit(rd).alias("rank_date")).sort("rank"))
         return self._out(out, backend)
 

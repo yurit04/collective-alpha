@@ -32,6 +32,16 @@ PANEL_SCHEMA = {
     "market_cap": pl.Float64, "issuer_market_cap": pl.Float64, "is_primary": pl.Boolean,
     "implausible": pl.Boolean,
 }
+FLOAT_SCHEMA = {"float_fraction": pl.Float64, "float_date": pl.Date, "float_market_cap": pl.Float64,
+                "issuer_float_market_cap": pl.Float64}
+FLOAT_TABLE_SCHEMA = {
+    "cik": pl.String, "float_date": pl.Date, "public_float": pl.Float64, "available_from": pl.Date,
+    "market_cap_date": pl.Date, "issuer_market_cap": pl.Float64, "ratio": pl.Float64, "unit_factor": pl.Float64,
+    "float_fraction": pl.Float64, "status": pl.String,
+}
+FLOAT_STALE_DAYS = 400      # a public float is used until this long after its 10-K became usable
+FLOAT_RANGE = (0.01, 1.1)   # plausible public float / market cap; 1-1.1 is read as 1 (all public)
+FLOAT_FIX_RANGE = (0.05, 1.1)  # a ratio moved by 1000^n must land here to count as a unit slip
 PLAUSIBLE = (10 ** -5.5, 3.0)   # median daily turnover outside this: market cap withheld
 
 
@@ -181,6 +191,72 @@ def year_panel(store, year: int, equity: pl.DataFrame, cik_map: pl.DataFrame, co
     return df.cast(PANEL_SCHEMA).sort("date", "security_id")
 
 
+def scan_panels(files: list[Path]) -> pl.LazyFrame:
+    """Lazy frame over market-cap year files. Files written before the float columns existed
+    (a partial rebuild) read them as null."""
+    schema = {**PANEL_SCHEMA, **FLOAT_SCHEMA}
+    if not files:
+        return pl.LazyFrame(schema=schema)
+    return pl.scan_parquet(files, schema=schema, missing_columns="insert", extra_columns="ignore")
+
+
+def float_table(edgar, primary: pl.LazyFrame) -> pl.DataFrame:
+    """Public float per company (10-K cover, `dei:EntityPublicFloat`) as a fraction of its
+    market cap on the float date.
+
+    `primary`: date, cik, issuer_market_cap of the companies' primary classes (the built panel).
+    The fraction divides the dollar float by the issuer market cap on the float date (the last
+    trading day on or before it, within a week), so it needs no share count of its own.
+    Statuses: ok; unit_fixed (off by a power of 1000, as in share counts); no_market_cap;
+    implausible (outside FLOAT_RANGE even after the unit fix). Only USD floats are used.
+    """
+    caps = (primary.filter(pl.col("cik").is_not_null() & pl.col("issuer_market_cap").is_not_null())
+            .select("date", "cik", "issuer_market_cap").collect().sort("date"))
+    ciks = caps["cik"].unique().to_list()
+    s = edgar.series(["public_float"], ciks) if ciks else None
+    if s is None or s.is_empty():
+        return pl.DataFrame(schema=FLOAT_TABLE_SCHEMA)
+    s = (s.filter(pl.col("unit") == "USD").select("cik", pl.col("end").alias("float_date"),
+                                                pl.col("value").alias("public_float"), "available_from")
+         .sort("float_date"))
+    df = s.join_asof(caps.rename({"date": "market_cap_date"}), left_on="float_date", right_on="market_cap_date",
+                     by="cik", strategy="backward", tolerance="7d", check_sortedness=False)
+    df = df.with_columns((pl.col("public_float") / pl.col("issuer_market_cap")).alias("ratio"))
+    lo, hi = FLOAT_RANGE
+    plausible = pl.col("ratio").is_between(lo, hi)
+    factor = pl.lit(None, pl.Float64)
+    for k in (1e-9, 1e9, 1e-6, 1e6, 1e-3, 1e3):  # the range spans < 1000x: at most one fits
+        factor = pl.when((pl.col("ratio") * k).is_between(*FLOAT_FIX_RANGE)).then(pl.lit(k)).otherwise(factor)
+    df = df.with_columns(pl.when(pl.col("ratio").is_null()).then(None).when(plausible).then(pl.lit(1.0))
+                         .otherwise(factor).alias("unit_factor"))
+    df = df.with_columns(
+        (pl.col("ratio") * pl.col("unit_factor")).clip(upper_bound=1.0).alias("float_fraction"),
+        pl.when(pl.col("ratio").is_null()).then(pl.lit("no_market_cap"))
+        .when(pl.col("unit_factor").is_null()).then(pl.lit("implausible"))
+        .when(pl.col("unit_factor") != 1).then(pl.lit("unit_fixed"))
+        .otherwise(pl.lit("ok")).alias("status"))
+    return df.select(list(FLOAT_TABLE_SCHEMA)).cast(FLOAT_TABLE_SCHEMA).sort("cik", "float_date")
+
+
+def add_float(panel: pl.DataFrame, floats: pl.DataFrame) -> pl.DataFrame:
+    """Float columns per security and day: the company's latest usable public-float fraction
+    (usable the day after its 10-K, for FLOAT_STALE_DAYS), applied to every class."""
+    f = floats.filter(pl.col("float_fraction").is_not_null())
+    # A later filing about an older float date must not replace a newer one.
+    f = (f.sort("cik", "available_from", "float_date")
+         .with_columns(pl.col("float_date").cum_max().over("cik").alias("__m"))
+         .filter(pl.col("float_date") >= pl.col("__m"))
+         .select("cik", "available_from", "float_date", "float_fraction").sort("available_from"))
+    out = panel.sort("date").join_asof(f, left_on="date", right_on="available_from", by="cik",
+                                       strategy="backward", check_sortedness=False)
+    fresh = pl.col("date") <= pl.col("available_from") + pl.duration(days=FLOAT_STALE_DAYS)
+    out = out.with_columns(*[pl.when(fresh).then(pl.col(c)).otherwise(None).alias(c)
+                             for c in ("float_fraction", "float_date")])
+    out = out.with_columns((pl.col("market_cap") * pl.col("float_fraction")).alias("float_market_cap"),
+                           (pl.col("issuer_market_cap") * pl.col("float_fraction")).alias("issuer_float_market_cap"))
+    return out.select(*PANEL_SCHEMA, *FLOAT_SCHEMA).cast({**PANEL_SCHEMA, **FLOAT_SCHEMA}).sort("date", "security_id")
+
+
 def build(store, edgar, layout: Layout, start_year: int = 2003, years: list[int] | None = None) -> dict[str, Any]:
     """Rebuild every table. `years` limits which market-cap years are rewritten."""
     t0 = time.time()
@@ -216,6 +292,17 @@ def build(store, edgar, layout: Layout, start_year: int = 2003, years: list[int]
         implausible += panel.filter(pl.col("implausible")).select("security_id", "shares_end").n_unique()
         log.info("market cap %d: %s rows, %.0f%% with market cap", y, f"{panel.height:,}",
                  100 * panel["market_cap"].is_not_null().mean() if panel.height else 0)
+
+    # Public float needs the issuer market cap on each float date, so it follows the panels.
+    files = layout.market_cap_files()
+    primary = scan_panels(files).filter(pl.col("is_primary"))
+    floats = float_table(edgar, primary)
+    write_atomic(floats, layout.file("public_float"))
+    for y in todo:
+        path = layout.market_cap_file(y)
+        if path.exists():
+            write_atomic(add_float(pl.read_parquet(path).select(list(PANEL_SCHEMA)), floats), path)
+    log.info("public float: %d filings, %s", floats.height, dict(floats.group_by("status").len().iter_rows()))
     all_years = [int(p.parent.name.split("=")[1]) for p in layout.market_cap_files()]
     info = {
         "built_at": datetime.now(UTC).isoformat(timespec="seconds"), "seconds": round(time.time() - t0, 1),
@@ -227,6 +314,7 @@ def build(store, edgar, layout: Layout, start_year: int = 2003, years: list[int]
         "unit_fixed": int(counts["unit_fixed"].sum()),
         "implausible_counts": implausible,
         "splits_not_applied": int((~attribution["applies"]).sum()) if attribution.height else 0,
+        "public_float": dict(floats.group_by("status").len().iter_rows()),
     }
     layout.write_build({**layout.read_build(), **info})
     return info

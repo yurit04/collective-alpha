@@ -75,3 +75,22 @@ Dell, Broadcom, Altera, SanDisk): exactly the acquired names a survivorship-free
 keep. Now: a bare `WI` is not when-issued; typed CS/ADRC names are screened only for warrants,
 units-with-warrants, notes and baby bonds (the wider screen stays for untyped securities); a
 null type passes the `types` filter. The panel grew by 465k rows; all 22 checks still pass.
+
+## Addendum (2026-11-02): public float
+Float-adjusted size comes from the 10-K cover's public float (`dei:EntityPublicFloat`, now the
+EDGAR concept `public_float`), not from Massive's `float` dataset. Massive's dataset has no
+history (it accumulates only from the first download) and may not be in smaller plans.
+
+- **Fraction:** public float divided by the issuer market cap on the float date. A count of
+  float shares would need the share count and price on that date and the class mix; the ratio
+  needs neither, and covers unlisted classes (Meta's Class B).
+- **Use:** from the day after the 10-K, for 400 days, on every class.
+- **Sanity limits:**
+  - A fraction off by a power of 1000 is fixed, as with share counts.
+  - A fraction outside 0.01–1.1 is withheld. Most of these (2,425 of 70k filings) are small
+    companies whose share count was out of date on the float date.
+- **Results:** the median gap to Massive's free float is 4 points.
+- **Rejected alternative:** Massive's per-class definition (Meta 99.9%) is the wrong one for
+  sizing the company.
+- **Build cost:** the computation needs the built panels, so the build writes them, computes
+  the float table, then rewrites the rebuilt years with float columns. That adds about 5 s.

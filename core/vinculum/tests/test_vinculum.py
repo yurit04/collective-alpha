@@ -57,6 +57,9 @@ DAYS = weekdays(START, END)
 class FakeStore:
     """The parts of massive_subspace_stream.Store that vinculum uses."""
 
+    def dataset(self, name, *args, **kwargs):
+        raise FileNotFoundError(name)
+
     def __init__(self):
         rows = []
         for sid, t, _, _, _, px, vol in SECURITIES:
@@ -158,6 +161,13 @@ class FakeEdgar:
             ("0000000001", "revenue", "USD", D(2021, 9, 30), 130.0, D(2021, 11, 6), 480.0, D(2021, 11, 6)),
             ("0000000001", "equity", "USD", D(2021, 3, 31), 2000.0, D(2021, 5, 11), None, None),
             ("0000000004", "revenue", "GBP", D(2021, 12, 31), 900.0, D(2022, 3, 2), 900.0, D(2022, 3, 2)),
+            # Public float (10-K cover), dated the float date; usable the day after the 10-K.
+            ("0000000001", "public_float", "USD", D(2020, 6, 30), 1e9, D(2021, 2, 16), None, None),   # no cap then
+            ("0000000001", "public_float", "USD", D(2021, 6, 30), 4e9, D(2021, 11, 6), None, None),   # 80% of 5B
+            ("0000000005", "public_float", "USD", D(2021, 6, 30), 1.5e9, D(2021, 11, 6), None, None), # 50% of 3B
+            ("0000000002", "public_float", "USD", D(2021, 6, 30), 0.9e6, D(2021, 11, 6), None, None), # thousands
+            ("0000000009", "public_float", "USD", D(2021, 6, 30), 2e9, D(2021, 11, 6), None, None),   # 2.5x cap
+            ("0000000004", "public_float", "GBP", D(2021, 6, 30), 1e9, D(2021, 11, 6), None, None),   # not USD
         ]
         df = pl.DataFrame(rows, schema={"cik": pl.String, "item": pl.String, "unit": pl.String, "end": pl.Date,
                                         "value": pl.Float64, "available_from": pl.Date, "ttm": pl.Float64,
@@ -271,3 +281,43 @@ def test_checks_and_status_run(v):
     assert info["rows"] > 0 and "cik_status" in info
     names = [n for n, _, _ in v.check()]
     assert any("Taser" in n for n in names)
+
+
+def test_public_float(v):
+    st = dict(v.public_float().select(pl.col("cik").str.slice(-1) + pl.col("float_date").cast(pl.String),
+                                      "status").iter_rows())
+    assert st == {"12020-06-30": "no_market_cap", "12021-06-30": "ok", "52021-06-30": "ok",
+                  "22021-06-30": "unit_fixed", "92021-06-30": "implausible"}  # the GBP float is left out
+    assert v.public_float("ALPH")["float_date"].to_list() == [D(2020, 6, 30), D(2021, 6, 30)]
+    assert cap(v, "ALPH", D(2021, 11, 5))["float_fraction"] is None          # 10-K filed 11-05: not yet
+    a = cap(v, "ALPH", D(2021, 11, 8))
+    assert a["float_fraction"] == pytest.approx(0.8) and a["float_market_cap"] == pytest.approx(4e9)
+    assert a["float_date"] == D(2021, 6, 30)
+    for t in ("OMGA", "OMGB"):                                              # company-wide, every class
+        r = cap(v, t, D(2021, 12, 1))
+        assert r["float_fraction"] == pytest.approx(0.5) and r["issuer_float_market_cap"] == pytest.approx(1.5e9)
+    assert cap(v, "BETA", D(2021, 12, 1))["float_fraction"] == pytest.approx(0.9)
+    assert cap(v, "NULT", D(2021, 12, 1))["float_fraction"] is None
+
+
+def test_ranks_by_float(v):
+    r = v.ranks(D(2021, 12, 1), by="float_market_cap")
+    assert r["ticker"].to_list() == ["ALPH", "OMGB", "BETA"]               # no usable float: left out
+    assert r["issuer_float_market_cap"].to_list() == pytest.approx([4e9, 1.5e9, 0.9e9])
+    u = v.universe(D(2021, 12, 15), top=2, by="float_market_cap")
+    assert u["ticker"].to_list() == ["ALPH", "OMGB"] and u["rank_market_cap"][0] == pytest.approx(4e9)
+    with pytest.raises(ValueError):
+        v.ranks(D(2021, 12, 1), by="free_float")
+
+
+def test_float_goes_stale():
+    from vinculum._build import FLOAT_STALE_DAYS, PANEL_SCHEMA, add_float
+    days = [D(2021, 3, 1), D(2021, 3, 1) + timedelta(days=FLOAT_STALE_DAYS + 1)]
+    panel = pl.DataFrame({"date": days, "security_id": ["S"] * 2, "cik": ["1"] * 2, "market_cap": [10.0] * 2,
+                          "issuer_market_cap": [10.0] * 2}).with_columns(
+        [pl.lit(None, t).alias(c) for c, t in PANEL_SCHEMA.items()
+         if c not in ("date", "security_id", "cik", "market_cap", "issuer_market_cap")])
+    floats = pl.DataFrame({"cik": ["1"], "available_from": [D(2021, 2, 1)], "float_date": [D(2020, 6, 30)],
+                           "float_fraction": [0.5]})
+    out = add_float(panel, floats)
+    assert out["float_fraction"].to_list() == [0.5, None]

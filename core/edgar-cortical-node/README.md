@@ -64,7 +64,10 @@ ticker meant on each day.
   (annual-only filers). For items that cannot be negative (revenue, capex, dividends paid), a
   negative derived period is dropped: it means the company restated between its 10-Q and 10-K
   (e.g. discontinued operations), so the two year-to-date figures are on different bases.
-- **Instants** (assets, equity, cash, debt): one row per balance-sheet date.
+- **Instants** (assets, equity, cash, debt): one row per balance-sheet date. `public_float` (the
+  10-K cover's market value of common equity held by non-affiliates, in USD) is an instant dated
+  the float date, usually the last business day of the second fiscal quarter, months before the
+  10-K is filed. Foreign filers (20-F, 40-F) do not report it.
 - **Per share** (EPS): reported quarters and years only.
 - Each item maps to several tags in priority order (`CONCEPTS`). For each company and period the
   value **known first** wins, whatever its tag; priority only breaks ties within one filing. (A
