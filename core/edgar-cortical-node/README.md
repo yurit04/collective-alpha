@@ -98,6 +98,7 @@ history with dates. Values are current, not point in time (the name history is d
 ## Limits
 - XBRL starts 2009 (large filers) to 2011 (small): nothing earlier.
 - Foreign filers use their own currency (`unit` column) and often `ifrs-full` tags; no FX here.
+  Where a filing adds a US-dollar convenience translation, the reporting currency is kept.
 - Several listed share classes share one CIK: mapping issuer-level shares to each traded class
   (and not double counting market cap) is done by `vinculum`.
 - No analyst estimates, earnings surprises or transcripts.

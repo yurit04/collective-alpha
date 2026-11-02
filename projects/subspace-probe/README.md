@@ -8,7 +8,7 @@ notebooks/
   massive/        Massive (formerly Polygon.io) equity data via massive-subspace-stream
   edgar/          SEC EDGAR company facts via edgar-cortical-node
   vinculum/       the Massive x EDGAR join: market cap, size universes, fundamentals per security
-src/subspace_probe/   small shared helpers (chart style, timing)
+src/subspace_probe/   small shared helpers (chart style, timing, SIC sectors)
 ```
 
 ## Massive notebooks
@@ -34,6 +34,10 @@ src/subspace_probe/   small shared helpers (chart style, timing)
 | Notebook | What it shows |
 |---|---|
 | `00_tour.ipynb` | Checked CIKs (repaired and rejected Massive CIKs), share counts across splits and unit errors, ADR and class ratios, market cap history, agreement with Massive, size universes over time, point-in-time valuation ratios |
+| `01_fundamentals.ipynb` | The 15 EDGAR fields and how each becomes a panel value (TTM, latest balance sheet, stale after 400 days), coverage by item and year, XBRL tags behind the values, filing lags, first-filed vs restated values, reporting currencies, pitfalls (EPS, public float, missing vs zero, CIK changes) |
+| `02_ratios.ipynb` | A library of 22 ratios (valuation, profitability, quality, leverage) as polars expressions; well-known companies side by side, cross-sectional distributions, sector medians, aggregate P/E and margins since 2012, a daily P/E |
+| `03_factor_sorts.ipynb` | Monthly quintile sorts of the top 1,000 on value, profitability, accruals, size and momentum with total returns from Massive; long-short performance, information coefficients, and what look-ahead does to a backtest |
+| `04_float_and_short.ipynb` | Public float per 10-K, float fractions and float-adjusted ranks, FINRA short interest (GameStop, most shorted, by size) and daily short sale volume |
 
 ## Running
 

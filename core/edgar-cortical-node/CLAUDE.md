@@ -50,5 +50,7 @@ Invariants:
 - Default policy is first-filed per (cik, tag, unit, start, end); across tags, the value known first
   wins (tag priority only breaks ties within a filing date). Restated values only with policy="latest".
 - Quarters derived from YTD/annual take the later filing date of their two inputs; TTM the latest of four.
+- A filing that reports a period in two currencies keeps the company's reporting currency (the
+  one most of its facts for the item are in): USD convenience translations never replace it.
 - Never send the user's own e-mail to the SEC unless they put it in their config.
 - Respect the SEC's 10 requests/second limit (default 8, shared across threads).

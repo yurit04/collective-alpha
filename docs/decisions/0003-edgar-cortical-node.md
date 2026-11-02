@@ -62,6 +62,16 @@ The bulk submissions file (1.6 GB, monthly; filers re-fetched daily) gives profi
 name histories for 48,000 companies that filed periodic reports or list a ticker. vinculum uses
 them to check and repair Massive's CIKs; SIC codes give an industry for delisted companies too.
 
+## Convenience translations (added 2026-11-02)
+About 416 foreign filers (most Chinese ADRs, plus TSMC, Toyota and SAP) report some periods in
+their own currency and in US dollars in the same filing. Series kept one value per period by
+filing date and tag priority, so the two currencies tied and the winner was arbitrary: Alibaba's
+revenue could come back in dollars and its net income in RMB, and vinculum then computed a 38%
+earnings yield. Now, within one filing, the company's reporting currency (the currency most of
+its facts for that item are in) wins. A period filed in one currency only keeps it, so a company
+that changed its reporting currency keeps both eras. Decided per item, so a result never depends
+on which other items were requested.
+
 ## Known limits
 - XBRL starts in 2009 (large filers) to 2011 (small): no EDGAR fundamentals before that.
 - Foreign filers report in their own currency (and `ifrs-full` tags); no FX conversion here.

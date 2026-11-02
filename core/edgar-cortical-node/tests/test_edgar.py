@@ -305,6 +305,26 @@ def test_tag_switch_keeps_the_original_filing_date():
     assert latest["value"] == 201
 
 
+def test_convenience_translation_never_replaces_the_reporting_currency():
+    from edgar_cortical_node._pit import build_series
+
+    years = [("2022", "F1", "2023-07-01"), ("2023", "F2", "2024-07-01"), ("2024", "F3", "2025-07-01")]
+    cny = [fact(f"{y}-01-01", f"{y}-12-31", 700 + i, a, d, form="20-F", fp="FY")
+           for i, (y, a, d) in enumerate(years)]
+    cny.append(fact("2023-01-01", "2023-12-31", 701, "F3", "2025-07-01", form="20-F", fp="FY"))  # comparative
+    usd = [fact("2024-01-01", "2024-12-31", 100, "F3", "2025-07-01", form="20-F", fp="FY")]  # same filing
+    doc = {"cik": 7777, "entityName": "TRANSLATOR LTD", "facts": {"us-gaap": {"Revenues": {"units": {
+        "USD": usd, "CNY": cny}}}}}
+    for _ in range(5):  # used to depend on row order
+        s = build_series(parse_companyfacts(doc), "revenue", CONCEPTS["revenue"]).sort("end")
+        assert s["unit"].to_list() == ["CNY"] * 3 and s["value"].to_list() == [700, 701, 702]
+    # A company that switched currency keeps each period in the currency it was filed in.
+    doc["facts"]["us-gaap"]["Revenues"]["units"] = {
+        "CNY": cny[:2], "USD": [fact("2024-01-01", "2024-12-31", 100, "F3", "2025-07-01", form="20-F", fp="FY")]}
+    s = build_series(parse_companyfacts(doc), "revenue", CONCEPTS["revenue"]).sort("end")
+    assert s["unit"].to_list() == ["CNY", "CNY", "USD"]
+
+
 def test_shares_keep_splits_fill_gaps_and_skip_disagreeing_concepts():
     from edgar_cortical_node._pit import build_shares
 

@@ -65,6 +65,28 @@ def resolve_tags(df: pl.DataFrame, tags: tuple[str, ...], keys: list[str], polic
             .drop("__rank"))
 
 
+def drop_translations(facts: pl.DataFrame) -> pl.DataFrame:
+    """Keep one currency where a filing reports the same period in two.
+
+    Foreign filers often add a convenience translation (Alibaba's 20-F gives RMB and US dollars
+    for the latest year). Without this, which of the two survives is arbitrary, and items mix
+    currencies. The company's reporting currency (the one most of its facts for the concept are
+    in) wins. A period filed in one currency only keeps it, so a company that changed its
+    reporting currency keeps both eras.
+    """
+    if facts.is_empty():
+        return facts
+    f = facts.with_columns(pl.col("unit").str.slice(0, 3).alias("__cur"))
+    main = (f.group_by("cik", "__cur").len()
+            .sort(["cik", "len", "__cur"], descending=[False, True, False])
+            .unique("cik", keep="first", maintain_order=True)
+            .select("cik", pl.col("__cur").alias("__main")))
+    f = f.join(main, on="cik", how="left")
+    is_main = pl.col("__cur") == pl.col("__main")
+    has_main = is_main.any().over(["cik", "accn", "taxonomy", "tag", "start", "end"])
+    return f.filter(is_main | ~has_main).drop("__cur", "__main")
+
+
 def available(expr: pl.Expr) -> pl.Expr:
     return expr + pl.duration(days=1)
 
@@ -146,6 +168,8 @@ def build_series(facts: pl.DataFrame, item: str, concept: Concept, policy: str =
     f = facts.filter(_tag_col().is_in(list(tags)) & unit_filter(concept.unit))
     if f.is_empty():
         return pl.DataFrame(schema=SERIES_SCHEMA)
+    if concept.unit.startswith("currency"):
+        f = drop_translations(f)
     f = choose(f, policy)
     if concept.kind == "instant":
         f = resolve_tags(f.filter(pl.col("start").is_null()), tags, ["cik", "end"], policy)
