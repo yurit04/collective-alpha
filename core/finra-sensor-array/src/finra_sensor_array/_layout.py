@@ -8,8 +8,11 @@ _logs/
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -44,9 +47,21 @@ class Layout:
         except FileNotFoundError:
             return {}
 
+    @contextmanager
+    def state_lock(self) -> Iterator[None]:
+        """Held around read-modify-write of state.json, so concurrent jobs (both backfills at
+        once) never drop each other's progress."""
+        self.root.mkdir(parents=True, exist_ok=True)
+        with open(self.root / ".state.lock", "w") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+
     def write_state(self, state: dict[str, Any]) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
-        tmp = self.state_file.with_suffix(".json.tmp")
+        tmp = self.state_file.with_suffix(f".json.{os.getpid()}.tmp")
         tmp.write_text(json.dumps(state, indent=1, sort_keys=True))
         os.replace(tmp, self.state_file)
 

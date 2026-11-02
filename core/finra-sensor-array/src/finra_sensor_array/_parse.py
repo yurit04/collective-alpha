@@ -10,6 +10,7 @@ CNMS = FNSQ + FNYX + FNRA + FNQC for every symbol); before it, the facility file
 from __future__ import annotations
 
 import io
+import re
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -59,9 +60,18 @@ def short_interest_frame(settlement: date, rows: list[dict[str, Any]],
     return df.select(list(SI_SCHEMA)).unique(list(SI_KEYS), keep="first").sort("symbol", "market")
 
 
+_OLD_HEADER = "Date|Symbol|ShortVolume|TotalVolume|Market"
+_NEW_HEADER = "Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market"
+
+
 def parse_daily_file(text: str) -> pl.DataFrame:
     """One Reg SHO daily file -> date, symbol, short_volume, short_exempt_volume, total_volume,
-    market. Old files (before 2011) have no ShortExemptVolume column; the trailer line is dropped."""
+    market. Old files (before 2011) have no ShortExemptVolume column; the trailer line is dropped.
+    Tolerates Windows line endings and a missing header (both occur in 2010 files)."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    first = text.split("\n", 1)[0]
+    if not first.startswith("Date|"):  # a few files lack the header (FNSQ 2010-11-22)
+        text = (_OLD_HEADER if first.count("|") == 4 else _NEW_HEADER) + "\n" + text
     df = pl.read_csv(io.StringIO(text), separator="|", infer_schema=False, null_values=[],
                      truncate_ragged_lines=True)
     if "ShortExemptVolume" not in df.columns:
@@ -95,11 +105,16 @@ def combine_facilities(frames: list[pl.DataFrame], source: str) -> pl.DataFrame:
 def finra_symbols(tickers: list[str], dataset: str) -> list[str]:
     """Massive-style tickers -> FINRA symbols. Short interest writes class shares without a
     separator (BRK.B -> BRKB) and preferreds with PR (ABRpD -> ABRPRD); daily volume writes
-    classes with a slash (BRK.B -> BRK/B) and preferreds as Massive does (ABRpD)."""
+    classes with a slash (BRK.B -> BRK/B) and preferreds as Massive does (ABRpD). Other
+    lowercase suffixes pass through unchanged."""
     out = []
     for t in tickers:
         t = t.strip()
-        if dataset == "short_interest":
+        if re.search(r"[a-oq-z]", t):
+            # Massive's other lowercase suffixes (rights r, warrants w, units u, ...) have no
+            # known FINRA spelling; upper-casing them would hit another company (NTGr -> NTGR).
+            out.append(t)
+        elif dataset == "short_interest":
             out.append(t.replace("p", "PR").upper().replace(".", "").replace("/", ""))
         else:
             out.append(t.replace(".", "/"))

@@ -16,6 +16,14 @@ This is the same data Massive resells. Checked on 2025-10-15 and 2024-03-04/05:
 
 Short volume goes back to 2009, where Massive's starts in 2024.
 
+The full backfill (2026-11-02) agrees with the same comparison across Massive's whole copy:
+- **Short interest:** the same 212 settlement dates, and 99.98% of Massive's rows match.
+- **Short volume:** every one of Massive's 9.5M rows (2024-2026) is found here.
+
+Two kinds of difference turned up, and in both FINRA's own file is the better record:
+- Since 2026-02, Massive rounds volumes to about 5 significant figures.
+- On 2 days (2025-10-20, 2026-02-05), Massive kept a partial file that FINRA later re-posted.
+
 ## Setup
 
 ```bash

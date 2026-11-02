@@ -57,7 +57,9 @@ class FinraStore:
             lf = lf.filter(pl.col(date_col) <= e)
         names = _list(tickers)
         if names:
-            wanted = set(names) | {n.upper() for n in names} | set(finra_symbols(names, dataset))
+            # "aapl" means AAPL; mixed case (NTGr, ABRpD) is a Massive suffix and stays as typed.
+            names = [n.upper() if n == n.lower() else n for n in names]
+            wanted = set(names) | set(finra_symbols(names, dataset))
             lf = lf.filter(pl.col("symbol").is_in(sorted(wanted)))
         lf = lf.sort(date_col, "symbol")
         if lazy:

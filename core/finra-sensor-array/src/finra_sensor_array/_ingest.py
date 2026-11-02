@@ -145,11 +145,12 @@ class Ingestor:
         write_atomic(new.select(list(schema)).cast(schema).sort(keys), path)
 
     def _record(self, dataset: str, found: dict[str, int], gone: list[str]) -> None:
-        state = self.layout.read_state()
-        s = state.setdefault(dataset, {"days": {}, "empty": []})
-        s["days"].update(found)
-        s["empty"] = sorted(set(s["empty"]) | set(gone))
-        self.layout.write_state(state)
+        with self.layout.state_lock():
+            state = self.layout.read_state()
+            s = state.setdefault(dataset, {"days": {}, "empty": []})
+            s["days"].update(found)
+            s["empty"] = sorted(set(s["empty"]) | set(gone))
+            self.layout.write_state(state)
 
     # ------------------------------------------------------------------ short interest
     def short_interest(self, start: Any = None, end: Any = None) -> JobResult:

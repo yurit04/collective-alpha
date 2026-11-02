@@ -70,6 +70,9 @@ def test_parse_daily_files_old_and_new():
     new = parse_daily_file(daily(D(2025, 10, 31), [("BRK/B", 10, 30, "B,Q,N"), ("NA", 1, 2, "Q")]))
     assert new["symbol"].to_list() == ["BRK/B", "NA"]                       # "NA" is a ticker, not null
     assert new["short_exempt_volume"].to_list() == [0, 0] and new.height == 2  # trailer line dropped
+    crlf = parse_daily_file(daily(D(2010, 12, 13), [("A", 5, 9, "Q")], exempt=False).replace("\n", "\r\n"))
+    headless = parse_daily_file("20101122|A|5|9|Q\n20101122|B|1|2|Q\n2\n")
+    assert crlf["market"].to_list() == ["Q"] and headless["symbol"].to_list() == ["A", "B"]
     old = parse_daily_file(daily(D(2009, 8, 3), [("A", 5, 9, "Q")], exempt=False))
     assert old["short_exempt_volume"].to_list() == [None] and old["total_volume"].to_list() == [9]
 
@@ -87,6 +90,7 @@ def test_facilities_are_summed():
 def test_finra_symbols():
     assert finra_symbols(["BRK.B", "AAPL", "ABRpD"], "short_interest") == ["BRKB", "AAPL", "ABRPRD"]
     assert finra_symbols(["BRK.B", "ABRpD"], "short_volume") == ["BRK/B", "ABRpD"]
+    assert finra_symbols(["NTGr"], "short_interest") == ["NTGr"]          # rights: never Netgear (NTGR)
 
 
 # ---------------------------------------------------------------- client
@@ -125,6 +129,7 @@ def test_short_interest_backfill_revisions_and_empty_days(settings):
     assert aapl["short_interest"].to_list() == [50, 60]
     assert aapl["published_date"].to_list() == [si_published(D(2025, 9, 30)), si_published(D(2025, 10, 15))]
     assert store.short_interest("BRK.B")["symbol"].to_list() == ["BRKB"]
+    assert store.short_interest("aapl").height == 2 and store.short_interest("BRKr").is_empty()
     assert store.short_interest(start="2025-10-01", date_by="published")["settlement_date"].unique().to_list() == \
         [D(2025, 9, 30), D(2025, 10, 15)]
 
