@@ -14,6 +14,7 @@ resolution-markers = [
 members = [
     "collective-alpha",
     "edgar-cortical-node",
+    "finra-sensor-array",
     "massive-subspace-stream",
     "subspace-probe",
     "vinculum",
@@ -682,6 +683,27 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/35/6c/730b340182f1fd74d4ef8d3f35431ce84f8f97b1a1f2afd145174b7bb047/filelock-4.2.6.tar.gz", hash = "sha256:ee7af8ede36dcaf12e1016d9f7c3a63ecd5497d46f85dab21b8c779b8f944e97", size = 661339, upload-time = "2026-10-31T15:10:16.889Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/8d/3f849fcb79359259737bc2d8ddcaee6149ffb773239a260c9ff20179736f/filelock-4.2.6-py3-none-any.whl", hash = "sha256:fd7d4fca497bf3e3d0945a13261f8e684f2aef12ce7cf76aef26e13bf7388b88", size = 164378, upload-time = "2026-10-31T15:10:15.322Z" },
+]
+
+[[package]]
+name = "finra-sensor-array"
+version = "0.1.0"
+source = { editable = "core/finra-sensor-array" }
+dependencies = [
+    { name = "exchange-calendars" },
+    { name = "httpx" },
+    { name = "polars" },
+    { name = "pyarrow" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "exchange-calendars", specifier = ">=4.5" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "polars", specifier = ">=1.20" },
+    { name = "pyarrow", specifier = ">=18" },
+    { name = "typer", specifier = ">=0.12" },
 ]
 
 [[package]]

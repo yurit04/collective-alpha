@@ -1,6 +1,6 @@
 ---
 name: query-market-data
-description: How to load stored market data (Massive bars, trades, quotes, short data, news; SEC EDGAR point-in-time fundamentals and share counts; vinculum market cap, size universes and fundamentals per security) into pandas or polars, check what is downloaded, and fetch what is missing. Use for any analysis that needs market or fundamental data.
+description: How to load stored market data (Massive bars, trades, quotes, news; FINRA short interest and short sale volume; SEC EDGAR point-in-time fundamentals and share counts; vinculum market cap, size universes and fundamentals per security) into pandas or polars, check what is downloaded, and fetch what is missing. Use for any analysis that needs market or fundamental data.
 ---
 
 # Querying market data
@@ -43,7 +43,7 @@ store.securities(tickers="FB")              # all securities that used a ticker,
 store.trades("AAPL", start="2024-03-01")          # needs: subspace backfill history --dataset trades --start ... --symbols AAPL
 store.quotes("AAPL", start="2024-03-01")
 store.financials("income", tickers="AAPL", start="2020-01-01")   # filters on filing_date (see caveat below)
-store.short_interest("GME"); store.short_volume("GME"); store.news("TSLA", start="2025-01-01")
+store.news("TSLA", start="2025-01-01")
 store.splits("AAPL"); store.dividends("AAPL"); store.tickers(active=True, types=["ETF"])
 store.trading_days("2024-01-01", "2024-12-31"); store.sessions("2024-11-29")
 store.scan("bars_minute")                         # lazy polars over everything, for custom queries
@@ -73,6 +73,19 @@ edgar.profiles([320193]); edgar.names([1326801])   # SIC, fiscal year end, ticke
 - Not split-adjusted: compare share counts across splits with Massive's splits.
 - Coverage starts 2009-2011 (XBRL); foreign filers from 2014-15; many funds/BDCs have none.
 - Refresh: `uv run cortical sync` (the first `cortical backfill` is a 1.4 GB download: ask first).
+
+## Short interest and short sale volume (FINRA)
+```python
+from finra_sensor_array import FinraStore
+f = FinraStore()
+f.short_interest("GME", start="2020-01-01")               # twice monthly from 2017-12-29
+f.short_volume("GME", start="2015-01-01")                 # daily off-exchange, from 2009-08-03
+```
+- Use `published_date` for signals (7 business days after `settlement_date`); daily short volume
+  is usable from the next trading day. Fetch with `uv run sensor backfill short-interest|short-volume`
+  (ask first for the short-volume history). Prefer these to Massive's `short_interest()` /
+  `short_volume()` (same numbers, shorter history, no publication date).
+- Rows are keyed by FINRA symbols (BRKB, BRK/B); map to securities via the security master.
 
 ## Market cap, size universes, fundamentals per security (vinculum)
 Use this instead of joining EDGAR to bars yourself: it checks CIKs, applies splits, ADR ratios

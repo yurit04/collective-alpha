@@ -30,6 +30,13 @@
 # bulk_refresh_days = 30           # full reload of the bulk file this often
 # sync_hour = 7                    # launchd daily sync (local), Tue-Sat
 
+[finra_sensor_array]
+# data_root = "~/market_data/finra"
+# requests_per_second = 5          # shared by all workers; FINRA's data is free, be polite
+# workers = 4
+# sync_hour = 7                    # launchd daily sync (local), Tue-Sat
+# sync_minute = 15
+
 [vinculum]
 # data_root = "~/market_data/vinculum"
 # start_year = 2003                # first year of the market-cap table
