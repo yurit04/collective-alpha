@@ -9,6 +9,7 @@ dependencies = [
     "edgar-cortical-node",
     "vinculum",
     "finra-sensor-array",
+    "neural-processor",
     "matplotlib>=3.9",
     "ipykernel>=6.29",
 ]
@@ -18,6 +19,7 @@ massive-subspace-stream = { workspace = true }
 edgar-cortical-node = { workspace = true }
 vinculum = { workspace = true }
 finra-sensor-array = { workspace = true }
+neural-processor = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

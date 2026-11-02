@@ -16,6 +16,7 @@ members = [
     "edgar-cortical-node",
     "finra-sensor-array",
     "massive-subspace-stream",
+    "neural-processor",
     "subspace-probe",
     "vinculum",
 ]
@@ -1606,6 +1607,25 @@ wheels = [
 ]
 
 [[package]]
+name = "neural-processor"
+version = "0.1.0"
+source = { editable = "core/neural-processor" }
+dependencies = [
+    { name = "edgar-cortical-node" },
+    { name = "massive-subspace-stream" },
+    { name = "polars" },
+    { name = "vinculum" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "edgar-cortical-node", editable = "core/edgar-cortical-node" },
+    { name = "massive-subspace-stream", editable = "core/massive-subspace-stream" },
+    { name = "polars", specifier = ">=1.20" },
+    { name = "vinculum", editable = "core/vinculum" },
+]
+
+[[package]]
 name = "nodeenv"
 version = "1.11.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2582,6 +2602,7 @@ dependencies = [
     { name = "ipykernel" },
     { name = "massive-subspace-stream" },
     { name = "matplotlib" },
+    { name = "neural-processor" },
     { name = "vinculum" },
 ]
 
@@ -2592,6 +2613,7 @@ requires-dist = [
     { name = "ipykernel", specifier = ">=6.29" },
     { name = "massive-subspace-stream", editable = "core/massive-subspace-stream" },
     { name = "matplotlib", specifier = ">=3.9" },
+    { name = "neural-processor", editable = "core/neural-processor" },
     { name = "vinculum", editable = "core/vinculum" },
 ]
 

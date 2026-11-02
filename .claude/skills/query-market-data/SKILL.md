@@ -131,3 +131,16 @@ v.scan()                                                  # lazy polars over the
   - `uv run subspace backfill history --dataset trades --start D --end D --symbols AAPL,MSFT`
   - `uv run subspace backfill rest <name>`
 - Never read Parquet files by path from project code; the layout is private to the core package.
+
+## Signals per security (neural-processor)
+```python
+from neural_processor import Processor, SIGNALS, catalogue, composite, neutralize
+p = Processor()
+s = p.panel(["fcf_yield", "roe", "momentum_12_1"], start="2015-01-01", top=1000)   # month ends
+s = p.panel("value", start="2015-01-01", size="mid", transform="zscore", neutralize=["sector"])
+composite(s, {"fcf_yield": 1, "roe": 1, "momentum_12_1": 1})   # oriented by SIGNALS[...].direction
+catalogue()                                                     # every signal's formula and direction
+```
+- Use these definitions instead of writing ratios by hand; add new signals to the library.
+- Point in time, survivorship-free universes, successors followed. Price signals read daily
+  bars for the whole universe: request only the signals a study needs.

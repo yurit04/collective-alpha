@@ -1,0 +1,24 @@
+[project]
+name = "neural-processor"
+version = "0.1.0"
+description = "Point-in-time signals per security: valuation, profitability, quality, leverage, growth, price and short-interest signals over vinculum universes, with cross-sectional transforms and composites."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "massive-subspace-stream",
+    "edgar-cortical-node",
+    "vinculum",
+    "polars>=1.20",
+]
+
+[tool.uv.sources]
+massive-subspace-stream = { workspace = true }
+edgar-cortical-node = { workspace = true }
+vinculum = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/neural_processor"]

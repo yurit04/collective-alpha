@@ -34,8 +34,9 @@ Current core graph:
 | `edgar-cortical-node` | SEC EDGAR company facts: point-in-time fundamentals (31 items) and share counts by CIK | nothing in repo |
 | `finra-sensor-array` | FINRA short interest (from 2017-12) and daily short sale volume (from 2009-08), with publication dates | nothing in repo |
 | `vinculum` | Massive x EDGAR x FINRA join: checked CIKs, successors, market cap, public float, size universes, fundamentals and short data per security | massive-subspace-stream, edgar-cortical-node, finra-sensor-array |
+| `neural-processor` | Point-in-time signals per security (value, profitability, quality, leverage, growth, price, short interest), per-date transforms and composites | vinculum, edgar-cortical-node, massive-subspace-stream |
 
-Planned names (not built): features/signals (in `vinculum` or a new package), `unimatrix-zero` (backtesting),
+Planned names (not built): `unimatrix-zero` (backtesting),
 `transwarp-conduit` (broker/execution), `borg-queen` (portfolio/risk/orchestration).
 
 ## Commands
