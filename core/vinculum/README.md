@@ -44,6 +44,8 @@ v.short_interest("GME", start="2020-12-01")               # by publication date,
 v.short_volume("AAPL", start="2024-01-01")                # daily off-exchange short sale volume
 v.ranks("2020-12-31")                                     # every company, ranked by market cap
 v.fundamentals(["revenue", "net_income", "equity"], start="2015-01-01", freq="1m")
+v.fundamentals(["eps_diluted"], tickers="NVDA")           # TTM EPS in each day's share units
+v.successors()                                            # holding-company reorganizations, CIK changes
 v.cik_map(); v.share_counts("BBG000B9XRY4"); v.basis("BBG000B9XRY4")
 v.scan()                                                  # lazy polars over the whole table
 ```
@@ -65,6 +67,34 @@ Bradesco) count as equity when Massive types them so; warrants, SPAC units, note
 bonds are left out by name, when-issued lines (HONw, DHR.WD) by ticker. `ranks()` and
 `universe()` keep securities without a recorded type (companies delisted before Massive's
 snapshots carried one, such as Dell or Broadcom); filter on `types` only to narrow further.
+
+### Fundamentals
+
+`fundamentals(items, ...)` takes any of edgar-cortical-node's 31 items (`CONCEPTS`). Flows are
+trailing twelve months, instants the latest balance sheet, both missing once their period ended
+more than 400 days earlier. `public_float` ages from its filing instead (it is measured months
+before the 10-K). Per-share items (EPS) are trailing twelve months in the security's units on
+each day. Each quarter is brought to one share basis with the security's own splits before
+summing, so NVDA's EPS carries through its 2024 split, and at fiscal year ends the reported
+annual figure is used. For ADRs, EPS is per ordinary share in the reporting currency, not per
+ADS. Ratios (`earnings_yield`, `book_to_market`, `sales_to_price`, `cash_flow_yield`) are over
+the issuer market cap, for USD reporters.
+
+### Successors
+
+The same company sometimes continues under a new security or CIK. `successors()` lists both:
+
+- **kind `security`**: the ticker moves to a new security within 7 days, the two share a CIK
+  or a name, and the first new close is within 0.8-1.25x of the last old one (a 1:1 exchange).
+  Examples: ExxonMobil's holding company in July 2026, BlackRock in October 2024, Labcorp and
+  ONEOK. One-day placeholder listings on the switch day are skipped.
+- **kind `cik`**: the same security moves to a new CIK (Alphabet 2016, Broadcom, Medtronic).
+
+A new CIK has no share count for a few weeks and no TTM flows for up to a year. Until it has
+its own, the predecessor's last share counts (`shares_tag` starts with `successor:`), public
+float and fundamentals (up to two links back) are used, while still fresh. ExxonMobil keeps its
+market cap, rank and P/E through July 2026 instead of dropping out for a month. `price_ratio`
+lets a backtest link returns across a `security` handoff.
 
 ### Public float
 
@@ -169,6 +199,9 @@ everything else (ETFs, preferreds, OTC stocks).
 - Multi-class companies without a company-wide SEC count after some date (Berkshire after 2016)
   have no market cap from then on; tracking stocks (Liberty) get none.
 - Ratios only for USD reporters (no FX conversion).
+- Successors need a ~1:1 exchange: mergers at another ratio (and spin-offs) are not linked, and
+  the predecessor's figures are those of the old company (an acquirer's TTM lags the deal, as
+  for any acquisition). `market_cap()` by ticker shows the placeholder security on a switch day.
 - Size buckets use market cap by default; `by="float_market_cap"` uses the SEC's public float,
   which counts officers, directors and 10% holders as affiliates (narrower than index free float),
   is measured once a year, and is missing for foreign filers (ADRs, Canadian 40-F filers) and
@@ -179,6 +212,7 @@ everything else (ETFs, preferreds, OTC stocks).
 ```
 ~/market_data/vinculum/
   cik_map.parquet  share_counts.parquet  split_attribution.parquet  basis.parquet  public_float.parquet
+  successors.parquet
   market_cap/year=YYYY/part.parquet
   build.json   _logs/
 ```

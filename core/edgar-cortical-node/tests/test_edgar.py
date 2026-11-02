@@ -409,3 +409,66 @@ def test_profiles_bulk_and_refresh(settings):
     fake.subs["0000001111"]["name"] = "ACME HOLDINGS INC"
     assert ing.refresh_profiles(["0000001111"]) == []
     assert store.profiles(1111)["name"][0] == "ACME HOLDINGS INC"
+
+
+def test_new_items_and_fallback_tags():
+    from edgar_cortical_node._pit import build_series
+
+    fy = dict(form="10-K", fp="FY")
+    doc = {"cik": 8888, "entityName": "TAGGER", "facts": {"us-gaap": {
+        "PaymentsToAcquireProductiveAssets": {"units": {"USD": [fact("2023-01-01", "2023-12-31", 50, "T1", "2024-02-15", **fy)]}},
+        "PaymentsToAcquireRealEstate": {"units": {"USD": [fact("2023-01-01", "2023-12-31", 999, "T1", "2024-02-15", **fy)]}},
+        "PaymentsOfOrdinaryDividends": {"units": {"USD": [fact("2023-01-01", "2023-12-31", 20, "T1", "2024-02-15", **fy)]}},
+        "CostOfGoodsAndServicesSold": {"units": {"USD": [fact("2023-01-01", "2023-12-31", 300, "T1", "2024-02-15", **fy)]}},
+        "AssetsCurrent": {"units": {"USD": [fact(None, "2023-12-31", 900, "T1", "2024-02-15", **fy)]}},
+    }}}
+    f = parse_companyfacts(doc)
+    for item, val in [("capex", 50), ("dividends_paid", 20), ("cost_of_revenue", 300), ("current_assets", 900)]:
+        assert build_series(f, item, CONCEPTS[item])["value"].to_list() == [val], item   # acquisitions not capex
+    assert {"buybacks", "debt_current", "short_term_borrowings", "interest_expense"} <= set(CONCEPTS)
+
+
+def test_per_share_quarters_ttm_and_splits():
+    from edgar_cortical_node._pit import build_series, build_shares
+
+    eps = [fact("2023-04-01", "2023-06-30", 1.1, "E2", "2023-08-01", fp="Q2"),
+           fact("2023-01-01", "2023-09-30", 3.3, "E3", "2023-11-01", fp="Q3"),
+           fact("2023-01-01", "2023-06-30", 2.1, "E2", "2023-08-01", fp="Q2"),
+           fact("2023-01-01", "2023-12-31", 4.6, "E4", "2024-02-15", form="10-K", fp="FY"),
+           fact("2024-01-01", "2024-03-31", 1.4, "E5", "2024-05-01", fy=2024),
+           fact("2024-04-01", "2024-06-30", 0.4, "E6", "2024-08-01", fy=2024, fp="Q2")]   # after a 4:1 split
+    sh = [fact(None, d, n, a, f) for d, n, a, f in [
+        ("2023-07-25", 100, "E2", "2023-08-01"), ("2023-10-25", 100, "E3", "2023-11-01"),
+        ("2024-02-01", 100, "E4", "2024-02-15"), ("2024-05-02", 100, "E8", "2024-05-10"),
+        ("2024-07-25", 400, "E6", "2024-08-01")]]
+    doc = {"cik": 9999, "entityName": "SPLITTER", "facts": {
+        "dei": {"EntityCommonStockSharesOutstanding": {"units": {"shares": sh}}},
+        "us-gaap": {"EarningsPerShareDiluted": {"units": {"USD/shares": eps}}}}}
+    f = parse_companyfacts(doc)
+    s = build_series(f, "eps_diluted", CONCEPTS["eps_diluted"], shares=build_shares(f))
+    qs = s.filter(pl.col("period") == "quarter").sort("end")
+    assert qs["value"].to_list() == pytest.approx([1.1, 1.2, 1.3, 1.4, 0.4])          # Q3 = 9M - 6M, Q4 = FY - 9M
+    assert qs["source"].to_list()[1:3] == ["derived", "derived"]
+    ttm = dict(zip(qs["end"].to_list(), qs["ttm"].to_list(), strict=True))
+    assert ttm[D(2023, 12, 31)] == 4.6                                    # the reported annual figure
+    assert ttm[D(2024, 3, 31)] == pytest.approx(1.2 + 1.3 + 1.4 + 1.1)     # four quarters, one share basis
+    assert ttm[D(2024, 6, 30)] is None                                     # straddles the split
+    assert s.filter(pl.col("period") == "annual")["ttm"].to_list() == [4.6]
+
+
+def test_public_float_dated_at_fiscal_year_end_is_moved_back():
+    from edgar_cortical_node._pit import build_series
+
+    pf = [fact(None, "2023-06-30", 8e8, "K0", "2024-02-15", form="10-K", fp="FY"),
+          fact(None, "2024-03-31", 9e8, "Q1", "2024-05-01"),                                   # a 10-Q copy
+          fact(None, "2024-12-31", 1e9, "K1", "2025-02-14", form="10-K", fp="FY"),             # at the year end
+          fact(None, "2026-01-20", 1.1e9, "K2", "2026-02-13", form="10-K", fp="FY")]           # after it
+    assets = [fact(None, e, 1, a, f, form=form) for e, a, f, form in [
+        ("2023-12-31", "K0", "2024-02-15", "10-K"), ("2024-03-31", "Q1", "2024-05-01", "10-Q"),
+        ("2024-12-31", "K1", "2025-02-14", "10-K"), ("2025-12-31", "K2", "2026-02-13", "10-K")]]
+    doc = {"cik": 1212, "entityName": "FLOATER", "facts": {
+        "dei": {"EntityPublicFloat": {"units": {"USD": pf}}}, "us-gaap": {"Assets": {"units": {"USD": assets}}}}}
+    s = build_series(parse_companyfacts(doc), "public_float", CONCEPTS["public_float"]).sort("end")
+    assert s["end"].to_list() == [D(2023, 6, 30), D(2024, 3, 31), D(2024, 6, 30), D(2026, 1, 20)]
+    assert s["source"].to_list() == ["reported", "reported", "redated", "reported"]
+    assert s.filter(pl.col("source") == "redated")["filed"].to_list() == [D(2025, 2, 14)]

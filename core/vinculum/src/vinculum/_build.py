@@ -18,6 +18,7 @@ from ._cikmap import EQUITY_TYPES, GOOD, build_cik_map, cik_on
 from ._layout import Layout, write_atomic
 from ._names import looks_equity
 from ._shares import ADR_TYPES, adjust, basis_ratios, split_events
+from ._successors import build_successors, inherited_counts
 
 log = logging.getLogger("vinculum")
 STALE_DAYS = 400          # an SEC count older than this (period end) is not used
@@ -238,6 +239,18 @@ def float_table(edgar, primary: pl.LazyFrame) -> pl.DataFrame:
     return df.select(list(FLOAT_TABLE_SCHEMA)).cast(FLOAT_TABLE_SCHEMA).sort("cik", "float_date")
 
 
+def inherited_floats(floats: pl.DataFrame, successors: pl.DataFrame) -> pl.DataFrame:
+    """Predecessor floats filed before each link, re-keyed to the successor CIK: the successor
+    files its first 10-K up to a year later."""
+    links = (successors.filter(pl.col("cik") != pl.col("predecessor_cik"))
+             .select("cik", pl.col("predecessor_cik").alias("__pc"), "link_date").unique(["cik", "__pc"]))
+    if links.is_empty():
+        return floats.clear()
+    return (links.join(floats.rename({"cik": "__pc"}), on="__pc")
+            .filter(pl.col("available_from") <= pl.col("link_date"))
+            .select(list(FLOAT_TABLE_SCHEMA)))
+
+
 def add_float(panel: pl.DataFrame, floats: pl.DataFrame) -> pl.DataFrame:
     """Float columns per security and day: the company's latest usable public-float fraction
     (usable the day after its 10-K, for FLOAT_STALE_DAYS), applied to every class."""
@@ -267,15 +280,22 @@ def build(store, edgar, layout: Layout, start_year: int = 2003, years: list[int]
     cik_map = build_cik_map(store.security_attributes(), edgar.profiles(), edgar.names())
     write_atomic(cik_map, layout.file("cik_map"))
 
+    successors = build_successors(store, secs, cik_map, equity["security_id"].to_list())
+    write_atomic(successors, layout.file("successors"))
+    log.info("successors: %s", dict(successors.group_by("kind").len().iter_rows()))
+
     pairs = (cik_map.filter(pl.col("status").is_in(GOOD) & pl.col("cik").is_not_null())
              .select("security_id", "cik").unique().join(equity.select("security_id"), on="security_id"))
     log.info("share counts: %d security/CIK pairs", pairs.height)
     sec = edgar.shares(pairs["cik"].unique().to_list())
     obs = pairs.join(sec, on="cik")
+    # Until a successor files its own count, the predecessor's last counts carry its market cap.
+    events = split_events(store.security_actions("splits"))
+    obs = pl.concat([obs, inherited_counts(obs, successors, STALE_DAYS, events)])
     adrs = equity.filter(pl.col("type").is_in(ADR_TYPES))["security_id"].to_list()
     liquidity = liquidity_table(store, start_year, secs["last_trade"].max().year, equity)
     multi = multi_class(pairs, secs)
-    counts, attribution = adjust(obs, split_events(store.security_actions("splits")), adrs, liquidity, multi)
+    counts, attribution = adjust(obs, events, adrs, liquidity, multi)
     write_atomic(counts, layout.file("share_counts"))
     write_atomic(attribution, layout.file("split_attribution"))
 
@@ -298,10 +318,11 @@ def build(store, edgar, layout: Layout, start_year: int = 2003, years: list[int]
     primary = scan_panels(files).filter(pl.col("is_primary"))
     floats = float_table(edgar, primary)
     write_atomic(floats, layout.file("public_float"))
+    with_inherited = pl.concat([floats, inherited_floats(floats, successors)])
     for y in todo:
         path = layout.market_cap_file(y)
         if path.exists():
-            write_atomic(add_float(pl.read_parquet(path).select(list(PANEL_SCHEMA)), floats), path)
+            write_atomic(add_float(pl.read_parquet(path).select(list(PANEL_SCHEMA)), with_inherited), path)
     log.info("public float: %d filings, %s", floats.height, dict(floats.group_by("status").len().iter_rows()))
     all_years = [int(p.parent.name.split("=")[1]) for p in layout.market_cap_files()]
     info = {
@@ -315,6 +336,8 @@ def build(store, edgar, layout: Layout, start_year: int = 2003, years: list[int]
         "implausible_counts": implausible,
         "splits_not_applied": int((~attribution["applies"]).sum()) if attribution.height else 0,
         "public_float": dict(floats.group_by("status").len().iter_rows()),
+        "successors": dict(successors.group_by("kind").len().iter_rows()),
+        "inherited_counts": int(obs["tag"].str.starts_with("successor:").sum()),
     }
     layout.write_build({**layout.read_build(), **info})
     return info

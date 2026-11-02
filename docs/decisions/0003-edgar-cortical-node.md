@@ -72,8 +72,31 @@ its facts for that item are in) wins. A period filed in one currency only keeps 
 that changed its reporting currency keeps both eras. Decided per item, so a result never depends
 on which other items were requested.
 
+## More items, per-share TTM, re-dated floats (added 2026-11-02)
+- **Items:** 15 -> 31. Expense lines (cost of revenue, SG&A, R&D, D&A, interest, pre-tax income,
+  tax), buybacks, stock compensation, working-capital lines, goodwill and short-term debt (two
+  items, since current maturities and short-term borrowings add up). New tags are fallbacks
+  for existing items: capex was missing for about 14% of the 3,000 largest companies (Amazon
+  tags `PaymentsToAcquireProductiveAssets`), dividends for about 2% (Pfizer). Real-estate
+  acquisitions were left out of capex on purpose. Facts already hold every tag, so nothing was
+  re-downloaded.
+- **Per-share TTM:** EPS used to be the last reported figure, quarterly or annual, which made a
+  sawtooth (annual EPS after each 10-K, a quarter's after each 10-Q). Per-share items now get
+  quarters like flows and a TTM. At fiscal year ends the reported annual EPS is used (summing
+  quarters is off by share-count changes). A sum is left empty when the share count jumped
+  between the first and last quarter's filing: before a split a filing is in old units, after
+  it in new ones. Share counts only bracket a split between two dates, so the quarter just
+  before a split is sometimes dropped too. vinculum, which has exact split dates, sums across
+  splits itself.
+- **Public float dated at the fiscal year end:** 6% of 10-Ks (Caterpillar since 2024) tag the
+  float with the fiscal year end although the cover measures it mid-year. Moved back six months
+  (the end of the second fiscal quarter) and marked `redated`. Against each company's
+  normally dated floats, the median error of the implied float fraction falls from 20% to 7%;
+  Caterpillar's 2025 fraction goes from 0.67 to 0.98. Floats dated *after* the year end (4%)
+  were tested the same way and got worse (15% -> 24%), so they keep their date.
+
 ## Known limits
 - XBRL starts in 2009 (large filers) to 2011 (small): no EDGAR fundamentals before that.
 - Foreign filers report in their own currency (and `ifrs-full` tags); no FX conversion here.
-- As-reported per-share values and share counts are not split-adjusted.
+- As-reported per-share values and share counts are not split-adjusted (vinculum adjusts per security).
 - No analyst estimates, earnings surprises or transcripts.

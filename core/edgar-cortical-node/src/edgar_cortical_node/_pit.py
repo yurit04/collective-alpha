@@ -12,7 +12,7 @@ from datetime import date, timedelta
 
 import polars as pl
 
-from ._concepts import SHARE_TAGS, Concept
+from ._concepts import FISCAL_YEAR_END_TAGS, SHARE_TAGS, Concept
 
 STALE_DAYS = 400
 QUARTER = (80, 100)     # days in a fiscal quarter (52/53-week years included)
@@ -23,6 +23,7 @@ SHARE_NEAR_DAYS = 120   # concept values this close in time are compared
 SHARE_FILL_DAYS = 100   # another concept fills in where the main one has nothing this close
 SPIKE_JUMP = 5.0        # an isolated value this far from both neighbours is a filing error
 EDGE_SLIP = 200.0       # first/last value this far from its neighbour is a unit slip
+FYE_SLACK = 10          # a cover figure dated this close to the fiscal year end is misdated
 
 SERIES_SCHEMA = {
     "cik": pl.String, "item": pl.String, "unit": pl.String, "period": pl.String,
@@ -85,6 +86,25 @@ def drop_translations(facts: pl.DataFrame) -> pl.DataFrame:
     is_main = pl.col("__cur") == pl.col("__main")
     has_main = is_main.any().over(["cik", "accn", "taxonomy", "tag", "start", "end"])
     return f.filter(is_main | ~has_main).drop("__cur", "__main")
+
+
+def redate_second_quarter(f: pl.DataFrame, facts: pl.DataFrame) -> pl.DataFrame:
+    """Cover-page figures measured at the end of the second fiscal quarter (public float) that
+    a filing dates at its fiscal year end instead (about 6% of 10-Ks: Caterpillar since 2024)
+    are moved back six months, with source 'redated'. Figures dated after the fiscal year end
+    are left alone: they match the market value on the date given, and so are 10-Q copies. The
+    fiscal year end of a 10-K is its latest balance-sheet date (FISCAL_YEAR_END_TAGS)."""
+    fye = (facts.filter(_tag_col().is_in(list(FISCAL_YEAR_END_TAGS)) & pl.col("start").is_null())
+           .group_by("cik", "accn").agg(pl.col("end").max().alias("__fye")))
+    f = f.join(fye, on=["cik", "accn"], how="left")
+    at_fye = (pl.col("form").str.starts_with("10-K")
+              & ((pl.col("__fye") - pl.col("end")).dt.total_days().abs() <= FYE_SLACK)).fill_null(False)
+    back = pl.col("__fye").dt.offset_by("-6mo")
+    q2 = pl.when(pl.col("__fye") == pl.col("__fye").dt.month_end()).then(back.dt.month_end()) \
+        .otherwise(pl.col("__fye") - pl.duration(days=182))
+    return f.with_columns(pl.when(at_fye).then(q2).otherwise(pl.col("end")).alias("end"),
+                          pl.when(at_fye).then(pl.lit("redated")).otherwise(pl.lit("reported")).alias("source")
+                          ).drop("__fye")
 
 
 def available(expr: pl.Expr) -> pl.Expr:
@@ -162,8 +182,51 @@ def _pick_tag(per_tag: pl.DataFrame, tags: tuple[str, ...], nonnegative: bool, p
             .unique(["cik", "end"], keep="first", maintain_order=True).drop("__rank", "__derived"))
 
 
-def build_series(facts: pl.DataFrame, item: str, concept: Concept, policy: str = "first") -> pl.DataFrame:
-    """One item's point-in-time series for every company in `facts`."""
+def share_jumps(shares: pl.DataFrame) -> pl.DataFrame:
+    """Lasting share-count jumps (splits, reverse splits, very large issues): cik, `after` (date
+    of the last count before the jump), `until` (date of the first count after it)."""
+    s = shares.sort("cik", "end").with_columns(
+        pl.col("end").shift(1).over("cik").alias("after"),
+        (pl.col("shares") / pl.col("shares").shift(1).over("cik")).alias("__r"))
+    big = (pl.col("__r") >= SHARE_MATCH) | (pl.col("__r") <= 1 / SHARE_MATCH)
+    return s.filter(big.fill_null(False)).select("cik", "after", pl.col("end").alias("until"))
+
+
+def per_share_ttm(out: pl.DataFrame, shares: pl.DataFrame | None) -> pl.DataFrame:
+    """Per-share TTM: the reported annual figure where a fiscal year ends, otherwise the sum of
+    the last four quarters (two halves). Sums are dropped when the share count jumped (a split)
+    between the filings of the first and the last of those quarters, since they would then mix
+    share bases (a filing restates earlier periods for a split only after it happened)."""
+    annual = out.filter(pl.col("period") == "annual").select("cik", "end", pl.col("ttm").alias("__a"))
+    out = (out.join(annual.unique(["cik", "end"]), on=["cik", "end"], how="left")
+           .with_columns(pl.coalesce("__a", "ttm").alias("ttm"),
+                         pl.when(pl.col("__a").is_not_null())
+                         .then(pl.coalesce("ttm_available_from", available(pl.col("filed"))))
+                         .otherwise(pl.col("ttm_available_from")).alias("ttm_available_from"),
+                         pl.col("__a").is_not_null().alias("__fy"))
+           .drop("__a"))
+    if shares is not None and shares.height:
+        jumps = share_jumps(shares)
+        g = ["cik", "unit", "period"]
+        n = pl.when(pl.col("period") == "half").then(2).otherwise(4)
+        first = pl.min_horizontal(*[pl.when(n > k).then(pl.col("filed").shift(k).over(g)) for k in range(4)])
+        rows = (out.with_row_index("__i").sort("cik", "unit", "period", "end").with_columns(first.alias("__first"))
+                .filter((pl.col("period") != "annual") & ~pl.col("__fy") & pl.col("ttm").is_not_null()))
+        hit = (rows.select("__i", "cik", "__first", "filed").join(jumps, on="cik")
+               .filter((pl.col("after") < pl.col("filed")) & (pl.col("until") > pl.col("__first")))
+               .select("__i").unique())
+        out = (out.with_row_index("__i").join(hit.with_columns(pl.lit(True).alias("__hit")), on="__i", how="left")
+               .with_columns(pl.when(pl.col("__hit").fill_null(False)).then(None).otherwise(pl.col("ttm")).alias("ttm"),
+                             pl.when(pl.col("__hit").fill_null(False)).then(None)
+                             .otherwise(pl.col("ttm_available_from")).alias("ttm_available_from"))
+               .drop("__i", "__hit"))
+    return out.drop("__fy")
+
+
+def build_series(facts: pl.DataFrame, item: str, concept: Concept, policy: str = "first",
+                 shares: pl.DataFrame | None = None) -> pl.DataFrame:
+    """One item's point-in-time series for every company in `facts`. `shares` (build_shares
+    output) lets per-share items drop TTM sums that straddle a split."""
     tags = concept.tags
     f = facts.filter(_tag_col().is_in(list(tags)) & unit_filter(concept.unit))
     if f.is_empty():
@@ -172,17 +235,12 @@ def build_series(facts: pl.DataFrame, item: str, concept: Concept, policy: str =
         f = drop_translations(f)
     f = choose(f, policy)
     if concept.kind == "instant":
-        f = resolve_tags(f.filter(pl.col("start").is_null()), tags, ["cik", "end"], policy)
-        out = f.with_columns(pl.lit("instant").alias("period"), pl.lit("reported").alias("source"),
+        f = f.filter(pl.col("start").is_null())
+        f = redate_second_quarter(f, facts) if concept.second_quarter else f.with_columns(pl.lit("reported").alias("source"))
+        f = resolve_tags(f, tags, ["cik", "end"], policy)
+        out = f.with_columns(pl.lit("instant").alias("period"),
                              pl.lit(None, pl.Float64).alias("ttm"), pl.lit(None, pl.Date).alias("ttm_available_from"))
-    elif concept.kind == "per_share":
-        f = resolve_tags(f.filter(pl.col("start").is_not_null()), tags, ["cik", "start", "end"], policy)
-        dur = _days()
-        out = (f.filter(dur.is_between(*QUARTER) | dur.is_between(*YEAR))
-               .with_columns(pl.when(dur.is_between(*QUARTER)).then(pl.lit("quarter")).otherwise(pl.lit("annual")).alias("period"),
-                             pl.lit("reported").alias("source"), pl.lit(None, pl.Float64).alias("ttm"),
-                             pl.lit(None, pl.Date).alias("ttm_available_from")))
-    else:
+    else:  # flows and per-share amounts: quarters (derived where needed), halves, years, TTM
         f = f.filter(pl.col("start").is_not_null()).with_columns(_tag_col().alias("__tag"))
         resolved = resolve_tags(f.drop("__tag"), tags, ["cik", "start", "end"], policy)
 
@@ -205,6 +263,8 @@ def build_series(facts: pl.DataFrame, item: str, concept: Concept, policy: str =
                                 pl.col("val").alias("ttm"), available(pl.col("filed")).alias("ttm_available_from")))
         cols = ["cik", "unit", "start", "end", "val", "filed", "__tag", "source", "ttm", "ttm_available_from", "period"]
         out = pl.concat([quarters.select(cols), halves.select(cols), annual.select(cols)])
+        if concept.kind == "per_share":
+            out = per_share_ttm(out, shares)
     return (out.with_columns(pl.lit(item).alias("item"), pl.col("val").alias("value"),
                              available(pl.col("filed")).alias("available_from"), pl.col("__tag").alias("tag"))
             .select(list(SERIES_SCHEMA)).sort("cik", "end"))

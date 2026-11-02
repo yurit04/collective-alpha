@@ -69,8 +69,14 @@ edgar.profiles([320193]); edgar.names([1326801])   # SIC, fiscal year end, ticke
 ```
 - Join to bars through the security master's `cik` (point in time), never by ticker; or use
   vinculum (below), which also checks the CIK against the SEC's own name history.
+- Items: `CONCEPTS` (31): income statement (revenue, cost_of_revenue, gross_profit, sga, rnd,
+  depreciation_amortization, operating_income, interest_expense, pretax_income, income_tax,
+  net_income), cash flow (operating_cash_flow, capex, dividends_paid, buybacks, stock_comp),
+  balance sheet (assets, current_assets, cash, receivables, inventory, goodwill, liabilities,
+  current_liabilities, debt_current, short_term_borrowings, long_term_debt, equity), eps_basic,
+  eps_diluted, public_float. `EdgarStore.concepts()` gives each item's tags and definition.
 - Values are usable from `available_from` (day after filing); default is first-filed values.
-- Not split-adjusted: compare share counts across splits with Massive's splits.
+- Not split-adjusted (shares, EPS): use vinculum for per-security, split-aware values.
 - Coverage starts 2009-2011 (XBRL); foreign filers from 2014-15; many funds/BDCs have none.
 - Refresh: `uv run cortical sync` (the first `cortical backfill` is a 1.4 GB download: ask first).
 
@@ -103,8 +109,13 @@ v.ranks("2020-12-31")                                     # one row per company 
 v.ranks("2020-12-31", by="float_market_cap")              # float-adjusted (10-K public float)
 v.public_float("WMT")                                     # per 10-K: float, fraction, status
 v.fundamentals(["revenue", "net_income", "equity"], start="2015-01-01", freq="1m")  # TTM flows + ratios
+v.fundamentals(["eps_diluted"], tickers="NVDA")           # TTM EPS in that day's share units (split-safe)
+v.successors()                                            # same company under a new security / CIK
 v.scan()                                                  # lazy polars over the whole table
 ```
+- Companies that reorganize into a holding company (XOM 2026, BLK 2024) continue under a new
+  security_id: `v.successors()` links them; market cap and fundamentals carry over, but a
+  return series by `security_id` must be linked through it.
 - `issuer_market_cap` + `is_primary` for company-level work (ranks, size); `market_cap` per class.
 - No market cap before XBRL (2009-2011; foreign filers about 2017-18); none for delisted ADRs.
 - Float columns (`float_fraction`, `float_market_cap`, `issuer_float_market_cap`) come from the

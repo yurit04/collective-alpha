@@ -94,3 +94,25 @@ history (it accumulates only from the first download) and may not be in smaller 
   sizing the company.
 - **Build cost:** the computation needs the built panels, so the build writes them, computes
   the float table, then rewrites the rebuilt years with float columns. That adds about 5 s.
+
+## Addendum (2026-11-02): successors and per-share TTM
+- **Successors.** ExxonMobil moved to a holding company on 2026-07-01: a new security (new
+  FIGI) and a new CIK. The old CIK's history stopped and the new one had no share count until
+  its first 10-Q, so the largest energy company had no market cap for a month and no TTM
+  revenue or earnings for up to a year. Since 2015, 70 companies above $2B had a handoff like
+  this (BlackRock, Labcorp, ONEOK, Apollo), and 25 more switched CIK on the same security
+  (Broadcom, Marvell), losing 154 month-ends of revenue.
+  - **Links:** a `successors` table from the security master (last ticker trading as a new
+    security within 7 days, with CIK or name evidence and a ~1:1 price) and from the CIK map.
+  - **Uses:** the predecessor's counts and floats known before the link carry the successor;
+    fundamentals fall back up to two links while the CIK in use has nothing fresh.
+  - **What is not linked:** a merger at another exchange ratio. Its predecessor is a different
+    share, so linking would misstate both market cap and returns.
+  - **Considered:** linking by ticker alone, rejected: tickers are reused by unrelated
+    companies.
+- **Per-share TTM.** EDGAR can only bracket a split between two share counts, so its per-share
+  TTM is left empty across one (often 6-9 months for AAPL in 2020, NVDA in 2024), and the
+  previous year's EPS would carry forward. vinculum knows the exact split dates and sums the
+  quarters itself: w = EPS x cumulative split product at filing, divided by the product on the
+  day of use. NVDA's P/E now tracks market cap / net income through the split.
+- **Build:** about 65 s instead of 30 s (successor detection and the larger EDGAR read).

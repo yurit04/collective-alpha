@@ -67,13 +67,37 @@ ticker meant on each day.
 - **Instants** (assets, equity, cash, debt): one row per balance-sheet date. `public_float` (the
   10-K cover's market value of common equity held by non-affiliates, in USD) is an instant dated
   the float date, usually the last business day of the second fiscal quarter, months before the
-  10-K is filed. Foreign filers (20-F, 40-F) do not report it.
-- **Per share** (EPS): reported quarters and years only.
+  10-K is filed. About 6% of 10-Ks tag the fiscal year end instead (Caterpillar since 2024);
+  those are moved back six months and marked `source="redated"`. Floats dated after the fiscal
+  year end are left alone (they match the market value on the date given). Foreign filers
+  (20-F, 40-F) do not report it.
+- **Per share** (EPS): quarters as for flows (Q4 = annual minus nine months, an approximation:
+  share counts differ between the periods). `ttm` is the reported annual figure at fiscal year
+  ends, otherwise the sum of four quarters, left empty when the share count jumped (a split)
+  between the filings of the first and last quarter. Values are as filed, not split-adjusted;
+  `vinculum` sums them across splits with each security's split history.
 - Each item maps to several tags in priority order (`CONCEPTS`). For each company and period the
   value **known first** wins, whatever its tag; priority only breaks ties within one filing. (A
   company that changed tags, as many did with the 2018 revenue standard, shows older periods under
   the new tag only in later filings; preferring the new tag would date them a year late.)
 - Revenue falls back to bank, REIT and insurance lines when a company tags no total revenue.
+- Capex falls back to `PaymentsToAcquireProductiveAssets` (Amazon, about 11% of large companies),
+  oil and gas properties and REIT capital improvements; real-estate acquisitions are not capex.
+  Dividends paid fall back to `PaymentsOfOrdinaryDividends` (Pfizer).
+
+### Items (`CONCEPTS`, 31)
+| Kind | Items |
+|---|---|
+| flow | revenue, cost_of_revenue, gross_profit, sga, rnd, depreciation_amortization, operating_income, interest_expense, pretax_income, income_tax, net_income, operating_cash_flow, capex, dividends_paid, buybacks, stock_comp |
+| per share | eps_basic, eps_diluted |
+| instant | assets, current_assets, cash, receivables, inventory, goodwill, liabilities, current_liabilities, debt_current, short_term_borrowings, long_term_debt, equity, public_float |
+
+Definitions to know: `sga` only where one SG&A line is reported (G&A alone is not used, so
+Amazon has none); `depreciation_amortization` excludes depreciation-only tags; banks' interest
+expense includes deposits; `debt_current` is current maturities of long-term debt and
+`short_term_borrowings` is separate (they add up); `long_term_debt` uses `LongTermDebt` first,
+which includes current maturities for many filers. Banks and insurers report no current assets
+or liabilities. `EdgarStore.concepts()` lists every item's tags and description.
 
 Coverage of common stocks in the Massive universe (revenue usable that day): about 85% from 2018
 on, 70% in 2014 (foreign filers started XBRL in 2014-15; closed-end funds and BDCs rarely file

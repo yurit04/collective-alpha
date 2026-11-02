@@ -57,13 +57,20 @@ DAYS = weekdays(START, END)
 class FakeStore:
     """The parts of massive_subspace_stream.Store that vinculum uses."""
 
+    SECS = SECURITIES
+    WINDOWS: dict[str, tuple[date, date]] = {}   # security_id -> (first, last trading day)
+
     def dataset(self, name, *args, **kwargs):
         raise FileNotFoundError(name)
 
+    def days(self, sid):
+        a, b = self.WINDOWS.get(sid, (DAYS[0], DAYS[-1]))
+        return [d for d in DAYS if a <= d <= b]
+
     def __init__(self):
         rows = []
-        for sid, t, _, _, _, px, vol in SECURITIES:
-            for d in DAYS:
+        for sid, t, _, _, _, px, vol in self.SECS:
+            for d in self.days(sid):
                 p = px / 2 if (sid == "S1" and d >= SPLIT) else px
                 v = vol * 2 if (sid == "S1" and d >= SPLIT) else vol
                 rows.append((t, d, sid, p, float(v)))
@@ -73,13 +80,15 @@ class FakeStore:
                                      "split_from": [1.0], "split_to": [2.0]})
 
     def securities(self):
-        return pl.DataFrame([(sid, n, ty, c, [t], t, DAYS[0], DAYS[-1]) for sid, t, n, ty, c, _, _ in SECURITIES],
+        return pl.DataFrame([(sid, n, ty, c, [t], t, self.days(sid)[0], self.days(sid)[-1])
+                             for sid, t, n, ty, c, _, _ in self.SECS],
                             schema={"security_id": pl.String, "name": pl.String, "type": pl.String, "cik": pl.String,
                                     "tickers": pl.List(pl.String), "last_ticker": pl.String,
                                     "first_trade": pl.Date, "last_trade": pl.Date}, orient="row")
 
     def security_attributes(self):
-        return pl.DataFrame([(d, sid, t, n, ty, c) for d in month_ends(DAYS) for sid, t, n, ty, c, _, _ in SECURITIES],
+        return pl.DataFrame([(d, sid, t, n, ty, c) for sid, t, n, ty, c, _, _ in self.SECS
+                             for d in month_ends(self.days(sid))],
                             schema={"as_of": pl.Date, "security_id": pl.String, "ticker": pl.String,
                                     "name": pl.String, "type": pl.String, "cik": pl.String}, orient="row")
 
@@ -371,3 +380,128 @@ def test_short_volume_per_security(v):
     vol = cap(v, "ALPH", D(2021, 6, 15))["volume"]
     assert a["short_ratio"] == pytest.approx(0.5) and a["off_exchange_share"] == pytest.approx(600_000 / vol)
     assert v.short_volume("BETA")["short_volume"].to_list() == [50_000]
+
+
+# ---------------------------------------------------------------- per-share items across splits
+def test_per_share_ttm_across_a_split():
+    from vinculum._pershare import cum_splits, factor_at, per_share_ttm
+
+    def q(start, end, value, filed, period="quarter"):
+        return ("C", "item", "USD/shares", period, start, end, value, filed)
+
+    rows = pl.DataFrame([
+        q(D(2023, 4, 1), D(2023, 6, 30), 1.0, D(2023, 8, 1)),
+        q(D(2023, 7, 1), D(2023, 9, 30), 1.0, D(2023, 11, 1)),
+        q(D(2023, 10, 1), D(2023, 12, 31), 1.0, D(2024, 2, 15)),
+        q(D(2023, 1, 1), D(2023, 12, 31), 4.2, D(2024, 2, 15), "annual"),
+        q(D(2024, 1, 1), D(2024, 3, 31), 1.0, D(2024, 5, 1)),
+        q(D(2024, 4, 1), D(2024, 6, 30), 0.5, D(2024, 8, 1)),       # filed after the 2:1 split
+    ], schema={"cik": pl.String, "item": pl.String, "unit": pl.String, "period": pl.String, "start": pl.Date,
+               "end": pl.Date, "value": pl.Float64, "filed": pl.Date}, orient="row")
+    cum = cum_splits(pl.DataFrame({"security_id": ["S"], "execution_date": [D(2024, 6, 10)], "k": [2.0]}))
+    t = per_share_ttm(rows, pl.DataFrame({"security_id": ["S"], "cik": ["C"]}), cum)
+    w = dict(zip(t["end"].to_list(), t["w"].to_list(), strict=True))
+    assert w[D(2023, 12, 31)] == 4.2                       # the annual figure, not the sum of quarters
+    assert w[D(2024, 6, 30)] == pytest.approx(1 + 1 + 1 + 0.5 * 2)   # every quarter on one basis
+    day = factor_at(pl.DataFrame({"security_id": ["S", "S"], "date": [D(2024, 5, 1), D(2024, 9, 1)]}),
+                    "date", cum, "c")
+    assert day["c"].to_list() == [1.0, 2.0]                # TTM EPS on 2024-09-01: 4.0 / 2 = 2.0 per new share
+
+
+# ---------------------------------------------------------------- successors
+def test_successor_units():
+    from vinculum._successors import (
+        cik_links,
+        handoff_candidates,
+        inherited_counts,
+        lineage,
+        security_links,
+    )
+
+    secs = pl.DataFrame({
+        "security_id": ["OLD", "NEW", "PH", "OTHER"], "last_ticker": ["XO", "XO", "XO", "ZZ"],
+        "tickers": [["XO"], ["XO"], ["XO"], ["ZZ"]],
+        "first_trade": [D(2020, 1, 2), D(2021, 7, 2), D(2021, 7, 1), D(2020, 1, 2)],
+        "last_trade": [D(2021, 6, 30), D(2022, 3, 31), D(2021, 7, 1), D(2022, 3, 31)]})
+    cand = handoff_candidates(secs, ["OLD", "NEW", "PH", "OTHER"])
+    assert cand.select("predecessor_id", "security_id").rows() == [("OLD", "NEW")]   # one-day listing skipped
+    cmap = pl.DataFrame({"security_id": ["OLD", "NEW"], "valid_from": [D(1900, 1, 1)] * 2, "cik": ["1", "2"],
+                         "status": ["verified"] * 2, "edgar_name": ["XO CORP", "XO HOLDINGS CORP"]})
+    attrs = pl.DataFrame({"security_id": ["OLD", "NEW"], "name": ["Xo Corporation", "XO Holdings Corporation"]})
+    closes = pl.DataFrame({"security_id": ["OLD", "NEW"], "date": [D(2021, 6, 30), D(2021, 7, 2)],
+                           "close": [100.0, 101.0]})
+    link = security_links(cand, cmap, attrs, closes).row(0, named=True)
+    assert (link["predecessor_cik"], link["cik"], link["evidence"]) == ("1", "2", "name")
+    assert link["price_ratio"] == pytest.approx(1.01)
+    merger = closes.with_columns(pl.when(pl.col("security_id") == "NEW").then(50.0).otherwise(pl.col("close")).alias("close"))
+    assert security_links(cand, cmap, attrs, merger).is_empty()           # not a 1:1 exchange
+    # Same security, new CIK.
+    runs = pl.DataFrame({"security_id": ["S", "S"], "valid_from": [D(1900, 1, 1), D(2016, 2, 1)],
+                         "cik": ["7", "8"], "status": ["verified", "verified"], "edgar_name": [None, None]})
+    c = cik_links(runs, ["S"]).row(0, named=True)
+    assert (c["kind"], c["predecessor_cik"], c["cik"], c["link_date"]) == ("cik", "7", "8", D(2016, 2, 1))
+    # Chains: B <- A (cik link), C <- B (security link).
+    succ = pl.DataFrame({"security_id": ["A", "C"], "cik": ["2", "3"], "predecessor_id": ["A", "A"],
+                         "predecessor_cik": ["1", "2"], "link_date": [D(2015, 1, 1), D(2020, 1, 1)]})
+    lin = lineage(succ).filter(pl.col("security_id") == "C").sort("depth")
+    assert lin["predecessor_cik"].to_list() == ["2", "1"]
+    # Inherited counts: only those known before the link, through the old security's splits.
+    obs = pl.DataFrame({"security_id": ["OLD", "OLD", "OLD"], "cik": ["1"] * 3,
+                        "end": [D(2021, 3, 31), D(2021, 6, 30), D(2021, 9, 30)],
+                        "shares": [10.0, 10.0, 10.0], "filed": [D(2021, 5, 1), D(2021, 8, 1), D(2021, 11, 1)],
+                        "available_from": [D(2021, 5, 2), D(2021, 8, 2), D(2021, 11, 2)], "tag": ["dei:X"] * 3})
+    ev = pl.DataFrame({"security_id": ["OLD"], "execution_date": [D(2021, 5, 15)], "k": [3.0]})
+    inh = inherited_counts(obs, pl.DataFrame([link]), 400, ev)
+    assert inh.select("security_id", "cik", "shares", "tag").rows() == [("NEW", "2", 30.0, "successor:dei:X")]
+
+
+class HandoffStore(FakeStore):
+    """ZETA moves to a new security and CIK (a holding company) on 2021-07-02."""
+    SECS = [*SECURITIES, ("S10", "ZETA", "ZETA CORP", "CS", "0000000010", 40.0, 500_000),
+            ("S11", "ZETA", "ZETA HOLDINGS CORP", "CS", "0000000011", 40.0, 500_000)]
+    WINDOWS = {"S10": (START, D(2021, 6, 30)), "S11": (D(2021, 7, 2), END)}
+
+
+class HandoffEdgar(FakeEdgar):
+    def profiles(self):
+        extra = pl.DataFrame({"cik": ["0000000010", "0000000011"], "tickers": [["ZETA"], ["ZETA"]],
+                              "first_periodic": [D(2010, 1, 1), D(2021, 8, 1)], "last_periodic": [D(2021, 8, 1)] * 2})
+        return pl.concat([super().profiles(), extra])
+
+    def names(self):
+        extra = pl.DataFrame({"cik": ["0000000010", "0000000011"], "name": ["ZETA CORP", "ZETA HOLDINGS CORP"],
+                              "valid_from": [None] * 2, "valid_to": [None] * 2},
+                             schema={"cik": pl.String, "name": pl.String, "valid_from": pl.Date, "valid_to": pl.Date})
+        return pl.concat([super().names(), extra])
+
+    def shares(self, ciks):
+        extra = pl.DataFrame([count("0000000010", D(2020, 12, 31), 100e6, D(2021, 2, 15)),
+                              count("0000000011", D(2021, 9, 30), 100e6, D(2021, 11, 5))],
+                             schema={"cik": pl.String, "end": pl.Date, "shares": pl.Float64, "filed": pl.Date,
+                                     "available_from": pl.Date, "tag": pl.String}, orient="row")
+        return pl.concat([super().shares(ciks), extra.filter(pl.col("cik").is_in(list(ciks)))])
+
+    def series(self, items, ciks, policy="first"):
+        base = super().series(items, ciks, policy)
+        extra = pl.DataFrame([
+            ("0000000010", "revenue", "USD", D(2021, 3, 31), 75.0, D(2021, 5, 11), 300.0, D(2021, 5, 11)),
+            ("0000000011", "revenue", "USD", D(2021, 9, 30), 90.0, D(2021, 11, 6), 333.0, D(2021, 11, 6)),
+        ], schema=base.schema, orient="row")
+        return pl.concat([base, extra.filter(pl.col("item").is_in(list(items)) & pl.col("cik").is_in(list(ciks)))])
+
+
+def test_holding_company_reorganization(tmp_path):
+    settings = load_settings(data_root=str(tmp_path / "vinculum"), start_year=2020)
+    v = Vinculum(settings=settings, store=HandoffStore(), edgar=HandoffEdgar(), finra=FakeFinra())
+    v.build()
+    s = v.successors().row(0, named=True)
+    assert (s["predecessor_id"], s["security_id"], s["kind"]) == ("S10", "S11", "security")
+    # Market cap continues from the old company's count until the new CIK files its own.
+    first = v.market_cap(["ZETA"], start=D(2021, 7, 2), end=D(2021, 7, 2)).row(0, named=True)
+    assert first["security_id"] == "S11" and first["market_cap"] == pytest.approx(4e9)
+    assert first["shares_tag"].startswith("successor:")
+    assert v.ranks(D(2021, 7, 2)).filter(pl.col("ticker") == "ZETA").height == 1
+    # Fundamentals: the predecessor's TTM until the successor has its own.
+    f = v.fundamentals(["revenue"], tickers="ZETA", start=D(2021, 6, 1), end=D(2021, 12, 31), freq="1d")
+    rev = dict(zip(f["date"].to_list(), f["revenue"].to_list(), strict=True))
+    assert rev[D(2021, 6, 30)] == 300.0 and rev[D(2021, 8, 2)] == 300.0 and rev[D(2021, 11, 8)] == 333.0

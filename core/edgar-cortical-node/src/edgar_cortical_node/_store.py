@@ -139,16 +139,26 @@ class EdgarStore:
 
         Flows: one row per fiscal quarter (reported, or derived from year-to-date figures and
         annual minus nine months) with `ttm` (trailing twelve months). Instants: one row per
-        balance-sheet date. Per-share items: reported quarters and years.
+        balance-sheet date. Per-share items: quarters as for flows (Q4 = year minus nine
+        months, an approximation); `ttm` is the reported annual figure at fiscal year ends,
+        otherwise the sum of four quarters, left empty when a split falls inside the window.
+        Per-share values are as filed (not split-adjusted).
         Every row has `filed` and `available_from` (the day after filing).
         """
+        from ._concepts import FISCAL_YEAR_END_TAGS, SHARE_TAGS
+
         items = [items] if isinstance(items, str) else list(items)
         unknown = [i for i in items if i not in CONCEPTS]
         if unknown:
             raise ValueError(f"unknown item(s) {unknown}; choose from {sorted(CONCEPTS)}")
-        tags = sorted({t for i in items for t in CONCEPTS[i].tags})
+        per_share = any(CONCEPTS[i].kind == "per_share" for i in items)
+        extra = set(SHARE_TAGS) if per_share else set()
+        if any(CONCEPTS[i].second_quarter for i in items):
+            extra |= set(FISCAL_YEAR_END_TAGS)
+        tags = sorted({t for i in items for t in CONCEPTS[i].tags} | extra)
         facts = self.facts(ciks, tags=tags)
-        frames = [build_series(facts, i, CONCEPTS[i], policy) for i in items]
+        sh = build_shares(facts, policy) if per_share else None
+        frames = [build_series(facts, i, CONCEPTS[i], policy, shares=sh) for i in items]
         df = pl.concat(frames) if frames else pl.DataFrame(schema=SERIES_SCHEMA)
         return self._out(df, backend)
 

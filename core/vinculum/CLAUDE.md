@@ -30,8 +30,14 @@ User docs: README.md in this folder. Design: docs/decisions/0004-vinculum.md.
 - `public_float(tickers, start, end)`: per 10-K: cik, float_date, public_float (USD),
   available_from, issuer_market_cap on the float date, ratio, unit_factor, float_fraction, status
 - `fundamentals(items, start, end, tickers=None, by=..., freq="1m"|"1d", primary_only=True,
-  ratios=True, policy="first")`: flows as TTM, instants latest, stale after 400 days, `currency`,
+  ratios=True, policy="first")`: any of the 31 EDGAR items; flows as TTM, instants latest, stale
+  400 days after the period end (public_float: after its filing); per-share items TTM in the
+  security's units that day (quarters put on one basis with the security's splits); where the
+  CIK in use has no fresh value, its predecessors' (successors table, up to 2 links); `currency`,
   ratios over issuer_market_cap for USD reporters
+- `successors(security_ids)`: security_id, cik, predecessor_id, predecessor_cik, link_date, kind
+  ("security": ticker moved to a new security, ~1:1 price; "cik": same security, new CIK),
+  ticker, price_ratio, evidence
 - `short_interest(tickers, start, end, by=..., date_by="published"|"settlement")`: FINRA short
   interest per equity security: settlement_date, published_date, security_id, ticker, symbol,
   market, type, cik, is_primary, short_interest, change_pct, avg_daily_volume, days_to_cover,
@@ -53,7 +59,9 @@ _cikmap.py    CIK runs per security, verification, conflicts, repair by name, ov
 _shares.py    split attribution, restated-basis choice, spikes, unit levels by turnover, basis ratios
 _build.py     equity filter, liquidity table, calibration, yearly market-cap panels, public float
               (float_table after the panels, then add_float rewrites them), scan_panels, build()
-_store.py     Vinculum (reads, ranks, universes, fundamentals, short data)
+_store.py     Vinculum (reads, ranks, universes, fundamentals with predecessor fallback, short data)
+_pershare.py  per-share TTM per security across splits (w = value x cumulative split product at filing)
+_successors.py ticker handoffs and CIK changes, lineage, inherited share counts
 _short.py     FINRA symbols -> securities (security master windows), short interest/volume reads
 _checks.py    `vinculum check`
 _services.py  launchd plist (com.collective-alpha.vinculum.build)
@@ -78,4 +86,9 @@ Invariants:
 - FINRA rows are mapped to securities by (FINRA symbol of the Massive ticker, date within the
   master's validity window); a symbol matching two securities on a date is dropped. Never join
   FINRA to anything by raw symbol. Short interest is point in time by `published_date`.
+- Successor links need CIK or name evidence and a first/last close ratio within 0.8-1.25 (1:1
+  exchange); predecessor counts and floats are inherited only if known before the link, and
+  fundamentals fall back only while the CIK in use has no fresh value. Never link by ticker alone.
+- Per-share values are converted with the security's own splits after their filing; never sum
+  per-share quarters filed on different share bases without that conversion.
 - Everything under the data root is derived: `vinculum build` may overwrite it all.

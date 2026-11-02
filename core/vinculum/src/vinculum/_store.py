@@ -284,7 +284,12 @@ class Vinculum:
             last = base.select("date").unique().with_columns(month.alias("__m")).group_by("__m").agg(pl.col("date").max())
             base = base.join(last.select("date"), on="date")
         base = base.select("date", "security_id", "ticker", "cik", "close", "market_cap", "issuer_market_cap").collect()
-        ciks = base["cik"].drop_nulls().unique().to_list()
+        # Predecessor CIKs (same company before a reorganization) fill in where the CIK in use
+        # has no usable value yet.
+        preds = self._predecessor_ciks(base)
+        base = base.join(preds, on=["security_id", "cik"], how="left") if preds.height else base
+        pred_cols = [c for c in base.columns if c.startswith("__pc")]
+        ciks = list(set(base["cik"].drop_nulls().to_list()).union(*[base[c].drop_nulls().to_list() for c in pred_cols]))
         out = base.sort("date")
         series = self.edgar.series(items, ciks, policy) if ciks else None
         currency = None
@@ -294,6 +299,9 @@ class Vinculum:
                 out = out.with_columns(pl.lit(None, pl.Float64).alias(item))
                 continue
             s = series.filter(pl.col("item") == item)
+            if kind == "per_share":
+                out = self._join_per_share(out, s, item)
+                continue
             if kind == "flow":
                 s = s.filter(pl.col("ttm").is_not_null()).select(
                     "cik", "end", "unit", pl.col("ttm").alias("__v"), pl.col("ttm_available_from").alias("__a"))
@@ -302,15 +310,28 @@ class Vinculum:
             # A later filing about an older period must not replace a newer one.
             s = (s.sort("cik", "__a", "end").with_columns(pl.col("end").cum_max().over("cik").alias("__m"))
                  .filter(pl.col("end") >= pl.col("__m")).drop("__m").sort("__a"))
+            # Cover figures measured mid-year (public float) are only filed months later: they
+            # age from their filing, as in market_cap().
+            age_from = "__a" if CONCEPTS[item].second_quarter else "end"
+            fresh = pl.col(age_from) >= pl.col("date") - pl.duration(days=STALE_DAYS)
             out = out.join_asof(s, left_on="date", right_on="__a", by="cik", strategy="backward", check_sortedness=False)
-            fresh = pl.col("end") >= pl.col("date") - pl.duration(days=STALE_DAYS)
-            out = out.with_columns(pl.when(fresh).then(pl.col("__v")).otherwise(None).alias(item),
-                                   pl.when(fresh).then(pl.col("unit")).otherwise(None).alias(f"__u_{item}"))
+            out = out.with_columns(pl.when(fresh).then(pl.col("__v")).otherwise(None).alias("__v"),
+                                   pl.when(fresh).then(pl.col("unit")).otherwise(None).alias("unit"))
+            for col in pred_cols:
+                prev = s.rename({"cik": col, "__v": "__pv", "unit": "__pu", "end": "__pe", "__a": "__pa"})
+                out = out.join_asof(prev, left_on="date", right_on="__pa", by=col, strategy="backward",
+                                    check_sortedness=False)
+                ok = (pl.col("__v").is_null() & pl.col("__pv").is_not_null()
+                      & (pl.col("__pa" if age_from == "__a" else "__pe") >= pl.col("date") - pl.duration(days=STALE_DAYS)))
+                pick = {"__v": "__pv", "unit": "__pu", "end": "__pe", "__a": "__pa"}
+                out = out.with_columns(*[pl.when(ok).then(pl.col(p)).otherwise(pl.col(c)).alias(c)
+                                         for c, p in pick.items()]).drop(*pick.values())
+            out = out.with_columns(pl.col("__v").alias(item), pl.col("unit").alias(f"__u_{item}"))
             out = out.drop("end", "unit", "__v", "__a")
             if CONCEPTS[item].unit == "currency":
                 currency = pl.coalesce(currency, pl.col(f"__u_{item}")) if currency is not None else pl.col(f"__u_{item}")
         out = out.with_columns((currency if currency is not None else pl.lit(None, pl.String)).alias("currency"))
-        out = out.drop([c for c in out.columns if c.startswith("__u_")])
+        out = out.drop([c for c in out.columns if c.startswith(("__u_", "__pc", "__ps"))])
         if ratios:
             usd = pl.col("currency") == "USD"
             for name, item in RATIOS.items():
@@ -318,6 +339,84 @@ class Vinculum:
                     out = out.with_columns(pl.when(usd & (pl.col("issuer_market_cap") > 0))
                                            .then(pl.col(item) / pl.col("issuer_market_cap")).otherwise(None).alias(name))
         return self._out(out.sort("date", "security_id"), backend)
+
+    def successors(self, security_ids=None, backend: Backend = "polars"):
+        """The same company continuing under a new security (kind "security": holding-company
+        reorganizations, ticker moved within 7 days at a ~1:1 price) or a new CIK (kind "cik"):
+        security_id, cik, predecessor_id, predecessor_cik, link_date, kind, ticker, price_ratio
+        (first close of the new security / last close of the old one), evidence."""
+        df = self._table("successors")
+        ids = self._list(security_ids)
+        return self._out(df.filter(pl.col("security_id").is_in(ids) | pl.col("predecessor_id").is_in(ids))
+                         if ids else df, backend)
+
+    def _predecessor_ciks(self, base: pl.DataFrame) -> pl.DataFrame:
+        """security_id, cik, __pc1/__ps1, __pc2/__ps2: predecessor CIKs and securities of each
+        (security, CIK), nearest first."""
+        from ._successors import lineage
+
+        try:
+            succ = self._table("successors")
+        except FileNotFoundError:
+            return pl.DataFrame()
+        lin = lineage(succ.filter(pl.col("security_id").is_in(base["security_id"].unique().to_list())))
+        lin = lin.filter(pl.col("predecessor_cik") != pl.col("cik"))
+        if lin.is_empty():
+            return pl.DataFrame()
+        lin = lin.with_columns(pl.col("depth").rank("ordinal").over("security_id", "cik").cast(pl.Int32).alias("depth"))
+        lin = lin.with_columns(pl.col("depth").cast(pl.String))
+        pc = lin.pivot(on="depth", index=["security_id", "cik"], values="predecessor_cik")
+        ps = lin.pivot(on="depth", index=["security_id", "cik"], values="predecessor_id")
+        depths = [c for c in pc.columns if c not in ("security_id", "cik")]
+        return (pc.rename({d: f"__pc{d}" for d in depths})
+                .join(ps.rename({d: f"__ps{d}" for d in depths}), on=["security_id", "cik"]))
+
+    def _join_per_share(self, out: pl.DataFrame, rows: pl.DataFrame, item: str) -> pl.DataFrame:
+        """Add one per-share item (TTM, in each security's units on `date`) to the panel; where
+        the security and CIK in use have none yet, the predecessor's (in its units at the link,
+        then through the successor's own splits)."""
+        from ._pershare import cum_splits, factor_at, per_share_ttm
+        from ._shares import split_events
+
+        if rows.is_empty():
+            return out.with_columns(pl.lit(None, pl.Float64).alias(item))
+        levels = sorted(c[4:] for c in out.columns if c.startswith("__ps"))
+        pairs = out.select("security_id", "cik").drop_nulls().unique()
+        ids = set(pairs["security_id"].to_list()).union(*[out[f"__ps{d}"].drop_nulls().to_list() for d in levels])
+        cum = (cum_splits(split_events(self.store.security_actions("splits", list(ids)))) if ids else
+               pl.DataFrame(schema={"security_id": pl.String, "execution_date": pl.Date, "c": pl.Float64}))
+
+        def ttm(pairs: pl.DataFrame) -> pl.DataFrame:
+            t = per_share_ttm(rows, pairs, cum)
+            # A later filing about an older period must not replace a newer one.
+            return (t.sort("security_id", "available", "end")
+                    .with_columns(pl.col("end").cum_max().over("security_id").alias("__m"))
+                    .filter(pl.col("end") >= pl.col("__m")).drop("__m", "unit").sort("available"))
+
+        stale = pl.duration(days=STALE_DAYS)
+        out = out.join_asof(ttm(pairs), left_on="date", right_on="available", by="security_id", strategy="backward",
+                            check_sortedness=False)
+        out = factor_at(out, "date", cum, "__c_now")
+        out = out.with_columns(pl.when(pl.col("end") >= pl.col("date") - stale)
+                               .then(pl.col("w") / pl.col("__c_now")).otherwise(None).alias(item)
+                               ).drop("end", "w", "available")
+        for d in levels:
+            ps, pc = f"__ps{d}", f"__pc{d}"
+            pp = out.select(pl.col(ps).alias("security_id"), pl.col(pc).alias("cik")).drop_nulls().unique()
+            if pp.is_empty():
+                continue
+            t = ttm(pp).rename({"security_id": ps})
+            out = out.join_asof(t, left_on="date", right_on="available", by=ps, strategy="backward",
+                                check_sortedness=False)
+            # w / C_pred(date) is in the predecessor's units at its last split; a successor
+            # security's own splits since the link (C_now) apply on top.
+            out = factor_at(out.rename({ps: "__tmp", "security_id": "__own"}).rename({"__tmp": "security_id"}),
+                            "date", cum, "__c_pred").rename({"security_id": ps, "__own": "security_id"})
+            own_units = pl.when(pl.col(ps) == pl.col("security_id")).then(pl.lit(1.0)).otherwise(pl.col("__c_now"))
+            ok = pl.col(item).is_null() & (pl.col("end") >= pl.col("date") - stale)
+            out = out.with_columns(pl.when(ok).then(pl.col("w") / pl.col("__c_pred") / own_units)
+                                   .otherwise(pl.col(item)).alias(item)).drop("end", "w", "available", "__c_pred")
+        return out.drop("__c_now").sort("date")
 
     # ------------------------------------------------------------------ short data (FINRA)
     def _short_ids(self, tickers, by: str, end: date | None) -> list[str] | None:
