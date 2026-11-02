@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import gzip
+import json
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -61,3 +63,49 @@ class FakeFlatClient:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(self.files[key])
         return len(self.files[key])
+
+
+def day_rows(day: date, closes: dict[str, float]):
+    midnight_et = ns(datetime(day.year, day.month, day.day, 5, 0))  # 00:00 ET in winter
+    return [(t, 1000.5, c, c, c + 1, c - 1, midnight_et, 10) for t, c in sorted(closes.items())]
+
+
+def minute_rows(day: date):
+    t0 = ns(datetime(day.year, day.month, day.day, 14, 30))  # 09:30 ET
+    return [("AAPL", 100, 10, 10.5, 11, 9.5, t0, 3), ("AAPL", 50, 10.5, 10.2, 10.6, 10.1, t0 + 60_000_000_000, 2),
+            ("MSFT", 70, 20, 20.1, 20.2, 19.9, t0, 4)]
+
+
+def fake_rest(pages_by_endpoint):
+    class Fake:
+        def __init__(self):
+            self.calls = []
+
+        def paginate(self, endpoint, params):
+            self.calls.append((endpoint, dict(params)))
+            data = pages_by_endpoint.get(endpoint)
+            if isinstance(data, Exception):
+                raise data
+            yield from data or []
+
+    return Fake()
+
+
+class FakeWS:
+    def __init__(self, svc, messages):
+        self.svc, self.messages, self.sent = svc, list(messages), []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def send(self, msg):
+        self.sent.append(json.loads(msg))
+
+    async def recv(self):
+        if self.messages:
+            return self.messages.pop(0)
+        self.svc.stop()
+        await asyncio.sleep(3600)

@@ -35,6 +35,7 @@ log = logging.getLogger("massive_subspace_stream")
 REST_FLUSH_ROWS = 250_000   # convert raw API rows to a DataFrame this often
 REST_WRITE_ROWS = 3_000_000  # merge into year files this often (each merge rewrites them)
 DISK_MARGIN_BYTES = 50 * 1024**3
+SNAPSHOT_SHRINK_TOLERANCE = 0.02  # a snapshot answer this much shorter than stored is suspect
 # Parquet output relative to the downloaded .csv.gz size (measured; used for disk checks).
 OUTPUT_RATIO = {"bars": 1.0, "ticks": 1.3}
 REFERENCE_FIRST = ("tickers", "ticker_types", "exchanges", "conditions", "market_holidays", "splits", "dividends", "ipos")
@@ -109,6 +110,18 @@ class Ingestor:
         spec = FLAT_DATASETS[dataset]
         start_d = to_date(start) or to_date(self.settings.backfill_since)
         end_d = to_date(end) or today_et()
+        plan = self.settings.plan_info
+        if dataset not in plan.flat_datasets:
+            log.warning("%s: not included in the Massive %s plan; skipped", dataset, plan.name)
+            return JobResult(dataset, note=f"skipped: not in the {plan.name} plan")
+        horizon = self.settings.history_start()
+        if horizon and start_d < horizon:
+            if end_d < horizon:
+                return JobResult(dataset, note=f"skipped: before {horizon}, outside the {plan.name} plan's "
+                                               f"{plan.history_years} years")
+            log.warning("%s: the %s plan reaches back to %s; starting there instead of %s",
+                        dataset, plan.name, horizon, start_d)
+            start_d = horizon
         tickers = sorted({t.strip().upper() for t in tickers if t.strip()}) if tickers else None
         if spec.kind == "bars" and tickers:
             log.warning("%s always stores every ticker; ignoring the ticker filter", dataset)
@@ -257,8 +270,14 @@ class Ingestor:
             log.info("bars_day %d: %d day(s) written (%s rows in year file)", year, len(days), f"{new.height:,}")
 
     # ------------------------------------------------------------------ REST datasets
+    def rest_defaults(self) -> list[str]:
+        """REST datasets refreshed when none are named: all, minus those the plan lacks."""
+        return [n for n in REST_DATASETS if n not in self.settings.plan_info.rest_excluded]
+
     def rest(self, names: Iterable[str] | None = None, full: bool = False) -> list[JobResult]:
-        names = list(names) if names else list(REST_DATASETS)
+        """Refresh REST datasets (default: `rest_defaults()`). A named dataset is always tried;
+        one the plan lacks then answers 403 and is skipped."""
+        names = list(names) if names else self.rest_defaults()
         unknown = [n for n in names if n not in REST_DATASETS]
         if unknown:
             raise ValueError(f"unknown REST dataset(s) {unknown}; choose from {sorted(REST_DATASETS)}")
@@ -329,6 +348,13 @@ class Ingestor:
                 df = pl.concat(frames, how="diagonal_relaxed")
                 path = self.layout.rest_file(spec.path)
                 if spec.mode == "snapshot":
+                    df, note = guard_snapshot(read_parquet_if_exists(path), df, spec)
+                    if note:
+                        log.warning("%s: %s", spec.name, note)
+                        result.note = note
+                    if df is None:
+                        result.failed["snapshot"] = note
+                        return result
                     if spec.sort:
                         df = df.sort([c for c in spec.sort if c in df.columns], nulls_last=True)
                     rows, nbytes = df.height, write_parquet(df, path)
@@ -435,7 +461,7 @@ class Ingestor:
         if minute:
             results.append(self.flat("bars_minute", start=since, workers=workers))
         if rest:
-            results += self.rest([n for n in REST_DATASETS if n not in REFERENCE_FIRST])
+            results += self.rest([n for n in self.rest_defaults() if n not in REFERENCE_FIRST])
         return results
 
     def sync(self) -> list[JobResult]:
@@ -464,7 +490,8 @@ class Ingestor:
         from .._identity.run import build_identity
 
         try:
-            s = build_identity(self.layout, self.catalog, self.rest_client if fetch else None, fetch=fetch)
+            s = build_identity(self.layout, self.catalog, self.rest_client if fetch else None, fetch=fetch,
+                               lookups_from=self.settings.history_start())
         except (RestError, FileNotFoundError) as exc:
             log.error("identity: %s", exc)
             return JobResult("identity", failed={"build": str(exc)})
@@ -475,13 +502,14 @@ class Ingestor:
     def verify(self, dataset: str, start: Any = None, end: Any = None, repair: bool = False) -> dict[str, list[str]]:
         """Compare the catalog with the bucket and the files on disk.
 
-        Returns {"missing": [...], "broken": [...]} as ISO dates; with repair=True
-        the affected days are downloaded again.
+        Returns {"missing": [...], "broken": [...], "unrepairable": [...]} as ISO dates; with
+        repair=True the affected days are downloaded again. "unrepairable" lists the missing or
+        broken days the plan cannot download (older than its history, or a dataset it lacks).
         """
         spec = FLAT_DATASETS[dataset]
         keys = self.catalog.partition_keys(dataset)
         if not keys and start is None:
-            return {"missing": [], "broken": []}
+            return {"missing": [], "broken": [], "unrepairable": []}
         start_d = to_date(start) or date.fromisoformat(keys[0])
         end_d = to_date(end) or (date.fromisoformat(keys[-1]) if keys else today_et())
         remote = {f.day.isoformat() for f in self.flat_client.list_files(spec.s3_dir, start_d, end_d)}
@@ -508,13 +536,57 @@ class Ingestor:
                     broken.append(key)
             except Exception:
                 broken.append(key)
+        horizon = self.settings.history_start()
+        entitled = dataset in self.settings.plan_info.flat_datasets
+        unrepairable = sorted(k for k in set(missing) | set(broken)
+                              if not entitled or (horizon and date.fromisoformat(k) < horizon))
+        if unrepairable:
+            log.warning("%s: %d missing or broken day(s) cannot be downloaded on the %s plan",
+                        dataset, len(unrepairable), self.settings.plan)
         if repair and (missing or broken):
-            for key in broken:
+            todo = sorted((set(missing) | set(broken)) - set(unrepairable))
+            for key in set(broken) & set(todo):  # a broken day the plan can't replace stays listed
                 self.catalog.remove(dataset, key)
-            for key in sorted(set(missing) | set(broken)):
+            for key in todo:
                 tickers = (have.get(key, {}).get("detail") or {}).get("tickers")
                 self.flat(dataset, start=key, end=key, tickers=tickers)
-        return {"missing": missing, "broken": sorted(broken)}
+        return {"missing": missing, "broken": sorted(broken), "unrepairable": unrepairable}
+
+
+def guard_snapshot(old: pl.DataFrame | None, new: pl.DataFrame, spec: RestSpec,
+                   tolerance: float = SNAPSHOT_SHRINK_TOLERANCE) -> tuple[pl.DataFrame | None, str]:
+    """Merge a fresh snapshot answer with the stored file so a shorter answer (a smaller plan's
+    history limit, a truncated response) never deletes history.
+
+    Stored rows dated before the answer's first `span_field` date are kept. If the answer has
+    more than `tolerance` fewer rows than stored over the span it covers, stored rows missing
+    from it (by `spec.keys`) are kept as well; without keys the answer is refused (None).
+    Returns (frame to write, note); the note is empty when the answer simply replaced the file.
+    """
+    if old is None or old.height == 0:
+        return new, ""
+    notes, keep = [], []
+    span = spec.span_field
+    first = new[span].min() if span and span in new.columns and span in old.columns else None
+    if first is not None:
+        before = old.filter(pl.col(span) < first)
+        if before.height:
+            keep.append(before)
+            notes.append(f"kept {before.height:,} stored rows dated before {first}, the answer's first date")
+        covered = old.filter(pl.col(span).is_null() | (pl.col(span) >= first))
+    else:
+        covered = old
+    if new.height < (1 - tolerance) * covered.height:
+        shrink = f"answer has {new.height:,} rows where {covered.height:,} are stored"
+        keys = [k for k in spec.keys if k in new.columns and k in old.columns]
+        if not keys:
+            return None, f"{shrink}; refused, the stored file is unchanged"
+        missing = covered.join(new.select(keys).unique(), on=keys, how="anti", nulls_equal=True)
+        keep.append(missing)
+        notes.append(f"{shrink}; kept {missing.height:,} stored rows missing from it")
+    if not keep:
+        return new, ""
+    return pl.concat([*keep, new], how="diagonal_relaxed"), "; ".join(notes)
 
 
 def prune_live(layout: Layout, catalog: Catalog, keep_days: int) -> int:

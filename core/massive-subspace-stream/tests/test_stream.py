@@ -9,6 +9,8 @@ from massive_subspace_stream._ingest.stream import LiveWriter, normalize
 from massive_subspace_stream._layout import Layout
 from massive_subspace_stream._store import live_files
 
+from .conftest import FakeWS
+
 T0 = int(datetime(2024, 12, 2, 14, 30, tzinfo=UTC).timestamp() * 1000)
 
 
@@ -46,26 +48,6 @@ def test_live_files_skips_parts_already_merged(tmp_path):
     for name in ["hour-2024120214.parquet", "part-2024120214-1-000001.parquet", "part-2024120215-2-000002.parquet"]:
         (tmp_path / name).touch()
     assert [f.name for f in live_files(tmp_path)] == ["hour-2024120214.parquet", "part-2024120215-2-000002.parquet"]
-
-
-class FakeWS:
-    def __init__(self, svc, messages):
-        self.svc, self.messages, self.sent = svc, list(messages), []
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc):
-        return False
-
-    async def send(self, msg):
-        self.sent.append(json.loads(msg))
-
-    async def recv(self):
-        if self.messages:
-            return self.messages.pop(0)
-        self.svc.stop()
-        await asyncio.sleep(3600)
 
 
 def test_service_run_end_to_end(settings, monkeypatch):

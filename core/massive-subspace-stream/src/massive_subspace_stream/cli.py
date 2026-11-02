@@ -198,7 +198,10 @@ def status() -> None:
         typer.secho(f"Stream: running (pid {info['pid']}), last message {last.get('last_message_at') or '-'}",
                     fg=typer.colors.GREEN)
     else:
-        typer.echo("Stream: not running")
+        reason = info.get("last_status", {}).get("stopped_reason")
+        typer.echo(f"Stream: not running{f' (stopped: {reason})' if reason else ''}")
+    typer.echo(f"Massive plan: {s.plan} (stream: {s.stream_url}"
+               + (f", history from {s.history_start()})" if s.history_start() else ")"))
 
 
 @app.command()
@@ -265,11 +268,15 @@ def verify(
 ) -> None:
     """Find days that are missing from the store or whose files are damaged."""
     report = _ingestor().verify(dataset, start, end, repair=repair)
-    for kind in ("missing", "broken"):
+    for kind in ("missing", "broken", "unrepairable"):
         days = report[kind]
+        if kind == "unrepairable" and not days:
+            continue
         preview = ", ".join(days[:10]) + (" ..." if len(days) > 10 else "")
         typer.echo(f"{kind}: {len(days)} day(s){': ' + preview if days else ''}")
-    if (report["missing"] or report["broken"]) and not repair:
+    if report["unrepairable"]:
+        typer.echo(f"Unrepairable days are outside the {_settings().plan} plan; restore them from a backup.")
+    if set(report["missing"] + report["broken"]) - set(report["unrepairable"]) and not repair:
         typer.echo("Run again with --repair to fix them.")
 
 
@@ -282,12 +289,18 @@ def stream_run(
     flush_seconds: Annotated[float | None, typer.Option(help="How often buffered data is written.")] = None,
 ) -> None:
     """Run the stream in the foreground (Ctrl-C to stop). Used by the launchd service."""
-    from ._ingest.stream import StreamService
+    from ._ingest.stream import StreamRefused, StreamService
 
     try:
         service = StreamService(_settings(), _split(channels), _split(symbols), _split(watch_channels), flush_seconds)
         asyncio.run(service.run())
-    except (RuntimeError, PermissionError, ConfigError, ValueError) as exc:
+    except (StreamRefused, ConfigError, ValueError) as exc:
+        # A restart can't fix these. Under launchd a clean exit stops the service instead of
+        # restarting it every 30 seconds (KeepAlive only on unsuccessful exits).
+        typer.secho(f"{exc}\nThe stream service stopped; fix the key, plan or channels and start it again.",
+                    fg=typer.colors.RED, err=True)
+        raise typer.Exit(0 if os.environ.get(_services.SERVICE_ENV) else 1) from None
+    except (RuntimeError, PermissionError) as exc:
         _fail(str(exc))
 
 

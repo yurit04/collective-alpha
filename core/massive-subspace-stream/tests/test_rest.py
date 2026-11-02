@@ -5,6 +5,8 @@ from massive_subspace_stream import Ingestor
 from massive_subspace_stream._datasets.rest import to_frame
 from massive_subspace_stream._sources.rest import NotEntitledError, RestClient
 
+from .conftest import fake_rest
+
 
 def client(handler) -> RestClient:
     return RestClient("k", "https://api.massive.com", transport=httpx.MockTransport(handler), sleep=lambda s: None)
@@ -45,21 +47,6 @@ def test_to_frame_types_dates_and_nested():
     assert df["publisher_name"].to_list() == ["Wire", None]
     assert df.schema["cash_amount"] == pl.Float64
     assert df.schema["insights"] == pl.String
-
-
-def fake_rest(pages_by_endpoint):
-    class Fake:
-        def __init__(self):
-            self.calls = []
-
-        def paginate(self, endpoint, params):
-            self.calls.append((endpoint, dict(params)))
-            data = pages_by_endpoint.get(endpoint)
-            if isinstance(data, Exception):
-                raise data
-            yield from data or []
-
-    return Fake()
 
 
 def test_rest_snapshot_timeseries_and_incremental(settings):

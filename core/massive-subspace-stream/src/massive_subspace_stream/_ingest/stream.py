@@ -30,6 +30,11 @@ from .._storage import write_parquet
 
 log = logging.getLogger("massive_subspace_stream.stream")
 
+
+class StreamRefused(PermissionError):
+    """Massive refused the login (wrong key, or a feed the plan doesn't include).
+    Restarting cannot fix it, so the service stops instead of retrying."""
+
 ET_ZONE = "America/New_York"
 
 # Websocket event code -> (storage kind, {output column: (message key, dtype)})
@@ -123,6 +128,7 @@ class StreamStats:
     messages: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     rows_written: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     last_error: str | None = None
+    stopped_reason: str | None = None
 
 
 class LiveWriter:
@@ -199,6 +205,17 @@ class StreamService:
         unknown = [c for c in self.channels + self.watch_channels if c not in CHANNELS]
         if unknown:
             raise ValueError(f"unknown channel(s) {unknown}; choose from {sorted(CHANNELS)}")
+        plan = settings.plan_info
+        dropped = sorted({c for c in self.channels + (self.watch_channels if self.watchlist else [])
+                          if c not in plan.stream_channels})
+        if dropped:
+            log.warning("channel(s) %s are not in the Massive %s plan; not subscribing to them",
+                        ", ".join(dropped), plan.name)
+            self.channels = [c for c in self.channels if c in plan.stream_channels]
+            self.watch_channels = [c for c in self.watch_channels if c in plan.stream_channels]
+        if not self.subscriptions():
+            raise ValueError(f"nothing to subscribe to on the {plan.name} plan "
+                             f"(it streams {', '.join(plan.stream_channels)})")
         self.flush_seconds = flush_seconds or settings.stream_flush_seconds
         self.writer = LiveWriter(self.layout)
         self.stats = StreamStats()
@@ -251,7 +268,7 @@ class StreamService:
     async def _consume(self) -> None:
         import websockets
 
-        url = f"{self.settings.ws_url.rstrip('/')}/stocks"
+        url = f"{self.settings.stream_url.rstrip('/')}/stocks"
         key = self.settings.require_api_key()
         backoff = 1.0
         while not self._stop.is_set():
@@ -302,7 +319,9 @@ class StreamService:
                 status = ev.get("status")
                 if status in ok:
                     return
-                if status in fail or status == "max_connections":
+                if status in fail:
+                    raise StreamRefused(f"websocket {status}: {ev.get('message')}")
+                if status == "max_connections":
                     raise PermissionError(f"websocket {status}: {ev.get('message')}")
         raise TimeoutError("no auth response from websocket")
 
@@ -340,6 +359,9 @@ class StreamService:
         flusher = asyncio.create_task(self._flusher())
         try:
             await self._consume()
+        except PermissionError as exc:
+            self.stats.stopped_reason = self.stats.last_error = str(exc)
+            raise
         finally:
             self._stop.set()
             await flusher

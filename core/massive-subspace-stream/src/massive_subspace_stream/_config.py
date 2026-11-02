@@ -16,12 +16,40 @@ from __future__ import annotations
 import os
 import tomllib
 from dataclasses import dataclass, field, fields, replace
+from datetime import date
 from pathlib import Path
 from typing import Any
+
+from ._dates import today_et
 
 SECTION = "massive_subspace_stream"
 CONFIG_FILENAME = "collective.toml"
 FIRST_AVAILABLE_DATE = "2003-09-10"  # earliest Massive stock flat file
+REALTIME_WS_URL = "wss://socket.massive.com"
+DELAYED_WS_URL = "wss://delayed.massive.com"  # 15-minute delayed feed (Starter, Developer)
+
+
+@dataclass(frozen=True)
+class Plan:
+    """What a Massive Stocks subscription includes (massive.com/pricing, checked 2026-11-01).
+
+    Datasets outside the plan are not requested by default; anything else the plan lacks
+    is answered with HTTP 403 and skipped (see `Ingestor.rest`)."""
+
+    name: str
+    history_years: int | None    # flat files and dated lookups this far back; None = everything
+    realtime: bool               # real-time websocket, else the 15-minute delayed feed
+    flat_datasets: tuple[str, ...]
+    stream_channels: tuple[str, ...]
+    rest_excluded: tuple[str, ...] = ()
+
+
+_FINANCIALS = ("income_statements", "balance_sheets", "cash_flow_statements", "ratios")
+PLANS: dict[str, Plan] = {
+    "starter": Plan("starter", 5, False, ("bars_day", "bars_minute"), ("AM", "A"), _FINANCIALS),
+    "developer": Plan("developer", 10, False, ("bars_day", "bars_minute", "trades"), ("AM", "A", "T"), _FINANCIALS),
+    "advanced": Plan("advanced", None, True, ("bars_day", "bars_minute", "trades", "quotes"), ("AM", "A", "T", "Q")),
+}
 
 
 class ConfigError(RuntimeError):
@@ -33,8 +61,11 @@ class Settings:
     data_root: Path = field(default_factory=lambda: Path("~/market_data/massive").expanduser())
     env_file: Path | None = field(default_factory=lambda: Path("~/.massive.env").expanduser())
 
+    # Massive Stocks subscription: "starter", "developer" or "advanced" (see PLANS).
+    plan: str = "advanced"
+
     rest_url: str = "https://api.massive.com"
-    ws_url: str = "wss://socket.massive.com"
+    ws_url: str | None = None  # default: real-time or delayed feed, by plan
     s3_endpoint: str = "https://files.massive.com"
     s3_bucket: str = "flatfiles"
 
@@ -61,6 +92,30 @@ class Settings:
     s3_access_key_id: str | None = field(default=None, repr=False)
     s3_secret_access_key: str | None = field(default=None, repr=False)
 
+    @property
+    def plan_info(self) -> Plan:
+        return PLANS[self.plan]
+
+    @property
+    def stream_url(self) -> str:
+        """The websocket for this plan. An explicit real-time URL on a delayed plan (left over
+        in an env file from a bigger plan) is replaced by the delayed feed."""
+        default = REALTIME_WS_URL if self.plan_info.realtime else DELAYED_WS_URL
+        if not self.ws_url or (not self.plan_info.realtime and self.ws_url.rstrip("/") == REALTIME_WS_URL):
+            return default
+        return self.ws_url
+
+    def history_start(self, today: date | None = None) -> date | None:
+        """Earliest date the plan can download (today minus its history years), or None."""
+        years = self.plan_info.history_years
+        if years is None:
+            return None
+        today = today or today_et()
+        try:
+            return today.replace(year=today.year - years)
+        except ValueError:  # 29 February
+            return today.replace(year=today.year - years, day=28)
+
     def require_api_key(self) -> str:
         if not self.api_key:
             raise ConfigError(
@@ -82,6 +137,7 @@ _ENV_SETTINGS = {
     "SUBSPACE_DATA_ROOT": "data_root",
     "MASSIVE_REST_URL": "rest_url",
     "MASSIVE_WS_URL": "ws_url",
+    "MASSIVE_PLAN": "plan",
     "MASSIVE_S3_ENDPOINT": "s3_endpoint",
     "MASSIVE_S3_BUCKET": "s3_bucket",
 }
@@ -138,6 +194,11 @@ def _coerce(name: str, value: Any) -> Any:
         raise ConfigError(f"Unknown setting '{name}' in [{SECTION}]")
     if name in _SECRET_FIELDS:
         raise ConfigError(f"'{name}' is a credential; put it in the environment or env file, not collective.toml")
+    if name == "plan":
+        plan = str(value).strip().lower()
+        if plan not in PLANS:
+            raise ConfigError(f"Unknown Massive plan '{value}'; choose from {', '.join(PLANS)}")
+        return plan
     if name in ("data_root", "env_file", "config_file"):
         return Path(str(value)).expanduser() if value not in (None, "") else None
     if name.startswith("stream_") and name != "stream_flush_seconds" and isinstance(value, (list, tuple, str)):
@@ -175,5 +236,5 @@ def load_settings(config_file: Path | str | None = None, **overrides: Any) -> Se
     # Non-secret endpoints may also live in the env file.
     for var, attr in _ENV_SETTINGS.items():
         if attr not in env_values and attr not in overrides and var in file_values and attr != "data_root":
-            secrets[attr] = file_values[var]
+            secrets[attr] = _coerce(attr, file_values[var])
     return replace(settings, **secrets) if secrets else settings

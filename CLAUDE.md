@@ -54,6 +54,8 @@ uv run vinculum --help                 # market cap / universes (see core/vincul
 - Data root: `~/market_data/massive` (override: `SUBSPACE_DATA_ROOT` or `collective.toml`).
 - Read data through `massive_subspace_stream.Store`, never by globbing Parquet paths
   in project code. See `.claude/skills/query-market-data/SKILL.md`.
+- The Massive plan is the `plan` setting (`starter`, `developer` or `advanced`). Downloads,
+  the stream and refreshes follow it. Never work around a plan limit by changing endpoints.
 - Bars are stored unadjusted. Pass `adjust="splits"` or `adjust="all"` when a
   study needs continuous prices.
 - Market cap, size universes and fundamentals per security come from `vinculum.Vinculum`;

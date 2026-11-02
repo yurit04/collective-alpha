@@ -99,9 +99,10 @@ def load_inputs(layout: Layout) -> dict[str, pl.DataFrame]:
 
 def build_identity(layout: Layout, catalog: Catalog, client=None, fetch: bool = True,
                    lookup_workers: int = 8, max_rounds: int = 12,
-                   overrides: pl.DataFrame | None = None) -> dict[str, Any]:
+                   overrides: pl.DataFrame | None = None, lookups_from: date | None = None) -> dict[str, Any]:
     """Build (or rebuild) the security master. With `client` and fetch=True, missing snapshots
-    and dated lookups are downloaded first; without, it builds from what is stored."""
+    and dated lookups are downloaded first; without, it builds from what is stored.
+    `lookups_from`: the earliest date the plan can look up (older ones are not asked for)."""
     started = datetime.now(UTC)
     layout.ensure()
     data = load_inputs(layout)
@@ -126,10 +127,14 @@ def build_identity(layout: Layout, catalog: Catalog, client=None, fetch: bool = 
     for round_no in range(1, max_rounds + 1):
         anc = anchors(data["snapshots"], lookups, eps)
         seg = segment_all(index, eps, anc, lookups, ratios, forced)
-        if not seg.needed or client is None or not fetch:
+        needed = [(t, d) for t, d in seg.needed if lookups_from is None or d >= lookups_from]
+        if len(needed) < len(seg.needed):
+            log.info("identity round %d: %d lookup(s) older than %s are outside the plan; not fetched",
+                     round_no, len(seg.needed) - len(needed), lookups_from)
+        if not needed or client is None or not fetch:
             break
-        log.info("identity round %d: %d dated lookup(s) needed", round_no, len(seg.needed))
-        new = fetch_lookups(client, seg.needed, lookup_workers)
+        log.info("identity round %d: %d dated lookup(s) needed", round_no, len(needed))
+        new = fetch_lookups(client, needed, lookup_workers)
         if new.height == 0:
             break
         lookups_fetched += new.height

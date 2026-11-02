@@ -23,6 +23,37 @@ Credentials are read from environment variables, or from `~/.massive.env`
 
 Other settings go in `collective.toml` (see `collective.toml.example` at the repo root).
 
+### Massive plan
+
+Set `plan` to your Massive Stocks subscription (`collective.toml`, or `MASSIVE_PLAN`).
+The default is `advanced`.
+
+| | starter | developer | advanced |
+|---|---|---|---|
+| Flat files reach back | 5 years | 10 years | everything (2003) |
+| Flat-file datasets | day and minute bars | + trades | + quotes |
+| Websocket | delayed 15 min, `AM` `A` | delayed, + `T` | real-time, + `Q` |
+| Financials and ratios | not requested | not requested | refreshed |
+
+What the plan setting changes:
+
+- **Downloads start at the plan's limit.** Older days are never requested, and a day of a
+  dataset the plan lacks is skipped.
+- **`verify` lists days the plan can't repair** as `unrepairable`. Restore those from a
+  backup, since they can't be downloaded again.
+- **The stream connects to the plan's feed and subscribes only to channels the plan has.**
+  A real-time `MASSIVE_WS_URL` left over from a bigger plan is replaced by the delayed feed.
+- **A refused login stops the stream service instead of restarting it every 30 seconds.**
+  `subspace status` shows the reason. Services installed before this change need
+  `subspace service install` again.
+- **The nightly refresh leaves out datasets the plan lacks.** It also doesn't look up the
+  security master's dated tickers beyond the plan's history.
+
+Snapshot datasets (`splits`, `dividends`, `ipos`, `tickers`, ...) are protected on every plan.
+A refresh that answers with less history keeps the stored rows it no longer returns, and logs
+a warning. Without that, a 5-year answer would silently cut the split history that adjusted
+prices and vinculum's market caps depend on.
+
 ## Data services
 
 ```bash
@@ -128,7 +159,7 @@ corporate actions are counted by `subspace identity check`, not guessed.
 | `trades`, `quotes` | flat files | on demand only: about 3 GB (trades) and 9 GB (quotes) per day compressed |
 | `tickers`, `ticker_types`, `exchanges`, `conditions`, `market_holidays` | REST | reference data (`conditions`: trade/quote condition codes and how they affect bars) |
 | `ticker_details` | REST | daily snapshot per active stock/ADR (~5,700 calls): market cap, share-class and weighted shares (ADS counts for ADRs), SIC; history builds up from the first run |
-| `splits`, `dividends`, `ipos` | REST | corporate actions |
+| `splits`, `dividends`, `ipos` | REST | corporate actions (a shorter answer never deletes stored history) |
 | `income_statements`, `balance_sheets`, `cash_flow_statements`, `ratios`, `float` | REST | fundamentals |
 | `short_interest`, `short_volume`, `news` | REST | incremental |
 | live `bars_1m`, `bars_1s`, `trades`, `quotes`, `luld` | websocket | provisional; old days pruned once official files arrive |

@@ -16,6 +16,7 @@ from pathlib import Path
 from ._config import Settings
 from ._layout import Layout
 
+SERVICE_ENV = "SUBSPACE_SERVICE"  # set for processes launchd starts
 LABELS = {"sync": "com.collective-alpha.subspace.sync", "stream": "com.collective-alpha.subspace.stream"}
 AGENTS_DIR = Path("~/Library/LaunchAgents").expanduser()
 
@@ -37,7 +38,7 @@ def plist_path(name: str) -> Path:
 def build_plist(name: str, settings: Settings) -> dict:
     layout = Layout(settings.data_root)
     args = [subspace_executable()] + (["sync"] if name == "sync" else ["stream", "run"])
-    env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "SUBSPACE_DATA_ROOT": str(layout.root)}
+    env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "SUBSPACE_DATA_ROOT": str(layout.root), SERVICE_ENV: "1"}
     if settings.config_file:
         env["COLLECTIVE_CONFIG"] = str(Path(settings.config_file).resolve())
     plist = {
@@ -56,7 +57,8 @@ def build_plist(name: str, settings: Settings) -> dict:
         ]
     else:
         plist["RunAtLoad"] = True
-        plist["KeepAlive"] = True
+        # Restart after crashes and dropped connections, not after a clean stop (refused login).
+        plist["KeepAlive"] = {"SuccessfulExit": False}
         plist["ThrottleInterval"] = 30
     return plist
 

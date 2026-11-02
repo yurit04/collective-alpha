@@ -2,6 +2,8 @@
 # they come from the environment or ~/.massive.env.
 
 [massive_subspace_stream]
+# plan = "advanced"                  # your Massive Stocks plan: starter | developer | advanced
+                                     # (history limit, delayed or real-time stream, datasets)
 # data_root = "~/market_data/massive"
 # env_file = "~/.massive.env"
 # backfill_since = "2003-09-10"      # earliest flat file

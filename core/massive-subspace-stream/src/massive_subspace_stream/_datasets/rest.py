@@ -2,7 +2,11 @@
 
 Modes
 -----
-snapshot    Full pull every refresh; the file is replaced (e.g. tickers, splits).
+snapshot    Full pull every refresh; the file is replaced (e.g. tickers, splits), with a guard
+            against shorter answers (a smaller plan's history limit): stored rows dated before
+            the answer's first `span_field` date are kept, and if the answer has more than 2%
+            fewer rows than stored for the same span, stored rows missing from it (by `keys`)
+            are kept too. Without `keys`, such an answer is refused.
 accumulate  Full pull every refresh; rows are merged into one file by `keys`, so
             history builds up over time (e.g. float, upcoming holidays).
 timeseries  Incremental pull from the last seen date (minus `overlap_days`);
@@ -35,6 +39,7 @@ class RestSpec:
     keys: tuple[str, ...] = ()
     sort: tuple[str, ...] = ()
     overlap_days: int = 7
+    span_field: str | None = None  # snapshot: the date the answer's history is measured by
 
 
 def _fin(name: str, endpoint: str, description: str) -> RestSpec:
@@ -66,7 +71,7 @@ REST_DATASETS: dict[str, RestSpec] = {
             "tickers", "/v3/reference/tickers", "reference/tickers", "snapshot",
             "All stock tickers, active and delisted, with FIGI/CIK identifiers",
             params={"market": "stocks"}, param_sets=({"active": "true"}, {"active": "false"}),
-            sort=("ticker",),
+            keys=("ticker",), sort=("ticker",),
         ),
         RestSpec("ticker_details", "/v3/reference/tickers/{ticker}", "reference/ticker_details", "details",
                  "Daily snapshot of share counts, market cap and SIC per active stock/ADR "
@@ -85,12 +90,13 @@ REST_DATASETS: dict[str, RestSpec] = {
                  keys=("date", "exchange"), sort=("date", "exchange")),
         RestSpec("splits", "/stocks/v1/splits", "corporate_actions/splits", "snapshot",
                  "Stock splits with cumulative adjustment factors", limit=5000,
-                 sort=("ticker", "execution_date")),
+                 keys=("id",), span_field="execution_date", sort=("ticker", "execution_date")),
         RestSpec("dividends", "/stocks/v1/dividends", "corporate_actions/dividends", "snapshot",
                  "Cash dividends with cumulative adjustment factors", limit=5000,
-                 sort=("ticker", "ex_dividend_date")),
+                 keys=("id",), span_field="ex_dividend_date", sort=("ticker", "ex_dividend_date")),
         RestSpec("ipos", "/vX/reference/ipos", "corporate_actions/ipos", "snapshot",
-                 "IPO calendar and history", sort=("listing_date", "ticker")),
+                 "IPO calendar and history", keys=("ticker", "announced_date", "listing_date"),
+                 span_field="listing_date", sort=("listing_date", "ticker")),
         _fin("income_statements", "/stocks/financials/v1/income-statements", "Income statements (quarterly/annual/TTM)"),
         _fin("balance_sheets", "/stocks/financials/v1/balance-sheets", "Balance sheets"),
         _fin("cash_flow_statements", "/stocks/financials/v1/cash-flow-statements", "Cash flow statements"),

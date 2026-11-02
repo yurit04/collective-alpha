@@ -9,9 +9,13 @@ User docs: README.md in this folder.
 |---|---|
 | `Store(root=None, settings=None)` | all reads; see below |
 | `load_settings(config_file=None, **overrides)` / `Settings` | resolved configuration |
-| `Ingestor(settings)` | `.flat(dataset, start, end, tickers)`, `.rest(names, full)`, `.initial()`, `.sync()`, `.verify()`, `.identity(fetch)` |
+| `Ingestor(settings)` | `.flat(dataset, start, end, tickers)`, `.rest(names, full)`, `.rest_defaults()`, `.initial()`, `.sync()`, `.verify()` -> {missing, broken, unrepairable}, `.identity(fetch)` |
 | `StreamService(settings, channels, watchlist, watch_channels)` | `await .run()`; prefer the CLI |
 | `ConfigError`, `JobResult` | errors / job summaries |
+
+`Settings.plan` (`"starter"|"developer"|"advanced"`, see `_config.PLANS`) sets the history limit
+(`history_start()`), flat-file datasets, websocket feed (`stream_url`) and channels, and the REST
+datasets left out of default refreshes.
 
 `Store` methods (all take `backend="polars"|"pandas"`):
 - `bars(tickers, start, end, freq="1d"|"1min", adjust=None|"splits"|"all", session="all"|"regular"|"extended", include_live=False, by="ticker"|"security", lazy=False)`
@@ -71,5 +75,12 @@ Invariants:
   1 -> N (N > 10) are read as (N-1) -> N.
 - Adding a REST dataset = one `RestSpec` entry in `_datasets/rest.py` (+ optional `Store` helper).
   Mode "details" = one request per active ticker per day (`ticker_details`).
+- Never request what the plan lacks: flat files before `history_start()`, datasets outside
+  `plan_info.flat_datasets`, channels outside `plan_info.stream_channels`.
+- A snapshot refresh never deletes stored history: `guard_snapshot` keeps stored rows dated
+  before the answer's first `span_field` date, and rows missing from an answer more than 2%
+  shorter (by `keys`); without keys such an answer is refused. Give new snapshot specs `keys`.
+- The stream service stops (exit 0 under launchd, `KeepAlive={SuccessfulExit: false}`) when the
+  login is refused; other errors restart it.
 - Flat-file throttling (HTTP 429) is retried with backoff in `FlatFileClient.download`;
   keep `download_workers` at about 4.

@@ -1,25 +1,14 @@
 import gzip
-from datetime import date, datetime
+from datetime import date
 
 import polars as pl
 import pyarrow.parquet as pq
 from massive_subspace_stream import Ingestor
 from massive_subspace_stream._datasets.flat import convert_ticks, read_bars_csv
 
-from .conftest import FakeFlatClient, bars_csv, ns
+from .conftest import FakeFlatClient, bars_csv, day_rows, minute_rows
 
 D1, D2, D3 = date(2024, 1, 2), date(2024, 1, 3), date(2025, 1, 2)
-
-
-def day_rows(day: date, closes: dict[str, float]):
-    midnight_et = ns(datetime(day.year, day.month, day.day, 5, 0))  # 00:00 ET in winter
-    return [(t, 1000.5, c, c, c + 1, c - 1, midnight_et, 10) for t, c in sorted(closes.items())]
-
-
-def minute_rows(day: date):
-    t0 = ns(datetime(day.year, day.month, day.day, 14, 30))  # 09:30 ET
-    return [("AAPL", 100, 10, 10.5, 11, 9.5, t0, 3), ("AAPL", 50, 10.5, 10.2, 10.6, 10.1, t0 + 60_000_000_000, 2),
-            ("MSFT", 70, 20, 20.1, 20.2, 19.9, t0, 4)]
 
 
 def test_read_bars_csv_types_and_eastern_date(tmp_path):
@@ -81,12 +70,12 @@ def test_minute_backfill_and_verify(settings):
     ing, flat = make_ingestor(settings)
     r = ing.flat("bars_minute", "2024-01-01", "2024-01-31", workers=2)
     assert (r.done, r.rows) == (2, 6)
-    assert ing.verify("bars_minute") == {"missing": [], "broken": []}
+    assert ing.verify("bars_minute") == {"missing": [], "broken": [], "unrepairable": []}
     ing.layout.bars_minute_file(D2).unlink()
     assert ing.verify("bars_minute")["broken"] == ["2024-01-03"]
     ing.verify("bars_minute", repair=True)
     assert ing.layout.bars_minute_file(D2).exists()
-    assert ing.verify("bars_minute") == {"missing": [], "broken": []}
+    assert ing.verify("bars_minute") == {"missing": [], "broken": [], "unrepairable": []}
 
 
 def test_tick_coverage_union(settings):
