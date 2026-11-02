@@ -39,3 +39,16 @@ securities is vinculum's job.
   (`BRKB`, `FOXA`), and its issue names are truncated, so `BRKB` vs `FOXA` can't be resolved
   without a ticker list. Queries translate in the safe direction (Massive's `BRK.B` -> `BRKB`).
   vinculum resolves the rest against Massive's tickers.
+
+## Addendum (2026-11-02): short data per security in vinculum
+vinculum now depends on finra-sensor-array and serves `short_interest()` and `short_volume()`
+per equity security.
+
+- **Mapping.** Each FINRA symbol is matched to the FINRA spelling of the Massive ticker
+  (`finra_symbols`) within the security master's validity windows. Over 2017–2026, 99.5% of
+  exchange-listed short-interest rows map to exactly one security, and none map to two.
+- **Not translated:** Massive's lowercase `r`, `w` and `u` suffixes. FINRA spells rights and
+  units differently, and translating them gained 0.02%.
+- **Sizing.** Short interest is related to size through the issuer's market cap and float market
+  cap on the settlement date, not through share counts. That keeps multi-class companies
+  consistent: a class's short position is set against the whole company.

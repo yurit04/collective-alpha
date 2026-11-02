@@ -1,12 +1,13 @@
 [project]
 name = "vinculum"
 version = "0.1.0"
-description = "Joins Massive securities to SEC EDGAR companies: validated CIKs, split-aware share counts, daily market cap, size universes and point-in-time fundamentals per security."
+description = "Joins Massive securities to SEC EDGAR companies and FINRA short data: validated CIKs, split-aware share counts, daily market cap, public float, size universes, point-in-time fundamentals and short interest per security."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "massive-subspace-stream",
     "edgar-cortical-node",
+    "finra-sensor-array",
     "polars>=1.20",
     "pyarrow>=18",
     "typer>=0.12",
@@ -18,6 +19,7 @@ vinculum = "vinculum.cli:app"
 [tool.uv.sources]
 massive-subspace-stream = { workspace = true }
 edgar-cortical-node = { workspace = true }
+finra-sensor-array = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

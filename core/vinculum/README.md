@@ -1,15 +1,17 @@
 # vinculum
 
 Core module of collective-alpha: the link between Massive securities and SEC EDGAR companies.
-It depends on `massive-subspace-stream` (prices, the security master) and `edgar-cortical-node`
-(share counts, fundamentals) and builds what neither can alone:
+It depends on `massive-subspace-stream` (prices, the security master), `edgar-cortical-node`
+(share counts, fundamentals) and `finra-sensor-array` (short data), and builds what none can
+alone:
 
 - a **checked CIK for every security and day** (Massive's own CIKs are sometimes wrong);
 - **share counts in the security's own units** (splits, ADR ratios, share classes, unit errors);
 - a **daily market cap** for every stock and ADR since XBRL began (2009-2011), point in time;
 - **size universes** (top N, large/mid/small/micro), survivorship free;
 - **point-in-time fundamentals per security**, with valuation ratios;
-- **public float** per company from its 10-K, and float-adjusted market cap and size ranks.
+- **public float** per company from its 10-K, and float-adjusted market cap and size ranks;
+- **FINRA short interest and short sale volume per security**, as a share of market cap and float.
 
 Design: `docs/decisions/0004-vinculum.md`.
 
@@ -38,6 +40,8 @@ v.universe("2015-06-15", top=500)                         # the 500 largest comp
 v.universe("2015-06-15", size=["small", "micro"])         # ranks 1001+
 v.universe("2015-06-15", top=500, by="float_market_cap")  # ranked on float-adjusted size
 v.public_float("WMT")                                     # every 10-K's public float and fraction
+v.short_interest("GME", start="2020-12-01")               # by publication date, % of market cap and float
+v.short_volume("AAPL", start="2024-01-01")                # daily off-exchange short sale volume
 v.ranks("2020-12-31")                                     # every company, ranked by market cap
 v.fundamentals(["revenue", "net_income", "equity"], start="2015-01-01", freq="1m")
 v.cik_map(); v.share_counts("BBG000B9XRY4"); v.basis("BBG000B9XRY4")
@@ -86,6 +90,40 @@ How it compares (2026-11-01 build):
 - The median gap to Massive's free-float percentage is 4 points. Massive counts per listed class,
   so it puts Meta at 99.9% where the SEC float says 86%.
 - Known controlled companies come out right: Walmart 54%, Dell 40%.
+
+### Short interest and short sale volume
+
+FINRA keys its data by its own symbols: `BRKB` in short interest, `BRK/B` in daily volume.
+Each symbol is mapped to the security that held the matching Massive ticker on that date,
+through the security master's validity windows. That's how FB's short interest stays with Meta,
+and why a reused ticker never inherits another company's numbers.
+
+- On exchange-listed stocks, 99.5% of FINRA's short-interest rows map to exactly one security,
+  and none to two.
+- What doesn't map is units, warrants and rights, plus a few stocks delisted near the
+  settlement date.
+- OTC stocks have no securities here.
+
+`short_interest()`:
+- **One row per security and settlement date.** `start`/`end` filter on `published_date` by
+  default: FINRA releases each report 7 business days after settlement, so that's the date to
+  trade on. Use `date_by="settlement"` to filter by measurement date instead.
+- **`short_value` = short interest × close** on the settlement date.
+- **`si_pct_market_cap` = short_value / issuer market cap.** For single-class companies this is
+  shares short / shares outstanding. For multi-class companies it is the class's short position
+  against the whole company.
+- **`si_pct_float` = short_value / issuer float market cap.** GameStop was at 104% of float on
+  2021-01-15.
+- `days_to_cover` is FINRA's.
+
+`short_volume()`:
+- One row per security and day, usable from the next trading day.
+- **`short_ratio` = short volume / off-exchange volume.** It is typically 0.4–0.5 for every
+  stock, because market makers sell short to fill buy orders. It is a flow, not a position.
+- **`off_exchange_share` = off-exchange volume / all-venue volume** from the bars.
+
+Both return equity securities of the market-cap table only. `finra_sensor_array.FinraStore` has
+everything else (ETFs, preferreds, OTC stocks).
 
 ### CIK statuses
 

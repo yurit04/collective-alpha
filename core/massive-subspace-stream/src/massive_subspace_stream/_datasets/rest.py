@@ -40,6 +40,7 @@ class RestSpec:
     sort: tuple[str, ...] = ()
     overlap_days: int = 7
     span_field: str | None = None  # snapshot: the date the answer's history is measured by
+    nightly: bool = True           # refreshed by default (False: replaced by another source)
 
 
 def _fin(name: str, endpoint: str, description: str) -> RestSpec:
@@ -104,15 +105,18 @@ REST_DATASETS: dict[str, RestSpec] = {
                  "Daily valuation and quality ratios (a history builds up from each refresh)",
                  limit=50000, date_field="date", keys=("ticker", "date"), sort=("date", "ticker")),
         RestSpec("float", "/stocks/vX/float", "fundamentals/float", "accumulate",
-                 "Free float (history builds up from each refresh)", limit=5000,
-                 keys=("ticker", "effective_date"), sort=("ticker", "effective_date")),
+                 "Free float (history builds up from each refresh). Not refreshed by default: "
+                 "vinculum's public float (SEC 10-Ks) replaces it", limit=5000,
+                 keys=("ticker", "effective_date"), sort=("ticker", "effective_date"), nightly=False),
         RestSpec("short_interest", "/stocks/v1/short-interest", "short_interest", "timeseries",
-                 "Bi-monthly FINRA short interest (from 2017)", limit=50000, date_field="settlement_date",
+                 "Bi-monthly FINRA short interest (from 2017). Not refreshed by default: "
+                 "finra-sensor-array has it from FINRA", limit=50000, date_field="settlement_date",
                  filter_param="settlement_date.gte", keys=("ticker", "settlement_date"),
-                 sort=("settlement_date", "ticker"), overlap_days=31),
+                 sort=("settlement_date", "ticker"), overlap_days=31, nightly=False),
         RestSpec("short_volume", "/stocks/v1/short-volume", "short_volume", "timeseries",
-                 "Daily off-exchange short volume (from 2024)", limit=50000, date_field="date",
-                 filter_param="date.gte", keys=("ticker", "date"), sort=("date", "ticker")),
+                 "Daily off-exchange short volume (from 2024). Not refreshed by default: "
+                 "finra-sensor-array has it from FINRA (from 2009)", limit=50000, date_field="date",
+                 filter_param="date.gte", keys=("ticker", "date"), sort=("date", "ticker"), nightly=False),
         RestSpec("news", "/v2/reference/news", "news", "timeseries",
                  "News articles with tickers and sentiment insights", date_field="published_utc",
                  filter_param="published_utc.gte", keys=("id",), sort=("published_utc",), overlap_days=3),

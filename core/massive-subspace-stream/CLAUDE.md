@@ -74,6 +74,8 @@ Invariants:
   Mapped splits the security's own price contradicts are dropped; stock dividends recorded as
   1 -> N (N > 10) are read as (N-1) -> N.
 - Adding a REST dataset = one `RestSpec` entry in `_datasets/rest.py` (+ optional `Store` helper).
+  `nightly=False` keeps a dataset out of default refreshes (short_interest, short_volume, float:
+  finra-sensor-array and vinculum provide them); naming it still fetches it.
   Mode "details" = one request per active ticker per day (`ticker_details`).
 - Never request what the plan lacks: flat files before `history_start()`, datasets outside
   `plan_info.flat_datasets`, channels outside `plan_info.stream_channels`.

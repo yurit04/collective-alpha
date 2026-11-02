@@ -271,8 +271,10 @@ class Ingestor:
 
     # ------------------------------------------------------------------ REST datasets
     def rest_defaults(self) -> list[str]:
-        """REST datasets refreshed when none are named: all, minus those the plan lacks."""
-        return [n for n in REST_DATASETS if n not in self.settings.plan_info.rest_excluded]
+        """REST datasets refreshed when none are named: all, minus those the plan lacks and those
+        another package now provides (short data: finra-sensor-array; float: vinculum)."""
+        return [n for n, spec in REST_DATASETS.items()
+                if spec.nightly and n not in self.settings.plan_info.rest_excluded]
 
     def rest(self, names: Iterable[str] | None = None, full: bool = False) -> list[JobResult]:
         """Refresh REST datasets (default: `rest_defaults()`). A named dataset is always tried;

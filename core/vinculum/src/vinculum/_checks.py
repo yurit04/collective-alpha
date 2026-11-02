@@ -121,7 +121,36 @@ def run_checks(v) -> list[tuple[str, bool, str]]:
                     med is not None and med < 0.10, f"median gap {med:.1%} over {j.height:,}" if med is not None
                     else "no overlap"))
 
+    out += _short_checks(v, lf)
+
     biggest = lf.filter(pl.col("is_primary")).select(pl.col("issuer_market_cap").max()).collect().item()
     out.append(("no company above $8T", biggest is not None and biggest < 8e12,
                 f"max {biggest / 1e12:.2f}T" if biggest is not None else "no market caps"))
+    return out
+
+
+def _short_checks(v, lf) -> list[tuple[str, bool, str]]:
+    """FINRA short data mapped to securities (skipped when it is not downloaded)."""
+    try:
+        gme = v.short_interest("GME", start=D(2021, 1, 15), end=D(2021, 1, 15), date_by="settlement")
+        brk = v.short_interest("BRK.B", start=D(2025, 10, 15), end=D(2025, 10, 15), date_by="settlement")
+        day = D(2025, 10, 15)
+        si = v.short_interest(start=day, end=day, date_by="settlement")
+        aapl = v.short_volume("AAPL", start=D(2024, 1, 1), end=D(2024, 12, 31))
+    except FileNotFoundError as exc:
+        return [("FINRA short data (skipped: not downloaded)", True, str(exc)[:80])]
+    out = []
+    got = gme["si_pct_float"][0] if gme.height else None
+    out.append(("GME 2021-01-15 short interest above its float (the squeeze)", got is not None and got > 1,
+                f"{got:.0%} of float" if got is not None else "missing"))
+    got = brk["short_interest"][0] if brk.height else None
+    out.append(("BRK.B 2025-10-15 short interest found through FINRA's BRKB", got == 11_093_599, str(got)))
+    big = (lf.filter((pl.col("date") == day) & pl.col("is_primary") & (pl.col("type") == "CS")
+                     & (pl.col("issuer_market_cap") >= 1e9)).select("security_id").collect())
+    share = big["security_id"].is_in(si["security_id"].implode()).mean() if big.height else None
+    out.append((f"short interest for >= 97% of $1B+ common stocks ({day})", share is not None and share >= 0.97,
+                f"{share:.1%} of {big.height:,}" if share is not None else "no stocks"))
+    med = aapl["short_ratio"].median() if aapl.height else None
+    out.append(("AAPL 2024 off-exchange short ratio 0.3-0.6", med is not None and 0.3 <= med <= 0.6,
+                f"median {med:.2f} over {aapl.height} days" if med is not None else "missing"))
     return out

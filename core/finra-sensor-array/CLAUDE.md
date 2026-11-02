@@ -11,6 +11,7 @@ User docs: README.md in this folder. Design: docs/decisions/0006-finra-sensor-ar
 | `FinraStore(root=None, settings=None)` | reads; see below |
 | `Ingestor(settings, client=None, today=...)` | `.short_interest(start, end)`, `.short_volume(start, end)`, `.sync()` -> `JobResult` |
 | `load_settings(config_file=None, **overrides)` / `Settings` | data_root (`FINRA_DATA_ROOT`), rate limit, workers, sync time |
+| `finra_symbols(tickers, dataset)` | Massive tickers -> FINRA symbols: short_interest BRK.B->BRKB, ABRpD->ABRPRD; short_volume BRK.B->BRK/B; other lowercase suffixes unchanged |
 | `ConfigError`, `JobResult` | errors / job summaries |
 
 `FinraStore` methods (take `backend="polars"|"pandas"`, `lazy=False`):

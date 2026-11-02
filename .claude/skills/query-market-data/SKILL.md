@@ -85,7 +85,9 @@ f.short_volume("GME", start="2015-01-01")                 # daily off-exchange, 
   is usable from the next trading day. Fetch with `uv run sensor backfill short-interest|short-volume`
   (ask first for the short-volume history). Prefer these to Massive's `short_interest()` /
   `short_volume()` (same numbers, shorter history, no publication date).
-- Rows are keyed by FINRA symbols (BRKB, BRK/B); map to securities via the security master.
+- Rows are keyed by FINRA symbols (BRKB, BRK/B). Per security, use vinculum instead:
+  `v.short_interest("GME", start=...)` (with si_pct_market_cap, si_pct_float) and
+  `v.short_volume("AAPL", start=...)` (short_ratio, off_exchange_share).
 
 ## Market cap, size universes, fundamentals per security (vinculum)
 Use this instead of joining EDGAR to bars yourself: it checks CIKs, applies splits, ADR ratios

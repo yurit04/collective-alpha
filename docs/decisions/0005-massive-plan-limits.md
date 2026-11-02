@@ -54,5 +54,6 @@ the switch:
 
 - Whether Starter shortens the snapshot answers. The guard logs a warning if it does.
 - Whether `ticker_details` stays available. vinculum's ADR and class ratios depend on it.
-- Whether short interest, short volume and float are included. If not, they are skipped by 403
-  and will be replaced by FINRA and SEC data.
+- Whether short interest, short volume and float are included. This no longer matters: since
+  2026-11-02 they come from FINRA (0006) and SEC 10-Ks (0004 addendum), and Massive's copies
+  are not refreshed by default.

@@ -160,8 +160,9 @@ corporate actions are counted by `subspace identity check`, not guessed.
 | `tickers`, `ticker_types`, `exchanges`, `conditions`, `market_holidays` | REST | reference data (`conditions`: trade/quote condition codes and how they affect bars) |
 | `ticker_details` | REST | daily snapshot per active stock/ADR (~5,700 calls): market cap, share-class and weighted shares (ADS counts for ADRs), SIC; history builds up from the first run |
 | `splits`, `dividends`, `ipos` | REST | corporate actions (a shorter answer never deletes stored history) |
-| `income_statements`, `balance_sheets`, `cash_flow_statements`, `ratios`, `float` | REST | fundamentals |
-| `short_interest`, `short_volume`, `news` | REST | incremental |
+| `income_statements`, `balance_sheets`, `cash_flow_statements`, `ratios` | REST | fundamentals |
+| `news` | REST | incremental |
+| `short_interest`, `short_volume`, `float` | REST | not refreshed by default (stored history stays readable): short data comes from `finra-sensor-array`, float from vinculum's 10-K public float. `subspace backfill rest short_interest` still fetches on request |
 | live `bars_1m`, `bars_1s`, `trades`, `quotes`, `luld` | websocket | provisional; old days pruned once official files arrive |
 
 ## Storage layout

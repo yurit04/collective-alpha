@@ -1,4 +1,4 @@
-# vinculum (core, depends on massive-subspace-stream and edgar-cortical-node)
+# vinculum (core, depends on massive-subspace-stream, edgar-cortical-node, finra-sensor-array)
 
 Joins Massive securities to SEC EDGAR companies: checked CIKs, share counts in each security's
 units, daily market cap, size universes, point-in-time fundamentals per security.
@@ -8,7 +8,7 @@ User docs: README.md in this folder. Design: docs/decisions/0004-vinculum.md.
 
 | Name | Use |
 |---|---|
-| `Vinculum(root=None, settings=None, store=None, edgar=None)` | all reads and the build; see below |
+| `Vinculum(root=None, settings=None, store=None, edgar=None, finra=None)` | all reads and the build; see below |
 | `load_settings(config_file=None, **overrides)` / `Settings` | data_root, start_year, build time |
 | `SIZE_BUCKETS` | large 1-200, mid 201-1000, small 1001-3000, micro 3001+ (issuer rank) |
 | `RATIOS` | ratio name -> EDGAR item (earnings_yield, book_to_market, sales_to_price, cash_flow_yield) |
@@ -32,6 +32,13 @@ User docs: README.md in this folder. Design: docs/decisions/0004-vinculum.md.
 - `fundamentals(items, start, end, tickers=None, by=..., freq="1m"|"1d", primary_only=True,
   ratios=True, policy="first")`: flows as TTM, instants latest, stale after 400 days, `currency`,
   ratios over issuer_market_cap for USD reporters
+- `short_interest(tickers, start, end, by=..., date_by="published"|"settlement")`: FINRA short
+  interest per equity security: settlement_date, published_date, security_id, ticker, symbol,
+  market, type, cik, is_primary, short_interest, change_pct, avg_daily_volume, days_to_cover,
+  close, short_value, si_pct_market_cap, si_pct_float
+- `short_volume(tickers, start, end, by=...)`: date, security_id, ticker, symbol, type, cik,
+  short_volume, short_exempt_volume, off_exchange_volume, volume (all venues), short_ratio,
+  off_exchange_share, source
 - `cik_map(security_ids)`, `share_counts(security_ids)`, `basis(security_ids)`, `scan()`
 
 CLI: `vinculum build | check | status | show TICKER | universe DATE --top N | service install|remove|status`.
@@ -46,7 +53,8 @@ _cikmap.py    CIK runs per security, verification, conflicts, repair by name, ov
 _shares.py    split attribution, restated-basis choice, spikes, unit levels by turnover, basis ratios
 _build.py     equity filter, liquidity table, calibration, yearly market-cap panels, public float
               (float_table after the panels, then add_float rewrites them), scan_panels, build()
-_store.py     Vinculum (reads, ranks, universes, fundamentals)
+_store.py     Vinculum (reads, ranks, universes, fundamentals, short data)
+_short.py     FINRA symbols -> securities (security master windows), short interest/volume reads
 _checks.py    `vinculum check`
 _services.py  launchd plist (com.collective-alpha.vinculum.build)
 cik_overrides.csv, basis_overrides.csv   manual corrections, one documented row each
@@ -67,4 +75,7 @@ Invariants:
   It needs the built panels, so it is computed after them and the rewritten years get the columns.
 - Read panels through `scan_panels` (fixed schema): a partial rebuild leaves older files without
   the float columns.
+- FINRA rows are mapped to securities by (FINRA symbol of the Massive ticker, date within the
+  master's validity window); a symbol matching two securities on a date is dropped. Never join
+  FINRA to anything by raw symbol. Short interest is point in time by `published_date`.
 - Everything under the data root is derived: `vinculum build` may overwrite it all.

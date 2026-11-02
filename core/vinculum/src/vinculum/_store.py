@@ -38,16 +38,16 @@ class Vinculum:
     """Security-level views that need both Massive and EDGAR.
 
     Build the tables first (`vinculum build`, nightly via `vinculum service install`).
-    `store` / `edgar` default to `massive_subspace_stream.Store()` and
-    `edgar_cortical_node.EdgarStore()` and are only needed by `build()`, `fundamentals()` and
-    ticker resolution with by="security".
+    `store` / `edgar` / `finra` default to `massive_subspace_stream.Store()`,
+    `edgar_cortical_node.EdgarStore()` and `finra_sensor_array.FinraStore()` and are only needed
+    by `build()`, `fundamentals()`, the short-data reads and ticker resolution with by="security".
     """
 
     def __init__(self, root: Path | str | None = None, settings: Settings | None = None,
-                 store=None, edgar=None):
+                 store=None, edgar=None, finra=None):
         self.settings = settings or load_settings()
         self.layout = Layout(root or self.settings.data_root)
-        self._store, self._edgar = store, edgar
+        self._store, self._edgar, self._finra = store, edgar, finra
 
     def __repr__(self) -> str:
         return f"Vinculum(root={str(self.layout.root)!r})"
@@ -66,6 +66,13 @@ class Vinculum:
             from edgar_cortical_node import EdgarStore
             self._edgar = EdgarStore()
         return self._edgar
+
+    @property
+    def finra(self):
+        if self._finra is None:
+            from finra_sensor_array import FinraStore
+            self._finra = FinraStore()
+        return self._finra
 
     @staticmethod
     def _out(df: pl.DataFrame, backend: Backend):
@@ -311,6 +318,58 @@ class Vinculum:
                     out = out.with_columns(pl.when(usd & (pl.col("issuer_market_cap") > 0))
                                            .then(pl.col(item) / pl.col("issuer_market_cap")).otherwise(None).alias(name))
         return self._out(out.sort("date", "security_id"), backend)
+
+    # ------------------------------------------------------------------ short data (FINRA)
+    def _short_ids(self, tickers, by: str, end: date | None) -> list[str] | None:
+        names = self._list(tickers)
+        if not names:
+            return None
+        if by == "security":
+            return self._ids(names, end)
+        m = self.store.security_master([t.upper() if t == t.lower() else t for t in names])
+        return m["security_id"].unique().to_list()
+
+    def short_interest(self, tickers=None, start: Any = None, end: Any = None,
+                       by: Literal["ticker", "security"] = "ticker",
+                       date_by: Literal["published", "settlement"] = "published", backend: Backend = "polars"):
+        """FINRA short interest per equity security (twice a month, from 2017-12-29).
+
+        FINRA's symbols are mapped to securities through the security master on each settlement
+        date. start/end filter on published_date (the default: when FINRA released it, the date
+        to use for anything point in time) or settlement_date. by="ticker" means securities that
+        ever traded under those tickers; by="security" resolves them as of `end`, as elsewhere.
+
+        Columns: settlement_date, published_date, security_id, ticker (Massive's that day),
+        symbol (FINRA's), market, type, cik, is_primary, short_interest (shares),
+        change_pct, avg_daily_volume, days_to_cover (FINRA's), close (raw, on the settlement
+        date), short_value (= short_interest x close), si_pct_market_cap (short_value / issuer
+        market cap: shares short / shares outstanding for single-class companies),
+        si_pct_float (short_value / issuer float market cap).
+        """
+        from ._short import short_interest
+
+        s, e = _day(start), _day(end)
+        if date_by not in ("published", "settlement"):
+            raise ValueError("date_by must be 'published' or 'settlement'")
+        df = short_interest(self.finra, self.store, self.scan(), s, e, date_by, self._short_ids(tickers, by, e))
+        return self._out(df, backend)
+
+    def short_volume(self, tickers=None, start: Any = None, end: Any = None,
+                     by: Literal["ticker", "security"] = "ticker", backend: Backend = "polars"):
+        """FINRA daily short sale volume per equity security (off-exchange trades, from 2009-08-03),
+        mapped through the security master. Posted by 6 pm ET: usable from the next trading day.
+
+        Columns: date, security_id, ticker, symbol, type, cik, short_volume, short_exempt_volume,
+        off_exchange_volume (FINRA's total: TRF/ADF/ORF trades only), volume (all venues, from
+        bars), short_ratio (short_volume / off_exchange_volume, typically 0.4-0.5: market makers
+        sell short to fill buys), off_exchange_share (off_exchange_volume / volume), source.
+        Without tickers this reads every security for the range: narrow start/end.
+        """
+        from ._short import short_volume
+
+        s, e = _day(start), _day(end)
+        df = short_volume(self.finra, self.store, self.scan(), s, e, self._short_ids(tickers, by, e))
+        return self._out(df, backend)
 
     # ------------------------------------------------------------------ status
     def status(self) -> dict[str, Any]:

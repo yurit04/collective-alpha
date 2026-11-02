@@ -125,7 +125,9 @@ def test_rest_defaults_skip_financials_on_starter(settings, starter):
     assert "ratios" in Ingestor(settings).rest_defaults()
     defaults = Ingestor(starter).rest_defaults()
     assert not {"income_statements", "balance_sheets", "cash_flow_statements", "ratios"} & set(defaults)
-    assert {"splits", "ticker_details", "short_interest"} <= set(defaults)
+    assert {"splits", "ticker_details", "news"} <= set(defaults)
+    # Replaced by finra-sensor-array (short data) and vinculum's public float: never by default.
+    assert not {"short_interest", "short_volume", "float"} & set(Ingestor(settings).rest_defaults())
 
 
 def _flat_ingestor(settings):

@@ -2578,6 +2578,7 @@ version = "0.1.0"
 source = { editable = "projects/subspace-probe" }
 dependencies = [
     { name = "edgar-cortical-node" },
+    { name = "finra-sensor-array" },
     { name = "ipykernel" },
     { name = "massive-subspace-stream" },
     { name = "matplotlib" },
@@ -2587,6 +2588,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "edgar-cortical-node", editable = "core/edgar-cortical-node" },
+    { name = "finra-sensor-array", editable = "core/finra-sensor-array" },
     { name = "ipykernel", specifier = ">=6.29" },
     { name = "massive-subspace-stream", editable = "core/massive-subspace-stream" },
     { name = "matplotlib", specifier = ">=3.9" },
@@ -2744,6 +2746,7 @@ version = "0.1.0"
 source = { editable = "core/vinculum" }
 dependencies = [
     { name = "edgar-cortical-node" },
+    { name = "finra-sensor-array" },
     { name = "massive-subspace-stream" },
     { name = "polars" },
     { name = "pyarrow" },
@@ -2753,6 +2756,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "edgar-cortical-node", editable = "core/edgar-cortical-node" },
+    { name = "finra-sensor-array", editable = "core/finra-sensor-array" },
     { name = "massive-subspace-stream", editable = "core/massive-subspace-stream" },
     { name = "polars", specifier = ">=1.20" },
     { name = "pyarrow", specifier = ">=18" },

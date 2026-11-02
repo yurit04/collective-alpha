@@ -175,11 +175,37 @@ class FakeEdgar:
         return df.filter(pl.col("item").is_in(list(items)) & pl.col("cik").is_in(list(ciks)))
 
 
+class FakeFinra:
+    """The parts of finra_sensor_array.FinraStore that vinculum uses (FINRA symbols)."""
+
+    def short_interest(self, start=None, end=None, date_by="settlement"):
+        si = pl.DataFrame({
+            "settlement_date": [D(2021, 6, 15), D(2021, 11, 15), D(2021, 11, 15), D(2021, 11, 15)],
+            "published_date": [D(2021, 6, 24), D(2021, 11, 24), D(2021, 11, 24), D(2021, 11, 24)],
+            "symbol": ["ALPH", "ALPH", "OMGB", "ZZZZ"],          # ZZZZ: an OTC symbol, no security
+            "market": ["NYSE", "NYSE", "NYSE", "OTC"],
+            "short_interest": [10_000_000, 20_000_000, 150_000_000, 5],
+            "change_pct": [0.0] * 4, "avg_daily_volume": [1_000_000] * 4, "days_to_cover": [10.0] * 4})
+        col = f"{date_by}_date"
+        if start:
+            si = si.filter(pl.col(col) >= start)
+        if end:
+            si = si.filter(pl.col(col) <= end)
+        return si
+
+    def short_volume(self, start=None, end=None, lazy=False):
+        sv = pl.DataFrame({"date": [D(2021, 6, 15), D(2021, 6, 15)], "symbol": ["ALPH", "BETA"],
+                           "short_volume": [300_000, 50_000], "short_exempt_volume": [0, 0],
+                           "total_volume": [600_000, 100_000], "markets": ["Q", "N"], "source": ["CNMS"] * 2})
+        sv = sv.filter(pl.col("date").is_between(start or D(1900, 1, 1), end or D(2100, 1, 1)))
+        return sv.lazy() if lazy else sv
+
+
 @pytest.fixture(scope="module")
 def v(tmp_path_factory):
     root = tmp_path_factory.mktemp("vinculum")
     settings = load_settings(data_root=str(root), start_year=2020)
-    vin = Vinculum(settings=settings, store=FakeStore(), edgar=FakeEdgar())
+    vin = Vinculum(settings=settings, store=FakeStore(), edgar=FakeEdgar(), finra=FakeFinra())
     vin.build()
     return vin
 
@@ -321,3 +347,27 @@ def test_float_goes_stale():
                            "float_fraction": [0.5]})
     out = add_float(panel, floats)
     assert out["float_fraction"].to_list() == [0.5, None]
+
+
+def test_short_interest_per_security(v):
+    si = v.short_interest(date_by="settlement")
+    assert set(si["symbol"]) == {"ALPH", "OMGB"}                          # OTC symbol without a security: out
+    a = si.filter(pl.col("ticker") == "ALPH").sort("settlement_date")
+    # Before the 2:1 split: 10M short x $50 of a $5B company; after: 20M x $25.
+    assert a["si_pct_market_cap"].to_list() == pytest.approx([0.1, 0.1])
+    assert a["si_pct_float"][0] is None and a["si_pct_float"][1] == pytest.approx(0.1 / 0.8)   # float from 11-06
+    o = si.filter(pl.col("ticker") == "OMGB").row(0, named=True)
+    assert o["si_pct_market_cap"] == pytest.approx(150e6 * 2.0 / 3e9)     # class B shares, whole company
+    assert o["security_id"] == "S6" and o["type"] is not None
+    # start/end filter on the publication date by default (point in time).
+    assert v.short_interest("ALPH", end=D(2021, 6, 23)).is_empty()
+    assert v.short_interest("ALPH", end=D(2021, 6, 24)).height == 1
+    assert v.short_interest("OLDA", by="security", end=D(2021, 12, 31)).height == 2   # ALPHA's old ticker
+
+
+def test_short_volume_per_security(v):
+    sv = v.short_volume(start=D(2021, 6, 15), end=D(2021, 6, 15))
+    a = sv.filter(pl.col("ticker") == "ALPH").row(0, named=True)
+    vol = cap(v, "ALPH", D(2021, 6, 15))["volume"]
+    assert a["short_ratio"] == pytest.approx(0.5) and a["off_exchange_share"] == pytest.approx(600_000 / vol)
+    assert v.short_volume("BETA")["short_volume"].to_list() == [50_000]
