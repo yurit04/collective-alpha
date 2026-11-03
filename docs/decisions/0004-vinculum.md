@@ -173,4 +173,10 @@ history (it accumulates only from the first download) and may not be in smaller 
   market cap on at least 90% of their penny days.
 - **Effect.** `vinculum build` prints the security-days only these rules withheld
   (`penny_adr_days` in `vinculum status`); `basis()` shows `penny_days`, `penny_turnover`,
-  `penny_market_cap` and `thin_days` per ADR. Results of version 4: pending its first build.
+  `penny_market_cap` and `thin_days` per ADR.
+- **Results (version 4, build 33.5 s).** 10 ADR bases `implausible` (14 in version 3: ENIC,
+  TUYA and two others released); 9,611 security-days withheld by the ADR rules alone. Every
+  `vinculum check` passes: NCNA, SVRE and BDRX never in the top 1,000; MFG rank 260, JHX rank
+  635; ENIC keeps 173 of 173 penny days, TUYA 540 of 540; 3 ADRs under $2 above $5B (130 days),
+  none trading under $1M a day; calibrated securities within 10% of Massive's current market
+  cap: 98.4% of 4,407.
