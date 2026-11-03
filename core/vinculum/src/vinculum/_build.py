@@ -44,6 +44,10 @@ FLOAT_STALE_DAYS = 400      # a public float is used until this long after its 1
 FLOAT_RANGE = (0.01, 1.1)   # plausible public float / market cap; 1-1.1 is read as 1 (all public)
 FLOAT_FIX_RANGE = (0.05, 1.1)  # a ratio moved by 1000^n must land here to count as a unit slip
 PLAUSIBLE = (10 ** -5.5, 3.0)   # median daily turnover outside this: market cap withheld
+# An ADR whose median raw close is under $2 and median turnover under 10^-4.5 a day: market cap
+# withheld. A penny price with little trading means a wrong ADS ratio (NCNA as a $6.2B company);
+# real large ADRs under $2 (LYG, ABEV, SAN) trade roughly 1e-4 to 1e-3 of their value a day.
+ADR_PENNY = (2.0, 10 ** -4.5)
 
 
 # Massive's when-issued suffixes: a lowercase w (HONw) or .WD / .WI (DHR.WD). Never a bare
@@ -137,9 +141,33 @@ def liquidity_table(store, first: int, last: int, equity: pl.DataFrame) -> pl.Da
             .collect())
 
 
+def screen(df: pl.DataFrame) -> pl.DataFrame:
+    """Safety net: while one SEC count is in use (security_id, end, filed), a median turnover
+    that cannot be right means the count or the ratio is wrong: no market cap for those days.
+
+    df: security_id, type, end, filed, raw_close, dollar_volume, market_cap. Adds `implausible`
+    (either rule) and `penny_adr` (withheld by the ADR rule alone, the old screen passed it).
+    - any security: median turnover outside PLAUSIBLE;
+    - ADRs: median raw close under ADR_PENNY[0] and median turnover under ADR_PENNY[1].
+    """
+    seg = ["security_id", "end", "filed"]
+    to = (df.filter(pl.col("market_cap").is_not_null())
+          .group_by(seg).agg((pl.col("dollar_volume") / pl.col("market_cap")).median().alias("__to"),
+                             pl.col("raw_close").median().alias("__px")))
+    general = ~pl.col("__to").is_between(*PLAUSIBLE)
+    penny = (pl.col("type").is_in(ADR_TYPES) & (pl.col("__px") < ADR_PENNY[0]) & (pl.col("__to") < ADR_PENNY[1]))
+    return (df.join(to, on=seg, how="left", nulls_equal=False)
+            .with_columns(general.fill_null(False).alias("__g"), penny.fill_null(False).alias("__p"))
+            .with_columns((pl.col("__g") | pl.col("__p")).alias("implausible"),
+                          (pl.col("__p") & ~pl.col("__g")).alias("penny_adr"))
+            .with_columns(pl.when(pl.col("implausible")).then(None).otherwise(pl.col("market_cap")).alias("market_cap"))
+            .drop("__to", "__px", "__g", "__p"))
+
+
 def year_panel(store, year: int, equity: pl.DataFrame, cik_map: pl.DataFrame, counts: pl.DataFrame,
-               basis: pl.DataFrame) -> pl.DataFrame:
-    """One row per equity security and trading day of `year`."""
+               basis: pl.DataFrame, stats: dict[str, int] | None = None) -> pl.DataFrame:
+    """One row per equity security and trading day of `year`. `stats` (optional) collects
+    penny_adr_days: security-days whose market cap only the ADR penny rule withheld."""
     start, end = date(year, 1, 1), date(year, 12, 31)
     lf = store.bars(start=start - timedelta(days=130), end=end, adjust="splits", lazy=True)
     df = (lf.select("date", "ticker", "security_id", "close", "volume", "split_factor")
@@ -161,15 +189,7 @@ def year_panel(store, year: int, equity: pl.DataFrame, cik_map: pl.DataFrame, co
         (pl.col("close") / pl.col("split_factor")).alias("raw_close"),
         (pl.col("volume") * pl.col("split_factor")).alias("raw_volume"),
         (pl.col("close") * pl.col("volume")).alias("dollar_volume"))
-    # Safety net: while one SEC count is in use, an impossible median turnover means the count
-    # (or ratio) is wrong: no market cap for those days.
-    seg = ["security_id", "end", "filed"]
-    to = (df.filter(pl.col("market_cap").is_not_null())
-          .group_by(seg).agg((pl.col("dollar_volume") / pl.col("market_cap")).median().alias("__to")))
-    df = (df.join(to, on=seg, how="left", nulls_equal=False)
-          .with_columns((~pl.col("__to").is_between(*PLAUSIBLE)).fill_null(False).alias("implausible"))
-          .with_columns(pl.when(pl.col("implausible")).then(None).otherwise(pl.col("market_cap")).alias("market_cap"))
-          .drop("__to"))
+    df = screen(df)
     # Primary class per issuer and day: the most traded (median dollar volume, 60 trading days).
     df = df.sort("security_id", "date").with_columns(
         pl.col("dollar_volume").rolling_median(DV_WINDOW, min_samples=1).over("security_id").alias("__dv"))
@@ -183,7 +203,10 @@ def year_panel(store, year: int, equity: pl.DataFrame, cik_map: pl.DataFrame, co
                         .otherwise(pl.col("security_id") == pl.col("__p")).fill_null(False).alias("is_primary"),
                         pl.when(pl.col("cik").is_null()).then(pl.col("market_cap"))
                         .otherwise(pl.col("issuer_market_cap")).alias("issuer_market_cap")))
-    df = df.filter(pl.col("date").is_between(start, end)).select(
+    df = df.filter(pl.col("date").is_between(start, end))
+    if stats is not None:
+        stats["penny_adr_days"] = stats.get("penny_adr_days", 0) + int(df["penny_adr"].sum())
+    df = df.select(
         "date", "security_id", "ticker", "type", "cik", "cik_status", pl.col("raw_close").alias("close"),
         pl.col("raw_volume").alias("volume"), "dollar_volume", "split_factor", "shares",
         pl.col("end").alias("shares_end"), pl.col("filed").alias("shares_filed"), pl.col("tag").alias("shares_tag"),
@@ -305,8 +328,9 @@ def build(store, edgar, layout: Layout, start_year: int = 2003, years: list[int]
     last = secs["last_trade"].max()
     todo = years or list(range(start_year, last.year + 1))
     rows = implausible = 0
+    stats: dict[str, int] = {}
     for y in todo:
-        panel = year_panel(store, y, equity, cik_map, counts, basis)
+        panel = year_panel(store, y, equity, cik_map, counts, basis, stats)
         write_atomic(panel, layout.market_cap_file(y))
         rows += panel.height
         implausible += panel.filter(pl.col("implausible")).select("security_id", "shares_end").n_unique()
@@ -334,6 +358,7 @@ def build(store, edgar, layout: Layout, start_year: int = 2003, years: list[int]
         "share_counts": counts.height, "share_jumps": int(counts["jump"].sum()),
         "unit_fixed": int(counts["unit_fixed"].sum()),
         "implausible_counts": implausible,
+        "penny_adr_days": stats.get("penny_adr_days", 0),
         "splits_not_applied": int((~attribution["applies"]).sum()) if attribution.height else 0,
         "public_float": dict(floats.group_by("status").len().iter_rows()),
         "successors": dict(successors.group_by("kind").len().iter_rows()),

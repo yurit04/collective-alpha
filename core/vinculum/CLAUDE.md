@@ -73,6 +73,12 @@ Invariants:
 - Market cap uses only SEC counts with available_from <= date and end >= date - 400 days.
 - `shares_now` is in today's units of the security: market cap = adjusted close x shares_now x basis.
 - Size ranks use `is_primary` rows only (one per company) and `issuer_market_cap`.
+- Safety net (`_build.screen`), per SEC count in use: median turnover outside PLAUSIBLE
+  (10^-5.5..3 a day) withholds the market cap; so does, for ADRs only, a median raw close under
+  $2 with median turnover under 10^-4.5 (ADR_PENNY: a wrong ADS ratio, as NCNA/SVRE/BDRX shown
+  at $6-50B). Both set `implausible`. Real penny ADRs above $5B (LYG, ABEV, SAN) trade 1e-4+ a
+  day and pass; never tighten the turnover floor for all ADRs (Chinese SOE and Japanese ADRs
+  trade 1e-5..1e-4 of their company-wide value in the US).
 - The equity filter trusts Massive's type: the name screen for typed CS/ADRC catches only
   warrants, SPAC units, notes and baby bonds (MLP "Common Units" and preferred-share ADRs are
   equity); the wider screen (UNITS, PFD, FUND, SENIOR) applies to untyped securities only.

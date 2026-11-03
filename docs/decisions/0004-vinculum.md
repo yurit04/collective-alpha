@@ -116,3 +116,34 @@ history (it accumulates only from the first download) and may not be in smaller 
   quarters itself: w = EPS x cumulative split product at filing, divided by the product on the
   day of use. NVDA's P/E now tracks market cap / net income through the split.
 - **Build:** about 65 s instead of 30 s (successor detection and the larger EDGAR read).
+
+## Addendum (2026-11-03): penny ADRs with a wrong ratio
+- **Problem.** A few penny ADRs reached the top 1,000 by issuer market cap because their ADS
+  ratio (basis) was wrong: NCNA at $0.81 and about $37k a day shown as a $6.2B company (May
+  2023), SVRE at about $8.7B, BDRX at $0.22 shown as about $50B. Trading them in the
+  unimatrix-zero backtester cost hundreds of basis points of impact. Their turnover (about
+  6e-6 a day) sits just above the safety net's floor of 10^-5.5, so the net missed them.
+- **Decision.** For ADRs only, while one SEC count is in use, a median raw close under $2 *and*
+  a median turnover under 10^-4.5 withhold the market cap (`implausible`, as for the general
+  net). Reasoning: at a penny price a correct market cap is either small (a micro-cap, which
+  trades a large share of its value) or large and then carried by billions of ADSs that trade
+  heavily (Lloyds, Ambev, Santander: roughly 1e-4 to 1e-3 a day, estimated from typical
+  US volumes). Little trading at a penny price
+  means too many shares, i.e. a wrong ratio. The 10^-4.5 floor leaves about 5x room above the
+  junk and 3x below the thinnest real penny ADR.
+- **Rejected alternatives.**
+  - A stricter turnover floor for all ADRs: real ADRs that trade mostly abroad sit at
+    1e-5..1e-4 of their company-wide value in the US (Chinese SOEs whose count includes A and H
+    shares, Japanese banks, James Hardie); a floor high enough to catch the junk with margin
+    would remove them.
+  - An implied ordinary-share price: it needs the ordinary shares per ADS, which is exactly the
+    quantity that is wrong.
+  - Keying on basis status (`calibrated_raw`/`unknown`): ADRs with `unknown` basis have no
+    market cap already, and a wrong ratio can still snap to a round number (`calibrated`).
+  - A price rule alone ("no ADR under $2 above $5B"): it would remove Lloyds and Ambev.
+- **Checks.** No ranked ADR under $2 above $5B on a median dollar volume under $1M a day; NCNA,
+  SVRE and BDRX never in the top 1,000; MFG and JHX in the top 1,000 on 2023-05-31.
+- **Effect.** `penny_adr_days` in `vinculum status` counts the security-days only this rule
+  withheld. The rule was written without access to the data store; the thresholds rest on the
+  three reported cases and typical US volumes, so record the first build's count here.
+
