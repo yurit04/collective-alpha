@@ -44,13 +44,13 @@ FLOAT_STALE_DAYS = 400      # a public float is used until this long after its 1
 FLOAT_RANGE = (0.01, 1.1)   # plausible public float / market cap; 1-1.1 is read as 1 (all public)
 FLOAT_FIX_RANGE = (0.05, 1.1)  # a ratio moved by 1000^n must land here to count as a unit slip
 PLAUSIBLE = (10 ** -5.5, 3.0)   # median daily turnover outside this: market cap withheld
-# An ADR whose days under $2 (raw close), pooled over its whole history, have a median turnover
-# under 10^-4.5 a day: its basis is marked implausible and its market cap withheld on every day.
-# A penny price with little trading means a wrong ADS ratio (NCNA as a $6.2B company), and the
-# ratio is one number per security, so it is wrong on its $5 days too. Real large ADRs under $2
-# (LYG, ABEV, SAN) trade roughly 1e-4 to 1e-3 of their value a day.
-ADR_PENNY = (2.0, 10 ** -4.5)
-PENNY_MIN_DAYS = 20     # penny days needed before the rule judges an ADR
+# Penny ADRs (raw close under $2) whose market cap cannot be right: a penny price with little
+# trading means too many shares, i.e. a wrong ADS ratio (NCNA at $0.81 and $37k a day shown as a
+# $6.2B company). Real large ADRs under $2 (LYG, ABEV, SAN) trade tens of millions of dollars,
+# roughly 1e-4 to 1e-3 of their value, a day.
+ADR_PENNY = (2.0, 10 ** -4.5)   # price; median turnover of an ADR's penny days, whole history
+ADR_THIN = (1e9, 1e6)           # a penny ADR shown above $1B on under $1M a day (60-day median)
+PENNY_MIN_DAYS = 20             # penny (or thin) days needed before an ADR is judged as a whole
 
 
 # Massive's when-issued suffixes: a lowercase w (HONw) or .WD / .WI (DHR.WD). Never a bare
@@ -167,42 +167,59 @@ def daily(store, start: date, end: date, equity: pl.DataFrame, cik_map: pl.DataF
         (pl.col("close") / pl.col("split_factor")).alias("raw_close"),
         (pl.col("volume") * pl.col("split_factor")).alias("raw_volume"),
         (pl.col("close") * pl.col("volume")).alias("dollar_volume"))
-    return df
+    return df.sort("security_id", "date").with_columns(
+        pl.col("dollar_volume").rolling_median(DV_WINDOW, min_samples=1).over("security_id").alias("dv60"))
+
+
+def _thin_penny() -> pl.Expr:
+    """A day an ADR's market cap cannot be right: under $2, shown above $1B, under $1M a day."""
+    return (pl.col("type").is_in(ADR_TYPES) & (pl.col("raw_close") < ADR_PENNY[0])
+            & (pl.col("market_cap") > ADR_THIN[0]) & (pl.col("dv60") < ADR_THIN[1]))
 
 
 def penny_basis(store, first: int, last: int, equity: pl.DataFrame, cik_map: pl.DataFrame,
                 counts: pl.DataFrame, basis: pl.DataFrame) -> pl.DataFrame:
-    """The basis table with penny_days and penny_turnover per ADR (days under ADR_PENNY[0] with a
-    market cap, and their median turnover, over every year), and basis "implausible" where those
-    days trade too little for the market cap to be right. Computed from all years whatever a
-    build rewrites, so a partial rebuild judges an ADR the same way."""
+    """The basis table with, per ADR over every year: penny_days (days under ADR_PENNY[0] with a
+    market cap), penny_turnover (their median turnover) and thin_days (penny days shown above
+    ADR_THIN[0] on under ADR_THIN[1] a day). The basis becomes "implausible" when either is
+    damning (at least PENNY_MIN_DAYS penny days with turnover under ADR_PENNY[1], or at least
+    PENNY_MIN_DAYS thin days): the ratio is one number per security, so it is wrong on its
+    other days too. Computed from all years whatever a build rewrites, so a partial rebuild
+    judges an ADR the same way. Overrides are never marked."""
+    stats = {"security_id": pl.String, "penny_days": pl.UInt32, "penny_turnover": pl.Float64,
+             "thin_days": pl.UInt32}
     adrs = equity.filter(pl.col("type").is_in(ADR_TYPES))
     df = daily(store, date(first, 1, 1), date(last, 12, 31), adrs, cik_map, counts, basis)
     if df.is_empty():
-        st = pl.DataFrame(schema={"security_id": pl.String, "penny_days": pl.UInt32, "penny_turnover": pl.Float64})
+        st = pl.DataFrame(schema=stats)
     else:
         st = (df.filter(pl.col("market_cap").is_not_null() & (pl.col("raw_close") < ADR_PENNY[0]))
               .group_by("security_id")
               .agg(pl.len().alias("penny_days"),
-                   (pl.col("dollar_volume") / pl.col("market_cap")).median().alias("penny_turnover")))
-    thin = (pl.col("penny_days") >= PENNY_MIN_DAYS) & (pl.col("penny_turnover") < ADR_PENNY[1])
-    out = basis.drop("penny_days", "penny_turnover", strict=False).join(st, on="security_id", how="left")
-    return out.with_columns(pl.when(thin.fill_null(False) & (pl.col("basis") != "override"))
+                   (pl.col("dollar_volume") / pl.col("market_cap")).median().alias("penny_turnover"),
+                   _thin_penny().sum().alias("thin_days"))
+              .cast(stats))
+    bad = (((pl.col("penny_days") >= PENNY_MIN_DAYS) & (pl.col("penny_turnover") < ADR_PENNY[1]))
+           | (pl.col("thin_days") >= PENNY_MIN_DAYS))
+    out = basis.drop(*[c for c in stats if c != "security_id"], strict=False).join(st, on="security_id", how="left")
+    return out.with_columns(pl.when(bad.fill_null(False) & (pl.col("basis") != "override"))
                             .then(pl.lit("implausible")).otherwise(pl.col("basis")).alias("basis"))
 
 
 def screen(df: pl.DataFrame) -> pl.DataFrame:
-    """Safety net: no market cap where it cannot be right. Two rules set `implausible`:
+    """Safety net: no market cap where it cannot be right. Three rules set `implausible`:
     - any security, while one SEC count is in use (security_id, end, filed): median turnover
       outside PLAUSIBLE (the count or the ratio is wrong);
-    - ADRs whose basis is "implausible" (penny_basis): every day.
-    `penny_adr` marks days withheld by the ADR rule alone (the turnover rule passed them).
-    df: security_id, end, filed, basis, dollar_volume, market_cap."""
+    - ADRs whose basis is "implausible" (penny_basis): every day;
+    - any ADR day under $2 shown above $1B on under $1M a day (ADR_THIN), however few.
+    `penny_adr` marks days withheld by the ADR rules alone (the turnover rule passed them).
+    df: daily() columns (security_id, type, end, filed, basis, raw_close, dollar_volume, dv60,
+    market_cap)."""
     seg = ["security_id", "end", "filed"]
     to = (df.filter(pl.col("market_cap").is_not_null())
           .group_by(seg).agg((pl.col("dollar_volume") / pl.col("market_cap")).median().alias("__to")))
     general = ~pl.col("__to").is_between(*PLAUSIBLE)
-    penny = (pl.col("basis") == "implausible") & pl.col("market_cap").is_not_null()
+    penny = ((pl.col("basis") == "implausible") | _thin_penny()) & pl.col("market_cap").is_not_null()
     return (df.join(to, on=seg, how="left", nulls_equal=False)
             .with_columns(general.fill_null(False).alias("__g"), penny.fill_null(False).alias("__p"))
             .with_columns((pl.col("__g") | pl.col("__p")).alias("implausible"),
@@ -221,11 +238,9 @@ def year_panel(store, year: int, equity: pl.DataFrame, cik_map: pl.DataFrame, co
         return pl.DataFrame(schema=PANEL_SCHEMA)
     df = screen(df)
     # Primary class per issuer and day: the most traded (median dollar volume, 60 trading days).
-    df = df.sort("security_id", "date").with_columns(
-        pl.col("dollar_volume").rolling_median(DV_WINDOW, min_samples=1).over("security_id").alias("__dv"))
     # Securities without a CIK are their own company.
     prim = (df.filter(pl.col("cik").is_not_null())
-            .sort("__dv", "security_id", descending=[True, False], nulls_last=True)
+            .sort("dv60", "security_id", descending=[True, False], nulls_last=True)
             .unique(["date", "cik"], keep="first")
             .select("date", "cik", pl.col("security_id").alias("__p"), pl.col("market_cap").alias("issuer_market_cap")))
     df = (df.join(prim, on=["date", "cik"], how="left")

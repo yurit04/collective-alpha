@@ -507,15 +507,21 @@ def test_holding_company_reorganization(tmp_path):
     assert rev[D(2021, 6, 30)] == 300.0 and rev[D(2021, 8, 2)] == 300.0 and rev[D(2021, 11, 8)] == 333.0
 
 
-# Three ADRs: JUNK's ADS ratio is wrong (a $0.81 ADR shown as a $6B company on $36k a day, turnover
-# 6e-6: above the general floor; $3 until 2021-09-01, so its first count's median price is above
-# $2, as NCNA's was); LYGX is a real penny ADR that trades heavily (Lloyds); THIN trades little
-# in the US but is not a penny ADR (James Hardie).
+# Penny ADRs. JUNK's ADS ratio is wrong (a $0.81 ADR shown as a $6B company on $36k a day,
+# turnover 6e-6: above the general floor; $3 until 2021-09-01, so its first count's median price
+# is above $2, as NCNA's was). XHGX's ratio is wrong too ($1 shown as $10B on $900k a day): its
+# turnover, 9e-5, passes the penny floor, as SVRE's did, but no real $10B company trades so
+# little. LYGX is a real penny ADR that trades heavily (Lloyds); THIN trades little in the US but
+# is not a penny ADR (James Hardie); FEWX is a real $3B ADR that falls to $1.40 for its last 10
+# days (shown above $1B on $230k a day: those days only).
 PENNY_ADRS = [("S12", "JUNK", "Junk Bio PLC ADR", "ADRC", "0000000012", 0.81, 45_000),
               ("S13", "LYGX", "Lygx Banking Group PLC ADR", "ADRC", "0000000013", 1.5, 20_000_000),
-              ("S14", "THIN", "Thin Industries PLC ADR", "ADRC", "0000000014", 25.0, 8_000)]
-
-
+              ("S14", "THIN", "Thin Industries PLC ADR", "ADRC", "0000000014", 25.0, 8_000),
+              ("S15", "XHGX", "Xhgx Holdings Ltd ADR", "ADRC", "0000000015", 1.0, 900_000),
+              ("S16", "FEWX", "Fewx Mining PLC ADR", "ADRC", "0000000016", 3.0, 166_000)]
+# ticker: (SEC ordinary shares, Massive ADS count); basis ratio = ADS / ordinary
+PENNY_COUNTS = {"JUNK": (500e6, 7.5e9), "LYGX": (20e9, 5e9), "THIN": (400e6, 400e6), "XHGX": (1e9, 10e9),
+                "FEWX": (1e9, 1e9)}
 JUNK_PENNY_FROM = D(2021, 9, 1)
 
 
@@ -525,13 +531,15 @@ class PennyStore(FakeStore):
     def __init__(self):
         super().__init__()
         early = (pl.col("security_id") == "S12") & (pl.col("date") < JUNK_PENNY_FROM)
-        self._bars = self._bars.with_columns(pl.when(early).then(3.0).otherwise(pl.col("close")).alias("close"))
+        late = (pl.col("security_id") == "S16") & (pl.col("date") >= DAYS[-10])
+        self._bars = self._bars.with_columns(pl.when(early).then(3.0).when(late).then(1.4)
+                                             .otherwise(pl.col("close")).alias("close"))
 
     def ticker_details(self):
-        extra = pl.DataFrame({"as_of": [END] * 3, "ticker": ["JUNK", "LYGX", "THIN"],
-                              "weighted_shares_outstanding": [7.5e9, 5e9, 400e6],   # JUNK: ratio 15, wrong
-                              "share_class_shares_outstanding": [7.5e9, 5e9, 400e6],
-                              "market_cap": [6e9, 7.5e9, 10e9]})
+        ads = [a for _, a in PENNY_COUNTS.values()]
+        extra = pl.DataFrame({"as_of": [END] * len(ads), "ticker": list(PENNY_COUNTS),
+                              "weighted_shares_outstanding": ads, "share_class_shares_outstanding": ads,
+                              "market_cap": [None] * len(ads)}, schema_overrides={"market_cap": pl.Float64})
         return pl.concat([super().ticker_details(), extra])
 
     def resolve(self, tickers, on=None):
@@ -540,22 +548,24 @@ class PennyStore(FakeStore):
 
 
 class PennyEdgar(FakeEdgar):
-    CIKS = ["0000000012", "0000000013", "0000000014"]
+    CIKS = {t: c for _, t, _, _, c, _, _ in PENNY_ADRS}
+    NAMES = {"JUNK": "JUNK BIO PLC", "LYGX": "LYGX BANKING GROUP PLC", "THIN": "THIN INDUSTRIES PLC",
+             "XHGX": "XHGX HOLDINGS LTD", "FEWX": "FEWX MINING PLC"}
 
     def profiles(self):
-        extra = pl.DataFrame({"cik": self.CIKS, "tickers": [["JUNK"], ["LYGX"], ["THIN"]],
-                              "first_periodic": [D(2010, 1, 1)] * 3, "last_periodic": [D(2022, 3, 1)] * 3})
+        n = len(self.CIKS)
+        extra = pl.DataFrame({"cik": list(self.CIKS.values()), "tickers": [[t] for t in self.CIKS],
+                              "first_periodic": [D(2010, 1, 1)] * n, "last_periodic": [D(2022, 3, 1)] * n})
         return pl.concat([super().profiles(), extra])
 
     def names(self):
-        extra = pl.DataFrame({"cik": self.CIKS, "name": ["JUNK BIO PLC", "LYGX BANKING GROUP PLC",
-                                                          "THIN INDUSTRIES PLC"],
-                              "valid_from": [None] * 3, "valid_to": [None] * 3},
+        extra = pl.DataFrame({"cik": list(self.CIKS.values()), "name": [self.NAMES[t] for t in self.CIKS],
+                              "valid_from": [None] * len(self.CIKS), "valid_to": [None] * len(self.CIKS)},
                              schema={"cik": pl.String, "name": pl.String, "valid_from": pl.Date, "valid_to": pl.Date})
         return pl.concat([super().names(), extra])
 
     def shares(self, ciks):
-        extra = pl.DataFrame([count(c, end, n, filed) for c, n in zip(self.CIKS, [500e6, 20e9, 400e6], strict=True)
+        extra = pl.DataFrame([count(c, end, PENNY_COUNTS[t][0], filed) for t, c in self.CIKS.items()
                               for end, filed in [(D(2020, 12, 31), D(2021, 3, 1)), (D(2021, 12, 31), D(2022, 3, 1))]],
                              schema={"cik": pl.String, "end": pl.Date, "shares": pl.Float64, "filed": pl.Date,
                                      "available_from": pl.Date, "tag": pl.String}, orient="row")
@@ -567,20 +577,27 @@ def test_penny_adr_with_wrong_ratio_is_withheld(tmp_path):
     v = Vinculum(settings=settings, store=PennyStore(), edgar=PennyEdgar(), finra=FakeFinra())
     v.build()
     day = D(2021, 6, 1)
-    junk, lygx, thin = (cap(v, t, day) for t in ("JUNK", "LYGX", "THIN"))
-    # The ratio is one number for the whole history: the $3 days are withheld too.
+    junk, lygx, thin, xhgx, fewx = (cap(v, t, day) for t in ("JUNK", "LYGX", "THIN", "XHGX", "FEWX"))
+    # The ratio is one number for the whole history: JUNK's $3 days are withheld too.
     assert junk["close"] == 3.0 and junk["basis"] == "implausible"
     assert junk["basis_ratio"] == pytest.approx(15) and junk["implausible"] and junk["market_cap"] is None
-    b = v.basis(["S12", "S13", "S14"]).sort("security_id")
-    assert b["basis"].to_list() == ["implausible", "calibrated", "calibrated"]
-    assert b["penny_days"][0] >= 20 and b["penny_turnover"][0] == pytest.approx(36_450 / 6.075e9)
     assert junk["issuer_market_cap"] is None
+    assert xhgx["basis"] == "implausible" and xhgx["market_cap"] is None
+    b = v.basis(["S12", "S13", "S14", "S15", "S16"]).sort("security_id")
+    assert b["basis"].to_list() == ["implausible", "calibrated", "calibrated", "implausible", "calibrated"]
+    assert b["penny_days"][0] >= 20 and b["penny_turnover"][0] == pytest.approx(36_450 / 6.075e9)
+    assert b["penny_turnover"][3] == pytest.approx(9e-5) and b["thin_days"][3] >= 20   # thin, not slow
     assert lygx["market_cap"] == pytest.approx(1.5 * 20e9 * 0.25) and not lygx["implausible"]
     assert thin["market_cap"] == pytest.approx(10e9) and not thin["implausible"]   # 2e-5 a day, but $25
+    # FEWX: only its 10 thin penny days are withheld.
+    assert fewx["market_cap"] == pytest.approx(3e9) and not fewx["implausible"]
+    late = v.market_cap("FEWX", start=DAYS[-10], end=END)
+    assert late["implausible"].all() and late["market_cap"].is_null().all() and b["thin_days"][4] == 10
     ranked = v.ranks(day)["ticker"].to_list()
-    assert "JUNK" not in ranked and {"LYGX", "THIN"} <= set(ranked)
-    # Only the ADR rule withheld JUNK (the general floor passes 6e-6): every day with a fresh count.
+    assert not {"JUNK", "XHGX"} & set(ranked) and {"LYGX", "THIN", "FEWX"} <= set(ranked)
+    # Only the ADR rules withheld these (the general floor passes them): JUNK's and XHGX's days
+    # with a fresh count, and FEWX's 10.
     days_with_count = v.market_cap("JUNK", start=START, end=END).filter(pl.col("shares_end").is_not_null()).height
-    assert v.status()["penny_adr_days"] == days_with_count
+    assert v.status()["penny_adr_days"] == 2 * days_with_count + 10
     checks = {n: ok for n, ok, _ in v.check()}
     assert checks["no ranked ADR under $2 above $5B trading under $1M a day"]

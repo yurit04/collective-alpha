@@ -123,23 +123,31 @@ history (it accumulates only from the first download) and may not be in smaller 
   2023), SVRE at about $8.7B, BDRX at $0.22 shown as about $50B. Trading them in the
   unimatrix-zero backtester cost hundreds of basis points of impact. Their turnover (about
   6e-6 a day) sits just above the safety net's floor of 10^-5.5, so the net missed them.
-- **Decision.** An ADR's days under $2 (raw close) are pooled over its whole history; with at
-  least 20 of them and a median turnover under 10^-4.5 a day, its basis is marked
-  `implausible` and its market cap is withheld on every day (`implausible`, as for the general
-  net). Reasoning: at a penny price a correct market cap is either small (a micro-cap, which
-  trades a large share of its value) or large and then carried by billions of ADSs that trade
-  heavily (Lloyds, Ambev, Santander: roughly 1e-4 to 1e-3 a day, estimated from typical US
-  volumes). Little trading at a penny price means too many shares, i.e. a wrong ratio. The ratio
-  is one number per security (from today's counts), so it is wrong on every day, not only the
-  penny ones. The 10^-4.5 floor leaves about 5x room above the junk.
-- **First version, per share-count period (replaced).** The same thresholds applied to the
-  median price and turnover of each period one SEC count was in use. First build (30 s):
-  2,491 security-days withheld, SVRE out of the top 1,000, MFG rank 260 and JHX rank 636 on
+- **Decision.** Penny ADRs (raw close under $2) are judged on two signatures. At a penny price a
+  correct market cap is either small (a micro-cap, which trades a large share of its value) or
+  large and then carried by billions of ADSs that trade heavily (Lloyds, Ambev, Santander: tens
+  of millions of dollars, roughly 1e-4 to 1e-3 of their value, a day). So:
+  - **Thin day:** under $2, shown above $1B, 60-day median dollar volume under $1M. Withheld,
+    however few such days a security has.
+  - **Implausible basis:** an ADR with 20+ thin days, or with 20+ days under $2 whose pooled
+    median turnover is under 10^-4.5 a day, gets basis `implausible` and no market cap on any
+    day. The ratio is one number per security (from today's counts), so a wrong one inflates
+    the years above $2 as well.
+- **First version, per share-count period (replaced).** A median price under $2 and a median
+  turnover under 10^-4.5 over each period one SEC count was in use. First build (30 s): 2,491
+  security-days withheld, SVRE out of the top 1,000, MFG rank 260 and JHX rank 636 on
   2023-05-31, but NCNA was still in the top 1,000 on 909 days and BDRX on 175: in their periods
   priced above $2 (NCNA traded at $3-10 for years) the wrong ratio still showed them at
   $15-60B. Ten ADRs had 420 days under $2 above $5B; five traded under $1M a day (BDRX 55.2B,
   RDHL 16.1B, NCNA 14.6B, XHG 10.1B, YMT 5.0B) and five traded heavily, confirming that a
   price rule alone would remove real companies.
+- **Second version, pooled turnover only (replaced).** Build 32.5 s: 4 bases marked
+  implausible, 3,995 security-days withheld; NCNA and BDRX out of the top 1,000, MFG and JHX
+  unchanged. But SVRE (574 penny days) and XHG (878) pooled at 4e-5, just above the floor, so
+  they lost the first version's per-period withholding: SVRE back in the top 1,000 on 231 days
+  at up to $29.5B, XHG at $116B. RDHL (749 penny days at 2e-3: inflated in one stretch only)
+  and YMT (99 at 1e-4) were not caught either. Turnover alone cannot separate them: the
+  absolute dollar volume can (no real $1B+ company has a penny ADR trading under $1M a day).
 - **Rejected alternatives.**
   - A stricter turnover floor for all ADRs: real ADRs that trade mostly abroad sit at
     1e-5..1e-4 of their company-wide value in the US (Chinese SOEs whose count includes A and H
@@ -151,8 +159,8 @@ history (it accumulates only from the first download) and may not be in smaller 
     market cap already, and a wrong ratio can still snap to a round number (`calibrated`).
   - A price rule alone ("no ADR under $2 above $5B"): it would remove the heavily traded five.
 - **Checks.** No ranked ADR under $2 above $5B on a median dollar volume under $1M a day (the
-  detail shows each offender's penny days and turnover); NCNA, SVRE and BDRX never in the top
-  1,000; MFG and JHX in the top 1,000 on 2023-05-31.
+  detail shows each offender's basis, penny days, turnover and thin days); NCNA, SVRE and BDRX
+  never in the top 1,000; MFG and JHX in the top 1,000 on 2023-05-31.
 - **Effect.** `vinculum build` prints the security-days only this rule withheld
-  (`penny_adr_days` in `vinculum status`); `basis()` shows `penny_days` and `penny_turnover`
-  per ADR. Results of the whole-history version: pending its first build.
+  (`penny_adr_days` in `vinculum status`); `basis()` shows `penny_days`, `penny_turnover` and
+  `thin_days` per ADR. Results of this version: pending its first build.

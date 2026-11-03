@@ -47,7 +47,7 @@ User docs: README.md in this folder. Design: docs/decisions/0004-vinculum.md.
   off_exchange_share, source
 - `cik_map(security_ids)`, `share_counts(security_ids)`, `basis(security_ids)`, `scan()`
   (`basis`: basis_ratio, basis = calibrated | calibrated_raw | rescaled | override | loose |
-  disagree | assumed | unknown | mismatch | implausible, penny_days, penny_turnover)
+  disagree | assumed | unknown | mismatch | implausible, penny_days, penny_turnover, thin_days)
 
 CLI: `vinculum build | check | status | show TICKER | universe DATE --top N | service install|remove|status`.
 
@@ -75,14 +75,17 @@ Invariants:
 - Market cap uses only SEC counts with available_from <= date and end >= date - 400 days.
 - `shares_now` is in today's units of the security: market cap = adjusted close x shares_now x basis.
 - Size ranks use `is_primary` rows only (one per company) and `issuer_market_cap`.
-- Safety net (`_build.screen`): median turnover outside PLAUSIBLE (10^-5.5..3 a day) while one
-  SEC count is in use withholds the market cap for those days. ADRs (`_build.penny_basis`): days
-  under $2 pooled over the whole history (>= PENNY_MIN_DAYS) with median turnover under 10^-4.5
-  mark the basis `implausible` (a wrong ADS ratio, as NCNA/SVRE/BDRX shown at $6-60B) and
-  withhold every day: the ratio is one number per security, so judge it per security, never
-  per period. Both set `implausible`. Real penny ADRs above $5B (LYG, ABEV, SAN) trade 1e-4+ a
-  day and pass; never tighten the turnover floor for all ADRs (Chinese SOE and Japanese ADRs
-  trade 1e-5..1e-4 of their company-wide value in the US). Overrides are never marked.
+- Safety net (`_build.screen`), all setting `implausible`:
+  - any security: median turnover outside PLAUSIBLE (10^-5.5..3 a day) while one SEC count is
+    in use withholds those days;
+  - an ADR day under $2 shown above $1B on under $1M a day (60-day median; ADR_THIN) is
+    withheld, however few such days there are;
+  - an ADR (`_build.penny_basis`, whole history) with >= PENNY_MIN_DAYS such thin days, or with
+    >= PENNY_MIN_DAYS days under $2 whose median turnover is under 10^-4.5, gets basis
+    `implausible` and is withheld on every day: the ratio is one number per security.
+  Real penny ADRs above $5B (LYG, ABEV, SAN) trade tens of millions a day and pass. Never
+  tighten the turnover floor for all ADRs (Chinese SOE and Japanese ADRs trade 1e-5..1e-4 of
+  their company-wide value in the US). Overrides are never marked.
 - The equity filter trusts Massive's type: the name screen for typed CS/ADRC catches only
   warrants, SPAC units, notes and baby bonds (MLP "Common Units" and preferred-share ADRs are
   equity); the wider screen (UNITS, PFD, FUND, SENIOR) applies to untyped securities only.
