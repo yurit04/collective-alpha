@@ -16,7 +16,7 @@ import polars as pl
 
 from ._cikmap import EQUITY_TYPES, GOOD, build_cik_map, cik_on
 from ._layout import Layout, write_atomic
-from ._names import looks_equity
+from ._names import adr_ratio, looks_adr, looks_converted, looks_equity
 from ._shares import ADR_TYPES, adjust, basis_ratios, split_events
 from ._successors import build_successors, inherited_counts
 
@@ -56,6 +56,11 @@ ADR_THIN = (1e9, 1e6)           # a penny ADR shown above $1B on under $1M a day
 # (Enel Chile ENIC, Tuya TUYA: about 1-2x).
 ADR_ANCHOR = 10.0
 PENNY_MIN_DAYS = 20             # penny (or thin) days needed before an ADR is judged as a whole
+# An ADR shown above $50B whose US trading is under 1e-5 of that a day (60-day median): no real
+# company that size trades that little even as an ADR (NTT DOCOMO at $106B: 3e-5; Westpac at
+# $75B: 4.5e-5), while a stale ratio on a reorganized share count does (LATAM's old ADS after
+# its 2022 bankruptcy: $1.7T on $7M a day).
+ADR_GIANT = (5e10, 1e-5)
 
 
 # Massive's when-issued suffixes: a lowercase w (HONw) or .WD / .WI (DHR.WD). Never a bare
@@ -75,6 +80,51 @@ def equity_securities(securities: pl.DataFrame) -> pl.DataFrame:
             .select("security_id", "type", "name"))
 
 
+def adr_flags(attrs: pl.DataFrame, equity: pl.DataFrame) -> pl.DataFrame:
+    """Per equity security: adr (Massive typed it ADRC/GDR/NYRS in any month-end snapshot, or
+    any of its names reads like a depositary receipt) and adr_now (it has not converted: its
+    latest snapshot is not typed CS under a name that says ordinary shares or common stock).
+    Massive types some ADSs as common stock (Taomee, iSoftStone, Youku) and an ADS that converted
+    to ordinary shares by what it is today (Fanhua: ADRC until 2025, CS after), so the latest
+    type alone misses both."""
+    a = (attrs.select("security_id", "as_of", "name", "type").join(equity.select("security_id"), on="security_id")
+         .with_columns((pl.col("type").is_in(ADR_TYPES)
+                        | pl.col("name").map_elements(looks_adr, return_dtype=pl.Boolean).fill_null(False))
+                       .alias("__adr")))
+    last = (a.sort("as_of").group_by("security_id")
+            .agg(pl.col("__adr").any().alias("adr"), pl.col("type").last().alias("__t"), pl.col("name").last().alias("__n")))
+    last = last.with_columns(
+        (pl.col("adr") & ~((pl.col("__t") == "CS")
+                           & pl.col("__n").map_elements(looks_converted, return_dtype=pl.Boolean).fill_null(False)))
+        .alias("adr_now"))
+    out = equity.select("security_id", "type").join(last, on="security_id", how="left").with_columns(
+        (pl.col("adr").fill_null(False) | pl.col("type").is_in(ADR_TYPES)).alias("adr"),
+        (pl.col("adr_now").fill_null(False) | pl.col("type").is_in(ADR_TYPES)).alias("adr_now"))
+    return out.select("security_id", "adr", "adr_now")
+
+
+def adr_name_ratios(attrs: pl.DataFrame, ids: list[str]) -> pl.DataFrame:
+    """security_id, as_of, ratio: ordinary shares per ADS stated in a month-end snapshot's name
+    (only snapshots whose name states one)."""
+    a = (attrs.filter(pl.col("security_id").is_in(ids)).select("security_id", "as_of", "name")
+         .with_columns(pl.col("name").map_elements(adr_ratio, return_dtype=pl.Float64).alias("ratio")))
+    return a.filter(pl.col("ratio").is_not_null()).select("security_id", "as_of", "ratio").sort("as_of")
+
+
+def name_ratio_as_of(ratios: pl.DataFrame, when: pl.DataFrame) -> pl.DataFrame:
+    """security_id, name_ratio: the ratio of the last ratio-stating name on or before `when`
+    (security_id, date), else the first one after. A ratio belongs to its period: Honda's ADS was
+    1 share until its 2023 3-for-1 split and 3 after, and its SEC counts stop in 2020."""
+    if ratios.is_empty() or when.is_empty():
+        return pl.DataFrame(schema={"security_id": pl.String, "name_ratio": pl.Float64})
+    w = when.sort("date")
+    back = w.join_asof(ratios.rename({"as_of": "__d"}), left_on="date", right_on="__d", by="security_id",
+                       strategy="backward", check_sortedness=False).select("security_id", pl.col("ratio").alias("__b"))
+    fwd = w.join_asof(ratios.rename({"as_of": "__d"}), left_on="date", right_on="__d", by="security_id",
+                      strategy="forward", check_sortedness=False).select("security_id", pl.col("ratio").alias("__f"))
+    return back.join(fwd, on="security_id").select("security_id", pl.coalesce("__b", "__f").alias("name_ratio"))
+
+
 def load_basis_overrides(path: Path = BASIS_OVERRIDES) -> pl.DataFrame:
     schema = {"security_id": pl.String, "basis_ratio": pl.Float64, "note": pl.String}
     if not path.exists():
@@ -83,15 +133,21 @@ def load_basis_overrides(path: Path = BASIS_OVERRIDES) -> pl.DataFrame:
     return df.select(list(schema)) if df.height else pl.DataFrame(schema=schema)
 
 
-def calibrate(store, counts: pl.DataFrame, cik_map: pl.DataFrame, equity: pl.DataFrame) -> pl.DataFrame:
-    """Basis ratio per equity security from Massive's latest ticker-details snapshot."""
+def calibrate(store, counts: pl.DataFrame, cik_map: pl.DataFrame, equity: pl.DataFrame,
+              name_ratios: pl.DataFrame | None = None) -> pl.DataFrame:
+    """Basis ratio per equity security from Massive's latest ticker-details snapshot; for ADRs
+    without one, from `name_ratios` (adr_name_ratios) as of the security's latest SEC count."""
+    if name_ratios is not None and "name_ratio" not in equity.columns:
+        latest_count = counts.group_by("security_id").agg(pl.col("available_from").max().alias("date"))
+        equity = equity.join(name_ratio_as_of(name_ratios, latest_count), on="security_id", how="left")
     try:
         det = store.ticker_details()
     except FileNotFoundError:
         log.warning("no Massive ticker_details yet: ADRs get no market cap, stocks assume ratio 1 "
                     "(run: subspace backfill rest ticker_details)")
         det = pl.DataFrame()
-    latest = equity.select("security_id", "type")
+    flags = [c for c in ("adr", "adr_now", "name_ratio") if c in equity.columns]
+    latest = equity.select("security_id", "type", *flags)
     if det.height:
         day = det["as_of"].max()
         det = det.filter(pl.col("as_of") == day)
@@ -117,7 +173,7 @@ def calibrate(store, counts: pl.DataFrame, cik_map: pl.DataFrame, equity: pl.Dat
                                      pl.lit(None, pl.Float64).alias("massive_market_cap"),
                                      pl.lit(None, pl.Float64).alias("shares_now"), pl.lit(1).alias("classes"))
     latest = latest.with_columns(pl.col("classes").fill_null(1))
-    b = basis_ratios(latest.select("security_id", "type", "massive_shares", "shares_now", "classes"))
+    b = basis_ratios(latest.select("security_id", "type", "massive_shares", "shares_now", "classes", *flags))
     out = latest.select("security_id", "type", "massive_shares", "massive_market_cap",
                         pl.col("shares_now").alias("sec_shares")).join(b, on="security_id")
     ov = load_basis_overrides()
@@ -154,7 +210,10 @@ def daily(store, start: date, end: date, equity: pl.DataFrame, cik_map: pl.DataF
     """Unscreened market cap per equity security and trading day from `start` to `end`."""
     lf = store.bars(start=start, end=end, adjust="splits", lazy=True)
     df = (lf.select("date", "ticker", "security_id", "close", "volume", "split_factor")
-          .join(equity.lazy().select("security_id", "type"), on="security_id").collect())
+          .join(equity.lazy().select("security_id", "type", *(["adr"] if "adr" in equity.columns else [])),
+                on="security_id").collect())
+    if "adr" not in df.columns:
+        df = df.with_columns(pl.col("type").is_in(ADR_TYPES).alias("adr"))
     if df.is_empty():
         return df
     df = cik_on(df, cik_map)
@@ -185,7 +244,7 @@ def _inflated(cap: pl.Expr) -> pl.Expr:
 def _thin_penny() -> pl.Expr:
     """A day an ADR's market cap cannot be right: under $2, shown above $1B on under $1M a day,
     and far above what Massive says the company is worth today."""
-    return (pl.col("type").is_in(ADR_TYPES) & (pl.col("raw_close") < ADR_PENNY[0])
+    return (pl.col("adr") & (pl.col("raw_close") < ADR_PENNY[0])
             & (pl.col("market_cap") > ADR_THIN[0]) & (pl.col("dv60") < ADR_THIN[1])
             & _inflated(pl.col("market_cap")))
 
@@ -201,7 +260,7 @@ def penny_basis(store, first: int, last: int, equity: pl.DataFrame, cik_map: pl.
     judges an ADR the same way. Overrides are never marked."""
     stats = {"security_id": pl.String, "penny_days": pl.UInt32, "penny_turnover": pl.Float64,
              "penny_market_cap": pl.Float64, "thin_days": pl.UInt32}
-    adrs = equity.filter(pl.col("type").is_in(ADR_TYPES))
+    adrs = equity.filter(pl.col("adr") if "adr" in equity.columns else pl.col("type").is_in(ADR_TYPES))
     df = daily(store, date(first, 1, 1), date(last, 12, 31), adrs, cik_map, counts, basis)
     if df.is_empty():
         st = pl.DataFrame(schema=stats)
@@ -222,12 +281,13 @@ def penny_basis(store, first: int, last: int, equity: pl.DataFrame, cik_map: pl.
 
 
 def screen(df: pl.DataFrame) -> pl.DataFrame:
-    """Safety net: no market cap where it cannot be right. Three rules set `implausible`:
+    """Safety net: no market cap where it cannot be right. Four rules set `implausible`:
     - any security, while one SEC count is in use (security_id, end, filed): median turnover
       outside PLAUSIBLE (the count or the ratio is wrong);
     - ADRs whose basis is "implausible" (penny_basis): every day;
     - any ADR day under $2 shown above $1B on under $1M a day (ADR_THIN) and above ADR_ANCHOR x
-      Massive's current market cap, however few.
+      Massive's current market cap, however few;
+    - any ADR day shown above $50B on a 60-day median turnover under 1e-5 (ADR_GIANT).
     `penny_adr` marks days withheld by the ADR rules alone (the turnover rule passed them).
     df: daily() columns (security_id, type, end, filed, basis, raw_close, dollar_volume, dv60,
     market_cap)."""
@@ -235,7 +295,9 @@ def screen(df: pl.DataFrame) -> pl.DataFrame:
     to = (df.filter(pl.col("market_cap").is_not_null())
           .group_by(seg).agg((pl.col("dollar_volume") / pl.col("market_cap")).median().alias("__to")))
     general = ~pl.col("__to").is_between(*PLAUSIBLE)
-    penny = ((pl.col("basis") == "implausible") | _thin_penny()) & pl.col("market_cap").is_not_null()
+    giant = (pl.col("adr") & (pl.col("market_cap") > ADR_GIANT[0])
+             & (pl.col("dv60") < ADR_GIANT[1] * pl.col("market_cap")))
+    penny = ((pl.col("basis") == "implausible") | _thin_penny() | giant) & pl.col("market_cap").is_not_null()
     return (df.join(to, on=seg, how="left", nulls_equal=False)
             .with_columns(general.fill_null(False).alias("__g"), penny.fill_null(False).alias("__p"))
             .with_columns((pl.col("__g") | pl.col("__p")).alias("implausible"),
@@ -360,8 +422,12 @@ def build(store, edgar, layout: Layout, start_year: int = 2003, years: list[int]
     layout.ensure()
     secs = store.securities()
     equity = equity_securities(secs)
+    attrs = store.security_attributes()
+    equity = equity.join(adr_flags(attrs, equity), on="security_id", how="left")
+    log.info("ADRs by type or name: %d (%d typed otherwise today)", int(equity["adr"].sum()),
+             int((equity["adr"] & ~equity["type"].is_in(ADR_TYPES).fill_null(False)).sum()))
     log.info("cik map: checking Massive CIKs against SEC names")
-    cik_map = build_cik_map(store.security_attributes(), edgar.profiles(), edgar.names())
+    cik_map = build_cik_map(attrs, edgar.profiles(), edgar.names())
     write_atomic(cik_map, layout.file("cik_map"))
 
     successors = build_successors(store, secs, cik_map, equity["security_id"].to_list())
@@ -376,15 +442,16 @@ def build(store, edgar, layout: Layout, start_year: int = 2003, years: list[int]
     # Until a successor files its own count, the predecessor's last counts carry its market cap.
     events = split_events(store.security_actions("splits"))
     obs = pl.concat([obs, inherited_counts(obs, successors, STALE_DAYS, events)])
-    adrs = equity.filter(pl.col("type").is_in(ADR_TYPES))["security_id"].to_list()
+    adrs = equity.filter(pl.col("adr"))["security_id"].to_list()
     liquidity = liquidity_table(store, start_year, secs["last_trade"].max().year, equity)
     multi = multi_class(pairs, secs)
-    counts, attribution = adjust(obs, events, adrs, liquidity, multi)
+    counts, attribution = adjust(obs, events, adrs, liquidity, multi,
+                                 first_trade=secs.select("security_id", "first_trade", "last_trade"))
     write_atomic(counts, layout.file("share_counts"))
     write_atomic(attribution, layout.file("split_attribution"))
 
     last = secs["last_trade"].max()
-    basis = calibrate(store, counts, cik_map, equity)
+    basis = calibrate(store, counts, cik_map, equity, adr_name_ratios(attrs, adrs))
     basis = penny_basis(store, start_year, last.year, equity, cik_map, counts, basis)
     write_atomic(basis, layout.file("basis"))
     log.info("penny ADRs: %d with an implausible basis", int((basis["basis"] == "implausible").sum()))

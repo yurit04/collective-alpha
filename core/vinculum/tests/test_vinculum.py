@@ -603,3 +603,127 @@ def test_penny_adr_with_wrong_ratio_is_withheld(tmp_path):
     assert v.status()["penny_adr_days"] == 2 * days_with_count
     checks = {n: ok for n, ok, _ in v.check()}
     assert checks["no ranked ADR under $2 above $5B trading under $1M a day"]
+
+
+# ---------------------------------------------------------------- ADSs typed as common stock
+def test_adr_names_and_ratios():
+    from vinculum._names import adr_ratio, looks_adr, looks_converted
+    assert looks_adr("ISOFTSTONE HLDGS LTD ADS EACH REPSTG 10 ORD SHS (CYM)") and not looks_adr("ADS-TEC Energy PLC")
+    assert adr_ratio("ISOFTSTONE HLDGS LTD ADS EACH REPSTG 10 ORD SHS (CYM)") == 10
+    assert adr_ratio("SAP AKTIENGESELL ADS(RP1/4 COM)") == 0.25
+    assert adr_ratio("NIDEC CP (NIHON KABUSHIKI KAISHA)1 ADS REPTG .25 SH") == 0.25
+    assert adr_ratio("SOS Limited American Depositary Shares, each representing five hundred (500) Class A") == 500
+    assert adr_ratio("TAOMEE HLDGS LTD SPON ADR (CYM)") is None and adr_ratio("Apple Inc.") is None
+    assert looks_converted("AIFU Inc. Class A Ordinary Share") and not looks_converted("YOUKU TUDOU INC.(CAYMAN ISLS)")
+
+
+def test_adr_flags_and_dated_name_ratios():
+    from vinculum._build import adr_flags, adr_name_ratios, name_ratio_as_of
+    attrs = pl.DataFrame({
+        "security_id": ["Y", "Y", "F", "F", "H", "H", "C"],
+        "as_of": [D(2011, 12, 30), D(2013, 1, 31), D(2020, 1, 31), D(2025, 6, 30), D(2010, 1, 29), D(2024, 1, 31), D(2020, 1, 31)],
+        "name": ["YOUKU INC SPONSORED ADR REPSTG 18 CL A ORD SHS", "YOUKU TUDOU INC", "Fanhua Inc. American Depositary Shares",
+                 "AIFU Inc. Class A Ordinary Share", "HONDA MOTOR CO ADR ONE (1) COM STK ONE (1) ADS",
+                 "Honda Motor Co., Ltd. American Depositary Share, each representing three (3) shares of Common", "Acme Inc."],
+        "type": ["CS", "CS", "ADRC", "CS", "CS", "ADRC", "CS"]})
+    equity = pl.DataFrame({"security_id": ["Y", "F", "H", "C"], "type": ["CS", "CS", "ADRC", "CS"]})
+    f = {r["security_id"]: r for r in adr_flags(attrs, equity).iter_rows(named=True)}
+    assert f["Y"]["adr"] and f["Y"]["adr_now"]                    # typed CS, but an ADS by name
+    assert f["F"]["adr"] and not f["F"]["adr_now"]                # converted to ordinary shares
+    assert not f["C"]["adr"]
+    ratios = adr_name_ratios(attrs, ["Y", "H"])
+    when = pl.DataFrame({"security_id": ["H", "Y"], "date": [D(2020, 6, 19), D(2015, 6, 1)]})
+    got = dict(name_ratio_as_of(ratios, when).iter_rows())
+    assert got == {"H": 1.0, "Y": 18.0}                           # Honda's 2020 count: 1 share per ADS, not 3
+
+
+def test_basis_for_adrs_without_massive_counts():
+    from vinculum._shares import basis_ratios
+    latest = pl.DataFrame({"security_id": ["ISS", "TAOM", "PLL", "ORD"], "type": ["CS", "CS", "CS", "CS"],
+                           "massive_shares": [None] * 4, "shares_now": [5.7e8, 7.7e8, 2.2e7, 1e8], "classes": [1] * 4,
+                           "adr": [True, True, True, False], "adr_now": [True, True, False, False],
+                           "name_ratio": [10.0, None, None, None]},
+                          schema_overrides={"massive_shares": pl.Float64})
+    b = {r["security_id"]: (r["basis_ratio"], r["basis"]) for r in basis_ratios(latest).iter_rows(named=True)}
+    assert b["ISS"] == (pytest.approx(0.1), "name") and b["TAOM"] == (None, "unknown")
+    assert b["PLL"] == (1.0, "assumed") and b["ORD"] == (1.0, "assumed")
+
+
+def test_counts_from_before_a_new_security_are_dropped_when_far_off():
+    from vinculum._shares import drop_inherited
+    o = pl.DataFrame({"security_id": ["N"] * 3 + ["M"] * 2, "cik": ["1"] * 3 + ["2"] * 2,
+                      "end": [D(2014, 5, 9), D(2014, 8, 8), D(2014, 11, 7), D(2017, 12, 31), D(2018, 12, 31)],
+                      "shares_now": [5.88e8, 1.47e7, 1.48e7, 1.2e8, 1.6e8]})
+    ft = pl.DataFrame({"security_id": ["N", "M"], "first_trade": [D(2014, 6, 11), D(2018, 2, 1)]})
+    kept = drop_inherited(o, ft, ["security_id", "cik"])
+    assert kept.filter(pl.col("security_id") == "N")["end"].to_list() == [D(2014, 8, 8), D(2014, 11, 7)]  # 40x off
+    assert kept.filter(pl.col("security_id") == "M").height == 2                                    # within 3x
+
+
+
+def test_counts_from_after_a_security_stopped_trading_are_dropped_when_far_off():
+    from vinculum._shares import drop_inherited
+    # LATAM's old ADS: last trade June 2020; the CIK's counts after its 2022 reorganization are 1000x.
+    o = pl.DataFrame({"security_id": ["L"] * 5, "cik": ["1"] * 5,
+                      "end": [D(2018, 12, 31), D(2019, 12, 31), D(2020, 12, 31), D(2022, 12, 31), D(2025, 12, 31)],
+                      "shares_now": [6.06e8, 6.06e8, 6.06e8, 6.05e11, 5.74e11]})
+    ft = pl.DataFrame({"security_id": ["L"], "first_trade": [D(2001, 1, 1)], "last_trade": [D(2020, 6, 9)]})
+    kept = drop_inherited(o, ft, ["security_id", "cik"])
+    assert kept["end"].to_list() == [D(2018, 12, 31), D(2019, 12, 31), D(2020, 12, 31)]   # within 3x is kept
+    # Without last_trade only the first-trade rule applies.
+    assert drop_inherited(o, ft.drop("last_trade"), ["security_id", "cik"]).height == 5
+
+def test_adr_levels_keep_a_real_1000x_issuance_but_align_ratio_changes():
+    from vinculum._shares import _unit_slips
+    g = ["security_id", "cik"]
+    # L: ratio-1 ADS, 606M shares until a reorganization issues 1000x (605B). C: an ADS ratio
+    # change, 62x fewer ordinary shares behind each ADS; both judged on the same liquidity.
+    o = pl.DataFrame({"security_id": ["L"] * 4 + ["C"] * 3, "cik": ["1"] * 4 + ["2"] * 3,
+                      "end": [D(2018, 12, 31), D(2019, 12, 31), D(2022, 12, 31), D(2023, 12, 31),
+                              D(2017, 12, 31), D(2018, 12, 31), D(2019, 12, 31)],
+                      "shares_now": [6.06e8, 6.06e8, 6.05e11, 6.04e11, 1.11e5, 6.9e6, 2.1e7]})
+    liq = pl.DataFrame({"security_id": ["L"] * 4 + ["C"] * 3, "year": [2018, 2019, 2022, 2023, 2017, 2018, 2019],
+                        "dv_med": [7e6, 7e6, 2e5, 2e5, 7e4, 7e4, 1.8e5], "close_med": [10.0, 10.0, 0.01, 0.01, 200.0, 3.0, 2.0]})
+    out = _unit_slips(o, g, ["L", "C"], liq).sort(*g, "end")
+    lt = out.filter(pl.col("security_id") == "L")
+    assert lt["shares_now"].to_list()[:2] == [6.06e8, 6.06e8] and not lt["unit_fixed"].any()
+    ct = out.filter(pl.col("security_id") == "C")
+    assert ct["shares_now"].to_list() == pytest.approx([2.1e7] * 3)    # all on the latest level
+    assert ct["unit_fixed"].to_list() == [True, True, False]
+
+
+def test_turnover_uses_only_years_the_security_traded():
+    from vinculum._shares import _turnover
+    o = pl.DataFrame({"security_id": ["NEW", "NEW"], "cik": ["1", "1"], "end": [D(2019, 12, 31), D(2023, 12, 31)],
+                      "shares_now": [1e4, 3e7]})
+    liq = pl.DataFrame({"security_id": ["OLD", "NEW"], "year": [2019, 2023], "dv_med": [5e5, 2e5],
+                        "close_med": [3000.0, 0.2]})
+    t = _turnover(pl.concat([o, o.with_columns(pl.lit("OLD").alias("security_id"))]), liq)
+    new = t.filter(pl.col("security_id") == "NEW")
+    assert new["end"].to_list() == [D(2023, 12, 31)]               # 2019: the predecessor's prices, other units
+
+
+# A wrong ADS level can make a liquid-looking ADR a trillion-dollar company (LATAM's old ADS in
+# 2020: $2.4T on $7M a day, now fixed in _unit_slips). ADR_GIANT, the net, withholds an ADR shown
+# above $50B whose 60-day median volume is under 1e-5 of that; a real $100B ADR trades far more.
+def test_giant_adr_with_almost_no_volume_is_withheld():
+    from vinculum._build import screen
+
+    n = 30
+    days = [date(2020, 3, 2) + timedelta(days=i) for i in range(n)]
+
+    def rows(sid, adr, cap, dv):
+        return {"security_id": [sid] * n, "date": days, "type": ["CS"] * n, "adr": [adr] * n,
+                "end": [date(2019, 12, 31)] * n, "filed": [date(2020, 2, 1)] * n, "basis": ["name"] * n,
+                "raw_close": [10.0] * n, "dollar_volume": [dv] * n, "dv60": [dv] * n,
+                "market_cap": [cap] * n, "massive_market_cap": [None] * n}
+
+    df = pl.concat([pl.DataFrame(rows("STALE", True, 2e12, 7e6)), pl.DataFrame(rows("REAL", True, 1e11, 2e8)),
+                    pl.DataFrame(rows("US", False, 2e12, 7e6))], how="vertical_relaxed")
+    out = screen(df).group_by("security_id").agg(pl.col("implausible").all(), pl.col("penny_adr").any(),
+                                                  pl.col("market_cap").is_null().all().alias("withheld"))
+    got = {r["security_id"]: r for r in out.iter_rows(named=True)}
+    assert got["STALE"]["withheld"] and got["STALE"]["penny_adr"]
+    assert not got["REAL"]["implausible"]
+    # Not an ADR: only the general turnover rule applies (3.5e-6 is inside PLAUSIBLE).
+    assert not got["US"]["implausible"]

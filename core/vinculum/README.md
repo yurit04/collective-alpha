@@ -169,17 +169,50 @@ everything else (ETFs, preferreds, OTC stocks).
 
 ### How share counts are cleaned
 
+0. **Which securities are ADRs.** A security is handled as an ADR if Massive typed it ADRC (or
+   GDR/NYRS) in any month-end snapshot, or any of its names reads like a depositary receipt
+   ("ADS", "SPONSORED ADR", "American Depositary Shares"). Massive types many ADSs as common
+   stock (Novartis, HSBC, Taomee, iSoftStone, Youku), and an ADS that later converted to
+   ordinary shares by what it is today (Fanhua was ADRC until 2025). Using the latest type
+   alone valued them at one ordinary share per ADS: Youku at $43B instead of $2.4B.
 1. Splits on the security are applied to the SEC's count, except where the count shows they did
    not change it (ADR ratio changes; a class whose count is in another class's units, like
    BRK.B's 2010 split and Berkshire's Class A equivalents).
+   - A count dated before a security's first trade is dropped when it is more than 3x off the
+     security's first count after it. This covers a security that replaced another on the same
+     CIK at a reverse split, such as Aradigm's 2014 listing after a 1-for-40: the new security
+     has no split of its own, so the old count would meet post-split prices.
+   - Likewise, a count dated after a security's last trade is dropped when it is more than 3x
+     off its last count before then. These counts belong to whatever came next on the CIK and
+     never set that security's market cap, but they could pull its earlier counts to their
+     level. Before this rule, SK Telecom's old ADS was aligned to the counts after its 2021 split
+     ($50B instead of $16B).
 2. A count dated before a split but filed after it may already be restated: the basis closer to
    the neighbouring counts wins.
 3. Unit errors (a company reporting in thousands for a while) are found by steps of 1000^n and
    by implied turnover (dollar volume / market cap): each level is moved to where turnover is
    plausible. Absurd and isolated values are dropped.
+   - Turnover is measured only in years the security itself traded. Biolase's post-2022
+     security was once judged on its predecessor's prices, which are in other units; every
+     count was multiplied by 1,000, showing $6M as $6B.
+   - ADR levels are aligned to the latest one, which is calibrated against Massive. The exception
+     is a step of about 1000^n when the level is plausible as filed and alignment would push its
+     turnover under 10^-5.5: that is a real share issuance, not a unit change. LATAM issued
+     1,000 times its shares in its 2022 reorganization; aligned, its old ADS read $2.4T in 2020
+     (now $5-7B). Smaller ADR steps are always aligned: before the basis ratio, turnover is off
+     by the ADS ratio and cannot judge them.
 4. Basis ratio from Massive's current count: ~1 for stock (kept at 1 when they differ, flagged
    `loose` within 2x, `disagree` beyond), round ratios for ADRs (TSM 0.2) and classes (BRK.B
-   1500). Securities without a current Massive count: stocks assume 1, ADRs get none.
+   1500). Without a current Massive count (delisted):
+   - stocks, and former ADRs that converted to ordinary shares, assume 1;
+   - an ADR takes the ratio its name states (`name`), as of its latest SEC count. Honda's ADS
+     was 1 share until its 2023 split and 3 after, and its counts stop in 2020, so it gets 1.
+     Examples: iSoftStone "ADS EACH REPSTG 10 ORD", Sony, ABB, HDFC Bank;
+   - an ADR whose names state no ratio gets none (`unknown`): no market cap rather than a wrong
+     one. Taomee, Tata Communications, Focus Media, Mindray, Qihoo and Makita lose theirs;
+     `basis_overrides.csv` can restore one with a documented ratio. It also corrects names that
+     state a ratio backwards: Ctrip's "1 ADR TO 4 ORD SHS" meant 4 ADSs per share (8 after its
+     2015 ADS split), so its override is 8 ($22B in 2017, not $0.7B).
 5. Safety net: while a count is in use, an impossible median turnover withholds the market cap
    (`implausible`). Penny ADRs (under $2) have two more rules, because a wrong ADS ratio shows
    a micro-cap as a giant (NCNA at $0.81 and $37k a day was shown as a $6.2B company, and at
@@ -194,6 +227,10 @@ everything else (ETFs, preferreds, OTC stocks).
    (Enel Chile, Tuya): they stay near today's value, while a wrong ratio shows a micro-cap
    hundreds to tens of thousands of times too large (BDRX: about $50B, $0.8M today).
    ADRs above $2 that trade mostly abroad (Mizuho, James Hardie, ICL) are not affected.
+   Any ADR day (any price) shown above $50B whose 60-day median dollar volume is under 1e-5 of
+   it is also withheld: no real $50B+ ADR trades that little in the US. This catches a giant a
+   stale ratio would create. Since the issuance rule in step 3 it withholds nothing; it stays
+   as a net.
    `basis()` shows `penny_days`, `penny_turnover`, `penny_market_cap` and `thin_days` per ADR.
    `vinculum status` reports the security-days this rule withheld (`penny_adr_days`).
 
@@ -209,7 +246,8 @@ everything else (ETFs, preferreds, OTC stocks).
 ## Limits
 
 - No market cap before XBRL (2009 large filers, 2011 small; foreign filers about 2017-18).
-- ADR and class ratios come from today's counts: delisted ADRs have no market cap.
+- ADR and class ratios come from today's counts or, for delisted ADRs, the ratio in their
+  name; a delisted ADR whose name states none has no market cap.
 - Multi-class companies without a company-wide SEC count after some date (Berkshire after 2016)
   have no market cap from then on; tracking stocks (Liberty) get none.
 - Ratios only for USD reporters (no FX conversion).

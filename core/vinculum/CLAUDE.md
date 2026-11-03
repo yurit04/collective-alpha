@@ -47,7 +47,7 @@ User docs: README.md in this folder. Design: docs/decisions/0004-vinculum.md.
   off_exchange_share, source
 - `cik_map(security_ids)`, `share_counts(security_ids)`, `basis(security_ids)`, `scan()`
   (`basis`: basis_ratio, basis = calibrated | calibrated_raw | rescaled | override | loose |
-  disagree | assumed | unknown | mismatch | implausible, penny_days, penny_turnover,
+  disagree | assumed | name | unknown | mismatch | implausible, penny_days, penny_turnover,
   penny_market_cap, thin_days)
 
 CLI: `vinculum build | check | status | show TICKER | universe DATE --top N | service install|remove|status`.
@@ -57,7 +57,8 @@ CLI: `vinculum build | check | status | show TICKER | universe DATE --top N | se
 ```
 _config.py    settings ([vinculum] in collective.toml, VINCULUM_DATA_ROOT)
 _layout.py    paths, atomic writes, build.json
-_names.py     company-name tokens and matching (Massive vs SEC names), looks_equity()
+_names.py     company-name tokens and matching (Massive vs SEC names), looks_equity(), looks_adr(),
+              adr_ratio() (ordinary shares per ADS stated in a name), looks_converted()
 _cikmap.py    CIK runs per security, verification, conflicts, repair by name, overrides, cik_on()
 _shares.py    split attribution, restated-basis choice, spikes, unit levels by turnover, basis ratios
 _build.py     equity filter, liquidity table, calibration, yearly market-cap panels, public float
@@ -81,6 +82,8 @@ Invariants:
     in use withholds those days;
   - an ADR day under $2 shown above $1B on under $1M a day (60-day median; ADR_THIN) and above
     10x Massive's current market cap (ADR_ANCHOR) is withheld, however few such days there are;
+  - an ADR day shown above $50B on a 60-day median dollar volume under 1e-5 of it (ADR_GIANT)
+    is withheld (a net; nothing trips it since the 1000^n issuance rule below);
   - an ADR (`_build.penny_basis`, whole history) with >= PENNY_MIN_DAYS such thin days, or with
     >= PENNY_MIN_DAYS days under $2 whose median turnover is under 10^-4.5 and median market cap
     above 10x Massive's current one, gets basis `implausible` and is withheld on every day: the
@@ -90,6 +93,26 @@ Invariants:
   value, so the anchor keeps them. Never drop the anchor; never tighten the turnover floor for
   all ADRs (Chinese SOE and Japanese ADRs trade 1e-5..1e-4 of their company-wide value in the
   US). Overrides are never marked.
+- ADRs are identified by history, not the latest type (`_build.adr_flags`): ADRC/GDR/NYRS in any
+  month-end snapshot, or any name that reads like a depositary receipt (`looks_adr`). This set
+  gets the ADR handling everywhere: split attribution, ADR level alignment, the ADR basis branch
+  and the penny rules. `adr_now` is false only for a former ADR whose latest snapshot is CS
+  under a name saying ordinary shares / common stock (converted). Never key ADR logic on
+  `type` alone: Massive types many ADSs CS (Taomee, iSoftStone, Youku) and re-types converted
+  ADSs (Fanhua).
+- Basis without a current Massive count: ADR and not converted -> the ratio in its name as of
+  its latest SEC count (`name_ratio_as_of`; a ratio belongs to its period, e.g. Honda 1 before
+  its 2023 split, 3 after), else `unknown` (no market cap); converted ADRs and stocks -> 1
+  (`assumed`).
+- Share-count turnover (`_shares._turnover`) uses only years the security itself traded; a
+  count dated before a security's first trade is dropped when more than JUMP off its first own
+  count, and a count dated after its last trade when more than JUMP off its last own count
+  (`_shares.drop_inherited`: another security's counts on the same CIK, e.g. a new security at a
+  reverse split, or the counts after an old ADS stopped trading).
+- ADR levels align to the latest level (`_shares._unit_slips`) except across a ~1000^n step
+  when the level is plausible as filed and alignment would take turnover under ADR_KEEP
+  (10^-5.5): a real share issuance (LATAM 2022). Never judge smaller ADR steps by turnover: it
+  is measured before the basis, so it is off by the ADS ratio.
 - The equity filter trusts Massive's type: the name screen for typed CS/ADRC catches only
   warrants, SPAC units, notes and baby bonds (MLP "Common Units" and preferred-share ADRs are
   equity); the wider screen (UNITS, PFD, FUND, SENIOR) applies to untyped securities only.

@@ -1,3 +1,4 @@
 # Manual basis ratios (traded units per unit of the SEC's share count), one documented row each.
 security_id,basis_ratio,note
 BBG000DWG505,1500,BRK.B: Berkshire reports Class A equivalents; 1 A = 1500 B since the 2010 split
+BBG00JQ09RM6,8,CTRP (Ctrip): 8 ADS per ordinary share after 2-for-1 ADS splits in 2006 and 2015; Massive names it "1 ADR TO 4 ORD SHS" (reversed)

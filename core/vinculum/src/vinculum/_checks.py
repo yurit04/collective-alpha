@@ -3,7 +3,7 @@ Massive's current market caps, coverage, and sanity limits."""
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import polars as pl
 
@@ -33,6 +33,24 @@ FLOAT_KNOWN = [
 ]
 # Penny ADRs whose ADS ratio was wrong, shown as $6-50B companies (now withheld by ADR_PENNY).
 JUNK_ADRS = {"BBG00HMJNMV8": "NCNA", "BBG015VQFP30": "SVRE", "BBG00BLVW2R4": "BDRX"}
+# ADSs that Massive types as common stock (or as ADRC only before they converted), and US share
+# counts carried across a reverse split onto a new security: once shown at $2-14B, they must not
+# reach the top 1,000 (unimatrix-zero cost warnings, 2026-11-03).
+WRONG_CAPS = {"BBG000TJXWP2": "FANH", "BBG00YJ7NBQ1": "PLL", "BBG007WGC6B4": "MFH", "SYM:TAOM:2011-06-09": "TAOM",
+              "BBG00GCTC8Y9": "SOS", "CIK:0001210618:SPI": "SPI", "BBG017F91SX8": "MOB", "BBG00V95T6J5": "QH",
+              "CIK:0001500308:ISS": "ISS", "SYM:TCL:2008-02-13": "TCL", "BBG000DDG8B9": "BIOL", "BBG00HVZ59F9": "ARDM"}
+# (security_id, ticker, day, low, high, why): ADS ratios from names, dated to the count they apply to.
+RATIO_CAPS = [
+    ("CIK:0001500308:ISS", "ISS", D(2013, 6, 3), 0.1e9, 0.6e9, "typed CS; name: 10 ordinary shares per ADS"),
+    ("CIK:0001442596:YOKU", "YOKU", D(2012, 6, 1), 1e9, 5e9, "typed CS; name: 18 ordinary shares per ADS"),
+    ("BBG000BL6B45", "HMC", D(2020, 3, 31), 25e9, 60e9, "1 share per ADS until its 2023 3:1 split"),
+    ("BBG000DDG8B9", "BIOL", D(2024, 4, 1), 1e6, 0.1e9, "new security at a reverse split, counts as filed"),
+    ("BBG000JJBNH6", "LTM", D(2019, 6, 3), 4e9, 12e9, "1 share per ADS; the 2022 reorganization's 1000x counts not applied"),
+    ("BBG00JQ09RM6", "CTRP", D(2017, 12, 1), 15e9, 40e9, "override: 8 ADS per share (Massive's name reverses it)"),
+    ("BBG0059GVX06", "SKM", D(2019, 6, 3), 10e9, 30e9, "counts after its last trade (post-2021 split) not applied"),
+]
+# ADSs once aligned across a real 1000x share issuance (shown at $2.4T): never above $50B.
+GIANT_ADRS = {"BBG000JJBNH6": "LTM"}
 # Large ADRs that trade mostly abroad (low US dollar volume): must stay ranked.
 REAL_ADRS = [("MFG", D(2023, 5, 31)), ("JHX", D(2023, 5, 31))]
 # Real ADRs that dipped under $2 while trading under $1M a day in the US (they trade at home).
@@ -173,6 +191,17 @@ def _adr_checks(v, lf) -> list[tuple[str, bool, str]]:
                 hits.height == 0,
                 ", ".join(f"{JUNK_ADRS[s]} {n} days" for s, n in hits.group_by("security_id").len().iter_rows())
                 or "none"))
+    out.append(_never_top(ranked, WRONG_CAPS, "CS-typed ADSs and carried-over counts never in the top"))
+    for sid, t, d, lo, hi, why in RATIO_CAPS:
+        r = (lf.filter((pl.col("security_id") == sid) & (pl.col("date") <= d) & (pl.col("date") > d - timedelta(days=10)))
+             .sort("date").select("market_cap").collect())
+        got = r["market_cap"][-1] if r.height else None
+        out.append((f"{t} {d} market cap {lo / 1e9:g}-{hi / 1e9:g}B ({why})", got is not None and lo <= got <= hi,
+                    f"{got / 1e9:,.2f}B" if got else "missing"))
+    g = (lf.filter(pl.col("security_id").is_in(list(GIANT_ADRS)))
+         .select(pl.col("market_cap").max()).collect()["market_cap"][0])
+    out.append((f"ADSs with a 1000x share issuance never above $50B ({', '.join(GIANT_ADRS.values())})",
+                g is None or g <= 5e10, f"max {g / 1e9:,.1f}B" if g else "no market cap"))
     for t, name in REAL_PENNY_ADRS.items():
         r = (lf.filter((pl.col("ticker") == t) & (pl.col("close") < 2) & pl.col("shares_end").is_not_null())
              .select(pl.len().alias("n"), pl.col("market_cap").is_not_null().sum().alias("kept"),
@@ -187,6 +216,19 @@ def _adr_checks(v, lf) -> list[tuple[str, bool, str]]:
         out.append((f"{t} {d} in the top {TOP_N} (large ADR, mostly traded abroad)",
                     rank is not None and rank <= TOP_N, f"rank {rank}" if rank is not None else "not ranked"))
     return out
+
+
+def _never_top(ranked: pl.LazyFrame, ids: dict[str, str], label: str) -> tuple[str, bool, str]:
+    """No day on which any of `ids` ranks in the top TOP_N by issuer market cap."""
+    rows = (ranked.filter(pl.col("security_id").is_in(list(ids)))
+            .select("date", "security_id", "issuer_market_cap").collect())
+    hits = rows.clear()
+    if rows.height:
+        thr = (ranked.join(rows.select("date").unique().lazy(), on="date").group_by("date")
+               .agg(pl.col("issuer_market_cap").top_k(TOP_N).min().alias("__thr")).collect())
+        hits = rows.join(thr, on="date").filter(pl.col("issuer_market_cap") >= pl.col("__thr"))
+    return (f"{label} {TOP_N} ({len(ids)} securities)", hits.height == 0,
+            ", ".join(f"{ids[s]} {n} days" for s, n in hits.group_by("security_id").len().iter_rows()) or "none")
 
 
 def _short_checks(v, lf) -> list[tuple[str, bool, str]]:

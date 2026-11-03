@@ -180,3 +180,88 @@ history (it accumulates only from the first download) and may not be in smaller 
   635; ENIC keeps 173 of 173 penny days, TUYA 540 of 540; 3 ADRs under $2 above $5B (130 days),
   none trading under $1M a day; calibrated securities within 10% of Massive's current market
   cap: 98.4% of 4,407.
+
+## Addendum (2026-11-03, later): ADSs typed as common stock, carried-over counts
+- **Problem.** The unimatrix-zero cost warnings found twelve more companies shown at $2-14B
+  in the top 1,000:
+  - ten ADSs valued at one ordinary share per ADS: FANH, PLL, MFH, TAOM, SOS, SPI, MOB, QH,
+    ISS, TCL;
+  - two US share-count errors: Biolase at $6.3B in 2024 and Aradigm at $4.9B in 2014.
+
+  The penny-ADR rules did not see the ADSs: they key on Massive's type ADRC, and these were
+  typed CS (Taomee, iSoftStone, Tata Communications) or re-typed CS after converting to
+  ordinary shares (Fanhua, Mercurity, SOS, Quhuo, Mobilicom, Piedmont Lithium, SPI). The same
+  gap valued Youku, typed CS with 18 shares per ADS, at $43B instead of $2.4B.
+- **Decisions.**
+  - **ADR by history:** ADRC/GDR/NYRS in any month-end snapshot or an ADR-style name in any
+    snapshot; 2,526 security names match. This set gets all the ADR handling.
+  - **Ratio from the name for delisted ADRs**, dated to the latest SEC count. Honda's ADS was
+    1 share until its 2023 3:1 split; its counts end in 2020, so 1, not 3.
+  - **No stated ratio means no market cap** (`unknown`) instead of an assumed 1.
+  - **Converted ADSs keep 1** when their latest name says ordinary shares or common stock.
+  - **Turnover per own year:** levels are judged only on years the security traded. Biolase's
+    post-2022 security was judged on its predecessor's prices, which are in other units, and
+    every count was multiplied by 1,000.
+  - **Inherited counts:** a count dated before a security's first trade that is more than 3x
+    off its first own count is dropped. Aradigm's pre-split count met post-split prices; CAAP's
+    pre-IPO 1.5B (160M real) is dropped the same way.
+- **Rejected.**
+  - *Foreign-filer status (20-F) as the ADR test:* many 20-F filers list ordinary shares
+    directly (ICL, CAAP).
+  - *A price-to-book or price-to-sales screen:* it would also remove real squeezes (Regencell)
+    and asset-light companies.
+  - *An assumed ratio of 1 for ADRs with no stated ratio:* most delisted ones were not 1
+    (Taomee 20, Focus Media 5, Tata 2), so it would keep most of the errors.
+- **Results (build 34.9 s; all 43 `vinculum check` entries pass, 5 of them new).**
+  - The twelve are never in the top 1,000; where a value remains it is near reality: ISS $0.27B,
+    PLL $0.06B, BIOL $6M, MOB $83M, QH $18M. FANH and SPI are withheld (their bases fail the
+    penny-ADR rules), and TAOM, TCL and ARDM have none.
+  - Honda (2020) $39.5B, Youku $2.4B. Real CS-typed ADSs keep their caps: Advantest, Novartis,
+    HSBC, SAP, Rio Tinto, Nidec.
+  - Bases: `name` 120 (Sony, ABB, Canon, HDFC Bank, NTT, BHP, Vale and others now have a market
+    cap), `unknown` 395 -> 694, `implausible` 10 -> 17.
+  - Security-days with a market cap 17,216,668 -> 17,241,306; 186,018 changed across 646
+    securities (64,388 lost, 89,026 gained, 32,604 different).
+  - Top-1,000 month-end memberships: 2,014 of 201,398 left, 2,034 entered. Real US companies
+    near rank 1,000 (Silicon Labs, Littelfuse, EMCOR) left in some months only because large
+    ADRs now ranked above them; their own caps did not change.
+  - Calibrated securities within 10% of Massive's current market cap: 98.3% of 4,417.
+
+### Follow-up the same day: counts across a reorganization (LATAM, SK Telecom, Ctrip)
+- **Problem.** The first version of the name ratios showed LATAM's old ADS (BBG000JJBNH6) at
+  $1.7-2.4T in 2020. LATAM issued 1,000 times its shares in its 2022 reorganization (606M to
+  605B). For ADRs, level alignment treats a round step as an ADS ratio change and scales every
+  earlier count to the latest level, so the old counts were multiplied by 1,000. A screen first
+  added for it (ADR_GIANT, below) withheld 55 days but left one day at $666B, which the new
+  check caught. The same alignment had put SK Telecom's old ADS at $45-58B for 2018-21, aligned
+  to counts after its 2021 split and after that security stopped trading.
+- **Decisions.**
+  - **Counts after the last trade:** dropped when more than 3x off the security's last count
+    before it, mirroring the rule for counts before the first trade. They never set that
+    security's market cap; they only distorted its alignment.
+  - **ADR issuance:** across a step of about 1000^n, an ADR level that is plausible as filed is
+    not aligned if alignment would put its turnover under 10^-5.5. Only 1000^n steps are judged
+    this way. Turnover is measured before the basis, so for an ADR it is off by the ADS ratio.
+    A first version that judged every ADR step this way misfired on Can-Fite (62x) and Puhui
+    (293x), both ordinary ADS ratio changes.
+  - **ADR_GIANT stays as a net:** an ADR day above $50B whose 60-day median dollar volume is
+    under 1e-5 of the market cap is withheld. It withholds nothing now.
+  - **Ctrip override (basis 8):** Massive's name "1 ADR TO 4 ORD SHS" is reversed (4 ADSs per
+    share, 8 after the 2015 2-for-1 ADS split). The old alignment to Trip.com's post-2021 counts
+    had hidden this by luck; without it, Ctrip read $0.2-0.7B. With the override it is $5.8B
+    (2011) and $22B (2017).
+- **Rejected.**
+  - *Turnover judging every ADR step:* see Can-Fite and Puhui above.
+  - *Relying on ADR_GIANT alone:* it hid the symptom on 55 days and missed a $666B day.
+- **Results (all 47 `vinculum check` entries pass).** The new entries are: LTM, CTRP and SKM
+  in plausible ranges, and LTM never above $50B.
+  - LTM is $5.5B in June 2019 and at most $7.3B.
+  - SK Telecom is $15-19B for 2018-21.
+  - pSivida/EyePoint gained a market cap ($0.03-0.17B, where it had read $5-35M), and so did
+    Genetic Technologies ($20M).
+  - One SPAC is worse: DNAA, whose counts are in thousands. The old alignment to a later
+    company's counts had fixed it by chance; it now reads $0.4M instead of $0.38B (2021-22).
+    That is too small to reach any size universe.
+  - Against the build before this addendum: 17,216,668 -> 17,241,509 security-days with a
+    market cap; 184,243 changed across 648 securities. Top-1,000 month-end memberships: 2,060
+    of 201,398 left and 2,080 entered (Ctrip is among those entering).

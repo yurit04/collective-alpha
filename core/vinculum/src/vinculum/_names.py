@@ -127,3 +127,58 @@ def looks_equity(name: str | None, sec_type: str | None = None) -> bool:
     if NOT_EQUITY.search(up):
         return False
     return sec_type in TYPED_EQUITY or not NOT_EQUITY_UNTYPED.search(up)
+
+
+# Depositary receipts by name. Massive types some ADSs as common stock (Novartis, HSBC, Taomee,
+# iSoftStone) or leaves the type empty, and types an ADS that later converted to ordinary
+# shares by what it is today (Fanhua was ADRC until 2025, CS after).
+ADR_NAME = re.compile(
+    r"\bADRS?\b|\bADS\b(?!-TEC)|AMERICAN DEPOSITA?R(?:Y|IES)|DEPOSITA?RY (?:SHARE|RECEIPT)|\bSPONS?(?:ORED)? ADR|\bGDRS?\b")
+_WORDS = {"ONE": 1, "TWO": 2, "THREE": 3, "FOUR": 4, "FIVE": 5, "SIX": 6, "SEVEN": 7, "EIGHT": 8, "NINE": 9, "TEN": 10,
+          "TWENTY": 20, "THIRTY": 30, "FORTY": 40, "FIFTY": 50, "HUNDRED": 100, "HALF": 0.5, "ONE-HALF": 0.5,
+          "ONE HALF": 0.5, "ONE-FOURTH": 0.25, "ONE-QUARTER": 0.25, "ONE-TENTH": 0.1}
+_NUM = r"(\d+/\d+|\d*\.\d+|\d+|ONE[- ]HALF|ONE[- ](?:FOURTH|QUARTER|TENTH)|HALF|ONE|TWO|THREE|FOUR|FIVE|SIX|SEVEN|EIGHT|NINE|TEN|TWENTY|THIRTY|FORTY|FIFTY|HUNDRED)"
+_UNIT = r"\s*(?:OF (?:AN? |ONE )?)?(?:ORD|OR\b|COM|CMSH|SH|EQ|REG|UTS|CL|CLASS|COMMON|ORDINARY|NON|PREF|SER)"
+_RATIO = [
+    re.compile(r"\((\d+)\)\s*(?:CLASS|ORD|COM|SH|COMMON|ORDINARY)"),                       # "five hundred (500) Class A"
+    re.compile(r"(?:EACH |EA |EC )?(?:REPRESENTING|REPRESENTS|REPSTG|REPTSG|REPTSTG|REPTG|REPRSTG|REPT|REPS|REPR|REP|RP)"
+               r"\.?\s*\(?" + _NUM + r"\)?" + _UNIT),                                       # "EACH REPSTG 10 ORD"
+    re.compile(r"\(\s*" + _NUM + _UNIT),                                                      # "ADS (4 ORD SHS)", "(5 UTS)"
+    re.compile(r"\b" + _NUM + r"\s*(?:ORD|COM|SH)[A-Z]*\b"),                                 # "ADS 5 ORD SHS"
+]
+
+
+# A former ADR whose latest name says it is ordinary shares now (Fanhua -> "AIFU Inc. Class A
+# Ordinary Share", Piedmont Lithium -> "Common Stock") has converted.
+CONVERTED = re.compile(r"\bORDINARY SHARES?\b|\bCOMMON STOCK\b|\bCOMMON SHARES?\b")
+
+
+def looks_converted(name: str | None) -> bool:
+    return bool(name and CONVERTED.search(name.upper()) and not looks_adr(name))
+
+
+def looks_adr(name: str | None) -> bool:
+    return bool(name and ADR_NAME.search(name.upper()))
+
+
+def adr_ratio(name: str | None) -> float | None:
+    """Ordinary shares per depositary share stated in a name ("ADS EACH REPSTG 10 ORD SHS" -> 10,
+    "ADS(RP1/4 COM)" -> 0.25, "1 ADS REPTG .25 SH" -> 0.25), or None."""
+    if not looks_adr(name):
+        return None
+    up = name.upper()
+    for rx in _RATIO:
+        m = rx.search(up)
+        if not m:
+            continue
+        tok = m.group(1).replace(" ", "-") if m.group(1) else ""
+        if "/" in tok:
+            a, b = tok.split("/")
+            val = float(a) / float(b) if float(b) else None
+        elif tok.replace(".", "", 1).isdigit():
+            val = float(tok)
+        else:
+            val = _WORDS.get(tok, _WORDS.get(tok.replace("-", " ")))
+        if val and 1e-3 <= val <= 1e4:
+            return float(val)
+    return None

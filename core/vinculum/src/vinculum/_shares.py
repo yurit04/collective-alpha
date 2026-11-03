@@ -39,6 +39,7 @@ TURNOVER = (10 ** -4.6, 1.0)  # plausible median daily turnover (dollar volume /
 TARGET = -2.5           # typical daily turnover (log10): 0.3%
 ABSURD = (4.0, 1.0)     # counts this far (log10) below/above the band are dropped before levelling
 FAR = (2.0, 1.0)        # ... and after levelling (a median turnover above 10x a day is impossible)
+ADR_KEEP = -5.5         # an ADR level plausible as filed is not aligned below this turnover (log10)
 SNAP = 0.15             # snap a basis ratio to a round number within 15%
 LOOSE = 2.0             # ordinary stock within 2x of Massive's count keeps ratio 1
 _MANTISSAS = (1, 1.5, 2, 2.5, 3, 4, 5, 6, 8)
@@ -102,7 +103,12 @@ def _turnover(o: pl.DataFrame, liquidity: pl.DataFrame) -> pl.DataFrame:
     plausible (a count in Class A equivalents fits BRK.A's price, not BRK.B's); usually the
     security itself."""
     sib = o.select("cik", pl.col("security_id").alias("__sib")).unique()
+    # Only years the security itself traded: a security that replaced another on the same CIK
+    # (Biolase from its 2022 reverse split) must not be judged on its predecessor's prices,
+    # which are in other units.
+    own = liquidity.select("security_id", "year").unique()
     t = (o.select("security_id", "cik", "end", "shares_now").with_columns(pl.col("end").dt.year().alias("year"))
+         .join(own, on=["security_id", "year"])
          .join(sib, on="cik").join(liquidity.rename({"security_id": "__sib"}), on=["__sib", "year"])
          .with_columns((pl.col("dv_med") / (pl.col("close_med") * pl.col("shares_now"))).log10().alias("__lt")))
     lo, hi = math.log10(TURNOVER[0]) - 1, math.log10(TURNOVER[1])
@@ -120,7 +126,11 @@ def _unit_slips(o: pl.DataFrame, g: list[str], adrs: list[str], liquidity: pl.Da
     Counts are split into levels at steps of exactly 1000^n (unit slips) and, for ADRs, at
     unexplained round-ratio steps (the ordinary shares behind an ADS were consolidated or split
     without a split on the ADS). ADR levels are aligned to the latest one (calibrated against
-    Massive). For stocks the implied daily turnover (dollar volume / market cap) decides:
+    Massive), except across a step of about 1000^n when the level is plausible as filed and
+    alignment would put its turnover under ADR_KEEP: a real share issuance, not a unit change
+    (LATAM issued 1000x its shares in its 2022 reorganization; aligned, its old ADS read $2.4T
+    on $7M a day). Smaller ADR steps are always aligned: turnover before the basis is off by the
+    ADS ratio, so it cannot judge them. For stocks the implied daily turnover (dollar volume / market cap) decides:
     a level moves back to the company's usual level when
     that is plausible, stays when it is plausible itself, and is otherwise scaled by the power
     of 1000 closest to typical turnover; counts still far off are dropped. Without liquidity
@@ -157,8 +167,14 @@ def _unit_slips(o: pl.DataFrame, g: list[str], adrs: list[str], liquidity: pl.Da
         .when(inside(pl.col("__mlt"))).then(0.0)                  # plausible as it is
         .otherwise(((pl.col("__mlt") - TARGET) / 3).round() * 3)  # the whole level is off by 1000^n
         .alias("__tshift"))
-    o = (o.join(latest, on=g).join(levels.select(*g, "__lvl", "__tshift"), on=[*g, "__lvl"])
-         .with_columns(pl.when(is_adr).then(pl.col("__latest") - pl.col("__lvl"))
+    o = o.join(latest, on=g).join(levels.select(*g, "__lvl", "__tshift", "__mlt"), on=[*g, "__lvl"])
+    to_latest = pl.col("__latest") - pl.col("__lvl")
+    k = (to_latest / 3).round()
+    thousand = ((to_latest - 3 * k).abs() < SLIP_TOL) & (k != 0)
+    # Turnover before the basis is off by the ADS ratio, so only a 1000^n step is judged by it.
+    issuance = thousand & inside(pl.col("__mlt")) & (pl.col("__mlt") - to_latest < ADR_KEEP)
+    o = (o.with_columns(pl.when(is_adr & issuance.fill_null(False)).then(0.0)
+                       .when(is_adr).then(to_latest)
                        .otherwise(pl.col("__tshift")).alias("__shift")))
     o = o.with_columns((pl.col("shares_now") * 10 ** pl.col("__shift")).alias("shares_now"),
                        (pl.col("__shift").abs() > 1e-9).alias("unit_fixed"),
@@ -166,16 +182,47 @@ def _unit_slips(o: pl.DataFrame, g: list[str], adrs: list[str], liquidity: pl.Da
     if use_t:
         far = ~is_adr & ((pl.col("__lt") < lo - FAR[0]) | (pl.col("__lt") > hi + FAR[1])).fill_null(False)
         o = o.filter(~far)
-    return o.drop("__s", "__lvl", "__latest", "__tshift", "__shift", "__lt")
+    return o.drop("__s", "__lvl", "__latest", "__tshift", "__shift", "__lt", "__mlt")
+
+
+def drop_inherited(o: pl.DataFrame, first_trade: pl.DataFrame, g: list[str]) -> pl.DataFrame:
+    """Drop counts that belong to another security on the same CIK: counts dated before a
+    security's first trade more than JUMP off its first count dated after it, and counts dated
+    after its last trade more than JUMP off its last count dated before it.
+    - Before: a security that replaced another on the same CIK at a reverse split (Aradigm's
+      NASDAQ listing in June 2014 after a 1-for-40) has no split of its own, so the
+      predecessor's pre-split count would be applied to post-split prices.
+    - After: LATAM's old ADS stopped trading in June 2020; the CIK's counts from its 2022
+      reorganization are 1000x the old ones, and ADR level alignment would scale the old counts
+      up to them. Counts after the last trade are never used for that security's market cap.
+    first_trade: security_id, first_trade and optionally last_trade."""
+    if first_trade is None or first_trade.is_empty():
+        return o
+    cols = [pl.col("first_trade").alias("__ft")]
+    has_last = "last_trade" in first_trade.columns
+    cols.append((pl.col("last_trade") if has_last else pl.lit(None, pl.Date)).alias("__lt"))
+    o = o.join(first_trade.select("security_id", *cols), on="security_id", how="left")
+    first = (o.filter(pl.col("end") >= pl.col("__ft")).sort(*g, "end").group_by(g)
+             .agg(pl.col("shares_now").first().alias("__ref")))
+    last = (o.filter(pl.col("end") <= pl.col("__lt")).sort(*g, "end").group_by(g)
+            .agg(pl.col("shares_now").last().alias("__ref_last")))
+    o = o.join(first, on=g, how="left").join(last, on=g, how="left")
+    jump = math.log(JUMP)
+    pre = ((pl.col("end") < pl.col("__ft")) & pl.col("__ref").is_not_null()
+           & ((pl.col("shares_now") / pl.col("__ref")).log().abs() > jump))
+    post = ((pl.col("end") > pl.col("__lt")) & pl.col("__ref_last").is_not_null()
+            & ((pl.col("shares_now") / pl.col("__ref_last")).log().abs() > jump))
+    return o.filter(~(pre.fill_null(False) | post.fill_null(False))).drop("__ft", "__lt", "__ref", "__ref_last")
 
 
 def adjust(obs: pl.DataFrame, events: pl.DataFrame, adrs: list[str] | None = None,
-           liquidity: pl.DataFrame | None = None, multi: list[str] | None = None
-           ) -> tuple[pl.DataFrame, pl.DataFrame]:
+           liquidity: pl.DataFrame | None = None, multi: list[str] | None = None,
+           first_trade: pl.DataFrame | None = None) -> tuple[pl.DataFrame, pl.DataFrame]:
     """obs: security_id, cik, end, filed, available_from, shares, tag (SEC counts per security);
     adrs: security ids whose splits may be ADS ratio changes; liquidity: security_id, year,
     dv_med, close_med (median daily dollar volume and split-adjusted close) for level checks;
-    multi: classes sharing their CIK with another listed class (splits tested like ADRs).
+    multi: classes sharing their CIK with another listed class (splits tested like ADRs);
+    first_trade: security_id, first_trade[, last_trade] (see drop_inherited).
     Returns (counts with shares_now and flags, split attribution table)."""
     adrs = adrs or []
     ev = _attribution(obs, events, adrs + (multi or []))
@@ -190,6 +237,7 @@ def adjust(obs: pl.DataFrame, events: pl.DataFrame, adrs: list[str] | None = Non
     pick_filed = ambiguous & ((pl.col("__s_filed") / ref).log().abs() < (pl.col("__s_end") / ref).log().abs())
     o = o.with_columns(pl.when(pick_filed).then(pl.col("__s_filed")).otherwise(pl.col("__s_end")).alias("shares_now"),
                        pl.when(pick_filed).then(pl.lit("filed")).otherwise(pl.lit("end")).alias("basis_date"))
+    o = drop_inherited(o, first_trade, g).sort(*g, "end")
     # Isolated values far off both neighbours (after adjustment): filing errors or unrecorded
     # splits that were reversed. Lasting jumps stay, flagged.
     if liquidity is not None and liquidity.height and adrs is not None:
@@ -219,14 +267,26 @@ def snap(r: float) -> float | None:
 
 def basis_ratios(latest: pl.DataFrame) -> pl.DataFrame:
     """latest: security_id, type, massive_shares (current, may be null), shares_now (SEC, latest,
-    may be null), classes (equity securities on the same CIK).
-    Returns security_id, basis_ratio, basis (how it was set)."""
+    may be null), classes (equity securities on the same CIK); optional adr (ever a depositary
+    receipt, by type or name), adr_now (one today) and name_ratio (ordinary shares per ADS in
+    its latest name).
+    Returns security_id, basis_ratio, basis (how it was set).
+
+    Without Massive's current count (delisted): ordinary stock and former ADRs that converted
+    to ordinary shares assume 1; an ADR takes the ratio its name states ("name"), otherwise it
+    has none ("unknown"): a CS-typed ADS valued at one ordinary share per ADS was inflated by
+    its ratio (Youku 18x, iSoftStone 10x)."""
     rows = []
     for r in latest.iter_rows(named=True):
-        adr = r["type"] in ADR_TYPES
+        adr = r.get("adr", r["type"] in ADR_TYPES) or r["type"] in ADR_TYPES
+        adr_now = r.get("adr_now", r["type"] in ADR_TYPES) or r["type"] in ADR_TYPES
         m, s = r["massive_shares"], r["shares_now"]
         if not m or not s or m <= 0 or s <= 0:
-            rows.append((r["security_id"], None if adr else 1.0, "unknown" if adr else "assumed"))
+            if adr and adr_now:
+                ratio = r.get("name_ratio")
+                rows.append((r["security_id"], 1 / ratio, "name") if ratio else (r["security_id"], None, "unknown"))
+            else:
+                rows.append((r["security_id"], 1.0, "assumed"))
             continue
         raw = m / s
         nice = snap(raw)
