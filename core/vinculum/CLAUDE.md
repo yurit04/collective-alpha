@@ -46,6 +46,8 @@ User docs: README.md in this folder. Design: docs/decisions/0004-vinculum.md.
   short_volume, short_exempt_volume, off_exchange_volume, volume (all venues), short_ratio,
   off_exchange_share, source
 - `cik_map(security_ids)`, `share_counts(security_ids)`, `basis(security_ids)`, `scan()`
+  (`basis`: basis_ratio, basis = calibrated | calibrated_raw | rescaled | override | loose |
+  disagree | assumed | unknown | mismatch | implausible, penny_days, penny_turnover)
 
 CLI: `vinculum build | check | status | show TICKER | universe DATE --top N | service install|remove|status`.
 
@@ -73,12 +75,14 @@ Invariants:
 - Market cap uses only SEC counts with available_from <= date and end >= date - 400 days.
 - `shares_now` is in today's units of the security: market cap = adjusted close x shares_now x basis.
 - Size ranks use `is_primary` rows only (one per company) and `issuer_market_cap`.
-- Safety net (`_build.screen`), per SEC count in use: median turnover outside PLAUSIBLE
-  (10^-5.5..3 a day) withholds the market cap; so does, for ADRs only, a median raw close under
-  $2 with median turnover under 10^-4.5 (ADR_PENNY: a wrong ADS ratio, as NCNA/SVRE/BDRX shown
-  at $6-50B). Both set `implausible`. Real penny ADRs above $5B (LYG, ABEV, SAN) trade 1e-4+ a
+- Safety net (`_build.screen`): median turnover outside PLAUSIBLE (10^-5.5..3 a day) while one
+  SEC count is in use withholds the market cap for those days. ADRs (`_build.penny_basis`): days
+  under $2 pooled over the whole history (>= PENNY_MIN_DAYS) with median turnover under 10^-4.5
+  mark the basis `implausible` (a wrong ADS ratio, as NCNA/SVRE/BDRX shown at $6-60B) and
+  withhold every day: the ratio is one number per security, so judge it per security, never
+  per period. Both set `implausible`. Real penny ADRs above $5B (LYG, ABEV, SAN) trade 1e-4+ a
   day and pass; never tighten the turnover floor for all ADRs (Chinese SOE and Japanese ADRs
-  trade 1e-5..1e-4 of their company-wide value in the US).
+  trade 1e-5..1e-4 of their company-wide value in the US). Overrides are never marked.
 - The equity filter trusts Massive's type: the name screen for typed CS/ADRC catches only
   warrants, SPAC units, notes and baby bonds (MLP "Common Units" and preferred-share ADRs are
   equity); the wider screen (UNITS, PFD, FUND, SENIOR) applies to untyped securities only.

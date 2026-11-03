@@ -508,15 +508,24 @@ def test_holding_company_reorganization(tmp_path):
 
 
 # Three ADRs: JUNK's ADS ratio is wrong (a $0.81 ADR shown as a $6B company on $36k a day, turnover
-# 6e-6: above the general floor); LYGX is a real penny ADR that trades heavily (Lloyds); THIN
-# trades little in the US but is not a penny ADR (James Hardie).
+# 6e-6: above the general floor; $3 until 2021-09-01, so its first count's median price is above
+# $2, as NCNA's was); LYGX is a real penny ADR that trades heavily (Lloyds); THIN trades little
+# in the US but is not a penny ADR (James Hardie).
 PENNY_ADRS = [("S12", "JUNK", "Junk Bio PLC ADR", "ADRC", "0000000012", 0.81, 45_000),
               ("S13", "LYGX", "Lygx Banking Group PLC ADR", "ADRC", "0000000013", 1.5, 20_000_000),
               ("S14", "THIN", "Thin Industries PLC ADR", "ADRC", "0000000014", 25.0, 8_000)]
 
 
+JUNK_PENNY_FROM = D(2021, 9, 1)
+
+
 class PennyStore(FakeStore):
     SECS = [*SECURITIES, *PENNY_ADRS]
+
+    def __init__(self):
+        super().__init__()
+        early = (pl.col("security_id") == "S12") & (pl.col("date") < JUNK_PENNY_FROM)
+        self._bars = self._bars.with_columns(pl.when(early).then(3.0).otherwise(pl.col("close")).alias("close"))
 
     def ticker_details(self):
         extra = pl.DataFrame({"as_of": [END] * 3, "ticker": ["JUNK", "LYGX", "THIN"],
@@ -559,7 +568,12 @@ def test_penny_adr_with_wrong_ratio_is_withheld(tmp_path):
     v.build()
     day = D(2021, 6, 1)
     junk, lygx, thin = (cap(v, t, day) for t in ("JUNK", "LYGX", "THIN"))
+    # The ratio is one number for the whole history: the $3 days are withheld too.
+    assert junk["close"] == 3.0 and junk["basis"] == "implausible"
     assert junk["basis_ratio"] == pytest.approx(15) and junk["implausible"] and junk["market_cap"] is None
+    b = v.basis(["S12", "S13", "S14"]).sort("security_id")
+    assert b["basis"].to_list() == ["implausible", "calibrated", "calibrated"]
+    assert b["penny_days"][0] >= 20 and b["penny_turnover"][0] == pytest.approx(36_450 / 6.075e9)
     assert junk["issuer_market_cap"] is None
     assert lygx["market_cap"] == pytest.approx(1.5 * 20e9 * 0.25) and not lygx["implausible"]
     assert thin["market_cap"] == pytest.approx(10e9) and not thin["implausible"]   # 2e-5 a day, but $25

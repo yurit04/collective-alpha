@@ -148,9 +148,14 @@ def _adr_checks(v, lf) -> list[tuple[str, bool, str]]:
                                          pl.col("issuer_market_cap").max().alias("cap"))
              .collect())
     bad = penny.filter(pl.col("dv") < 1e6).sort("cap", descending=True)
+    b = v.basis()
+    if "penny_days" in b.columns:   # built before the penny rule: no stats
+        bad = bad.join(b.select("security_id", "basis", "penny_days", "penny_turnover"), on="security_id", how="left")
+    why = lambda r: (f" ({r.get('basis')}, {r.get('penny_days') or 0} penny days at "  # noqa: E731
+                     f"{r.get('penny_turnover') or 0:.0e})" if "penny_days" in r else "")
     out.append(("no ranked ADR under $2 above $5B trading under $1M a day", bad.height == 0,
                 f"{penny.height} ADRs, {penny['days'].sum()} days under $2 above $5B; thin: "
-                + (", ".join(f"{t} {c / 1e9:,.1f}B" for t, c in bad.select("ticker", "cap").head(5).iter_rows())
+                + (", ".join(f"{r['ticker']} {r['cap'] / 1e9:,.1f}B{why(r)}" for r in bad.head(5).iter_rows(named=True))
                    or "none")))
 
     junk = (ranked.filter(pl.col("security_id").is_in(list(JUNK_ADRS)))

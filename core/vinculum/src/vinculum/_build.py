@@ -44,10 +44,13 @@ FLOAT_STALE_DAYS = 400      # a public float is used until this long after its 1
 FLOAT_RANGE = (0.01, 1.1)   # plausible public float / market cap; 1-1.1 is read as 1 (all public)
 FLOAT_FIX_RANGE = (0.05, 1.1)  # a ratio moved by 1000^n must land here to count as a unit slip
 PLAUSIBLE = (10 ** -5.5, 3.0)   # median daily turnover outside this: market cap withheld
-# An ADR whose median raw close is under $2 and median turnover under 10^-4.5 a day: market cap
-# withheld. A penny price with little trading means a wrong ADS ratio (NCNA as a $6.2B company);
-# real large ADRs under $2 (LYG, ABEV, SAN) trade roughly 1e-4 to 1e-3 of their value a day.
+# An ADR whose days under $2 (raw close), pooled over its whole history, have a median turnover
+# under 10^-4.5 a day: its basis is marked implausible and its market cap withheld on every day.
+# A penny price with little trading means a wrong ADS ratio (NCNA as a $6.2B company), and the
+# ratio is one number per security, so it is wrong on its $5 days too. Real large ADRs under $2
+# (LYG, ABEV, SAN) trade roughly 1e-4 to 1e-3 of their value a day.
 ADR_PENNY = (2.0, 10 ** -4.5)
+PENNY_MIN_DAYS = 20     # penny days needed before the rule judges an ADR
 
 
 # Massive's when-issued suffixes: a lowercase w (HONw) or .WD / .WI (DHR.WD). Never a bare
@@ -141,39 +144,14 @@ def liquidity_table(store, first: int, last: int, equity: pl.DataFrame) -> pl.Da
             .collect())
 
 
-def screen(df: pl.DataFrame) -> pl.DataFrame:
-    """Safety net: while one SEC count is in use (security_id, end, filed), a median turnover
-    that cannot be right means the count or the ratio is wrong: no market cap for those days.
-
-    df: security_id, type, end, filed, raw_close, dollar_volume, market_cap. Adds `implausible`
-    (either rule) and `penny_adr` (withheld by the ADR rule alone, the old screen passed it).
-    - any security: median turnover outside PLAUSIBLE;
-    - ADRs: median raw close under ADR_PENNY[0] and median turnover under ADR_PENNY[1].
-    """
-    seg = ["security_id", "end", "filed"]
-    to = (df.filter(pl.col("market_cap").is_not_null())
-          .group_by(seg).agg((pl.col("dollar_volume") / pl.col("market_cap")).median().alias("__to"),
-                             pl.col("raw_close").median().alias("__px")))
-    general = ~pl.col("__to").is_between(*PLAUSIBLE)
-    penny = (pl.col("type").is_in(ADR_TYPES) & (pl.col("__px") < ADR_PENNY[0]) & (pl.col("__to") < ADR_PENNY[1]))
-    return (df.join(to, on=seg, how="left", nulls_equal=False)
-            .with_columns(general.fill_null(False).alias("__g"), penny.fill_null(False).alias("__p"))
-            .with_columns((pl.col("__g") | pl.col("__p")).alias("implausible"),
-                          (pl.col("__p") & ~pl.col("__g")).alias("penny_adr"))
-            .with_columns(pl.when(pl.col("implausible")).then(None).otherwise(pl.col("market_cap")).alias("market_cap"))
-            .drop("__to", "__px", "__g", "__p"))
-
-
-def year_panel(store, year: int, equity: pl.DataFrame, cik_map: pl.DataFrame, counts: pl.DataFrame,
-               basis: pl.DataFrame, stats: dict[str, int] | None = None) -> pl.DataFrame:
-    """One row per equity security and trading day of `year`. `stats` (optional) collects
-    penny_adr_days: security-days whose market cap only the ADR penny rule withheld."""
-    start, end = date(year, 1, 1), date(year, 12, 31)
-    lf = store.bars(start=start - timedelta(days=130), end=end, adjust="splits", lazy=True)
+def daily(store, start: date, end: date, equity: pl.DataFrame, cik_map: pl.DataFrame, counts: pl.DataFrame,
+          basis: pl.DataFrame) -> pl.DataFrame:
+    """Unscreened market cap per equity security and trading day from `start` to `end`."""
+    lf = store.bars(start=start, end=end, adjust="splits", lazy=True)
     df = (lf.select("date", "ticker", "security_id", "close", "volume", "split_factor")
           .join(equity.lazy().select("security_id", "type"), on="security_id").collect())
     if df.is_empty():
-        return pl.DataFrame(schema=PANEL_SCHEMA)
+        return df
     df = cik_on(df, cik_map)
     sc = (counts.select("security_id", "cik", "available_from", "end", "filed", "shares_now", "tag", "jump")
           .sort("available_from"))
@@ -189,6 +167,58 @@ def year_panel(store, year: int, equity: pl.DataFrame, cik_map: pl.DataFrame, co
         (pl.col("close") / pl.col("split_factor")).alias("raw_close"),
         (pl.col("volume") * pl.col("split_factor")).alias("raw_volume"),
         (pl.col("close") * pl.col("volume")).alias("dollar_volume"))
+    return df
+
+
+def penny_basis(store, first: int, last: int, equity: pl.DataFrame, cik_map: pl.DataFrame,
+                counts: pl.DataFrame, basis: pl.DataFrame) -> pl.DataFrame:
+    """The basis table with penny_days and penny_turnover per ADR (days under ADR_PENNY[0] with a
+    market cap, and their median turnover, over every year), and basis "implausible" where those
+    days trade too little for the market cap to be right. Computed from all years whatever a
+    build rewrites, so a partial rebuild judges an ADR the same way."""
+    adrs = equity.filter(pl.col("type").is_in(ADR_TYPES))
+    df = daily(store, date(first, 1, 1), date(last, 12, 31), adrs, cik_map, counts, basis)
+    if df.is_empty():
+        st = pl.DataFrame(schema={"security_id": pl.String, "penny_days": pl.UInt32, "penny_turnover": pl.Float64})
+    else:
+        st = (df.filter(pl.col("market_cap").is_not_null() & (pl.col("raw_close") < ADR_PENNY[0]))
+              .group_by("security_id")
+              .agg(pl.len().alias("penny_days"),
+                   (pl.col("dollar_volume") / pl.col("market_cap")).median().alias("penny_turnover")))
+    thin = (pl.col("penny_days") >= PENNY_MIN_DAYS) & (pl.col("penny_turnover") < ADR_PENNY[1])
+    out = basis.drop("penny_days", "penny_turnover", strict=False).join(st, on="security_id", how="left")
+    return out.with_columns(pl.when(thin.fill_null(False) & (pl.col("basis") != "override"))
+                            .then(pl.lit("implausible")).otherwise(pl.col("basis")).alias("basis"))
+
+
+def screen(df: pl.DataFrame) -> pl.DataFrame:
+    """Safety net: no market cap where it cannot be right. Two rules set `implausible`:
+    - any security, while one SEC count is in use (security_id, end, filed): median turnover
+      outside PLAUSIBLE (the count or the ratio is wrong);
+    - ADRs whose basis is "implausible" (penny_basis): every day.
+    `penny_adr` marks days withheld by the ADR rule alone (the turnover rule passed them).
+    df: security_id, end, filed, basis, dollar_volume, market_cap."""
+    seg = ["security_id", "end", "filed"]
+    to = (df.filter(pl.col("market_cap").is_not_null())
+          .group_by(seg).agg((pl.col("dollar_volume") / pl.col("market_cap")).median().alias("__to")))
+    general = ~pl.col("__to").is_between(*PLAUSIBLE)
+    penny = (pl.col("basis") == "implausible") & pl.col("market_cap").is_not_null()
+    return (df.join(to, on=seg, how="left", nulls_equal=False)
+            .with_columns(general.fill_null(False).alias("__g"), penny.fill_null(False).alias("__p"))
+            .with_columns((pl.col("__g") | pl.col("__p")).alias("implausible"),
+                          (pl.col("__p") & ~pl.col("__g")).alias("penny_adr"))
+            .with_columns(pl.when(pl.col("implausible")).then(None).otherwise(pl.col("market_cap")).alias("market_cap"))
+            .drop("__to", "__g", "__p"))
+
+
+def year_panel(store, year: int, equity: pl.DataFrame, cik_map: pl.DataFrame, counts: pl.DataFrame,
+               basis: pl.DataFrame, stats: dict[str, int] | None = None) -> pl.DataFrame:
+    """One row per equity security and trading day of `year`. `stats` (optional) collects
+    penny_adr_days: security-days whose market cap only the ADR penny rule withheld."""
+    start, end = date(year, 1, 1), date(year, 12, 31)
+    df = daily(store, start - timedelta(days=130), end, equity, cik_map, counts, basis)
+    if df.is_empty():
+        return pl.DataFrame(schema=PANEL_SCHEMA)
     df = screen(df)
     # Primary class per issuer and day: the most traded (median dollar volume, 60 trading days).
     df = df.sort("security_id", "date").with_columns(
@@ -322,10 +352,12 @@ def build(store, edgar, layout: Layout, start_year: int = 2003, years: list[int]
     write_atomic(counts, layout.file("share_counts"))
     write_atomic(attribution, layout.file("split_attribution"))
 
-    basis = calibrate(store, counts, cik_map, equity)
-    write_atomic(basis, layout.file("basis"))
-
     last = secs["last_trade"].max()
+    basis = calibrate(store, counts, cik_map, equity)
+    basis = penny_basis(store, start_year, last.year, equity, cik_map, counts, basis)
+    write_atomic(basis, layout.file("basis"))
+    log.info("penny ADRs: %d with an implausible basis", int((basis["basis"] == "implausible").sum()))
+
     todo = years or list(range(start_year, last.year + 1))
     rows = implausible = 0
     stats: dict[str, int] = {}
