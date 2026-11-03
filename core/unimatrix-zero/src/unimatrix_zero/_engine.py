@@ -10,6 +10,7 @@ portfolio with +1 / -1 legs has gross exposure 2.
 from __future__ import annotations
 
 import bisect
+import warnings
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
@@ -35,7 +36,9 @@ def _day(d: Any) -> date | None:
 @dataclass
 class Backtest:
     """Result of Engine.run. daily: date, gross, net, long, short, borrow, cost, turnover,
-    gross_exposure, net_exposure, nav. trades: date, security_id, before, after, cost.
+    gross_exposure, net_exposure, nav. trades: date, security_id, ticker, before, after, cost,
+    spread_bps and impact_bps (per unit traded), adv, vol. cost_warnings: the trades whose cost
+    per unit traded is above CostModel.warn_bps.
     weights: the targets as traded (execution date `date`, signal date `signal_date`)."""
 
     daily: pl.DataFrame
@@ -43,6 +46,7 @@ class Backtest:
     weights: pl.DataFrame
     market: pl.DataFrame | None = None
     settings: dict = field(default_factory=dict)
+    cost_warnings: pl.DataFrame | None = None   # trades above CostModel.warn_bps per unit traded
 
     def summary(self) -> pl.DataFrame:
         return summary(self.daily, self.market, self.weights["date"].n_unique())
@@ -132,9 +136,19 @@ class Engine:
         return out
 
     @staticmethod
-    def _filter(w: pl.DataFrame, r: pl.DataFrame, min_price: float | None, min_dollar_volume: float | None) -> pl.DataFrame:
-        """Drop names below a price or dollar-volume floor on the signal date; rescale each leg
-        back to its original total."""
+    def _rescale(kept: pl.DataFrame, w: pl.DataFrame) -> pl.DataFrame:
+        """Scale each leg (long, short) of each date back to its total in `w`."""
+        leg = pl.col("weight").sign().alias("__s")
+        orig = w.group_by("date", leg).agg(pl.col("weight").sum().alias("__orig"))
+        return (kept.with_columns(leg).join(orig, on=["date", "__s"])
+                .with_columns((pl.col("weight") / pl.col("weight").sum().over("date", "__s") * pl.col("__orig"))
+                              .alias("weight")).select(w.columns))
+
+    @classmethod
+    def _filter(cls, w: pl.DataFrame, r: pl.DataFrame, min_price: float | None,
+                min_dollar_volume: float | None) -> pl.DataFrame:
+        """Tradability rules on the signal date: drop names under a price or dollar-volume floor
+        and rescale each leg back to its original total."""
         if not min_price and not min_dollar_volume:
             return w
         aux = r.select("security_id", "date", "raw_close", "adv").sort("date")
@@ -146,12 +160,17 @@ class Engine:
             ok = ok & (pl.col("raw_close") >= min_price)
         if min_dollar_volume:
             ok = ok & (pl.col("adv") >= min_dollar_volume)
-        leg = pl.col("weight").sign().alias("__s")
-        orig = w.group_by("date", leg).agg(pl.col("weight").sum().alias("__orig"))
-        kept = (j.filter(ok.fill_null(False)).with_columns(leg).join(orig, on=["date", "__s"])
-                .with_columns((pl.col("weight") / pl.col("weight").sum().over("date", "__s") * pl.col("__orig"))
-                              .alias("weight")))
-        return kept.select(w.columns)
+        return cls._rescale(j.filter(ok.fill_null(False)), w)
+
+    @classmethod
+    def _tradable(cls, w: pl.DataFrame, r: pl.DataFrame) -> tuple[pl.DataFrame, int]:
+        """Drop targets that have no bar on their execution date (they stopped trading between
+        the signal and the trade, usually a completed acquisition); rescale each leg. Returns
+        the weights and how many targets were dropped."""
+        bars = r.filter(~pl.col("delisted")).select("security_id", "date").with_columns(pl.lit(True).alias("__ok"))
+        j = w.join(bars, on=["security_id", "date"], how="left")
+        kept = j.filter(pl.col("__ok").fill_null(False)).drop("__ok")
+        return cls._rescale(kept, w), w.height - kept.height
 
     # ------------------------------------------------------------------ the run
     def run(self, weights: pl.DataFrame, start: Any = None, end: Any = None, lag: int = 1,
@@ -183,6 +202,7 @@ class Engine:
              .with_columns(pl.col("signal_date").replace_strict(exec_map, default=None, return_dtype=pl.Date).alias("date"))
              .filter(pl.col("date").is_not_null()))
         w = self._filter(w, r, min_price, min_dollar_volume)
+        w, untradable = self._tradable(w, r)
         # Several signal dates on one execution date: the latest wins.
         latest = w.group_by("date").agg(pl.col("signal_date").max())
         w = w.join(latest, on=["date", "signal_date"]).sort("date", "security_id")
@@ -205,13 +225,15 @@ class Engine:
             t = (t.with_columns(pl.lit(ex).alias("date")).sort("date")
                  .join_asof(aux, on="date", by="security_id", strategy="backward", tolerance="10d",
                             check_sortedness=False))
-            unit = costs.unit_cost(pl.col("trade"), nav)
-            t = t.with_columns(pl.when(pl.col("cash") | (pl.col("trade") == 0)).then(0.0)
-                               .otherwise(pl.col("trade").abs() * unit).alias("cost"))
+            free = pl.col("cash") | (pl.col("trade") == 0)
+            t = t.with_columns(pl.when(free).then(0.0).otherwise(costs.spread_cost()).alias("__sp"),
+                               pl.when(free).then(0.0).otherwise(costs.impact_cost(pl.col("trade"), nav)).alias("__im"))
+            t = t.with_columns((pl.col("trade").abs() * (pl.col("__sp") + pl.col("__im"))).alias("cost"))
             cost = float(t["cost"].sum())
             turnover = float(t.filter(~pl.col("cash"))["trade"].abs().sum())
             trades_out.append(t.filter(pl.col("trade") != 0).select(
-                "date", "security_id", pl.col("drift").alias("before"), pl.col("target").alias("after"), "cost"))
+                "date", "security_id", pl.col("drift").alias("before"), pl.col("target").alias("after"), "cost",
+                (pl.col("__sp") * 1e4).alias("spread_bps"), (pl.col("__im") * 1e4).alias("impact_bps"), "adv", "vol"))
             # ---- hold from ex to nxt
             hold = target.filter(pl.col("target") != 0)
             days = [d for d in cal if ex < d <= nxt]
@@ -278,11 +300,37 @@ class Engine:
             except Exception:  # noqa: BLE001 - a missing proxy only drops beta/alpha
                 mk = None
         settings = {"lag": lag, "delisting": delisting, "costs": costs, "min_price": min_price,
-                    "min_dollar_volume": min_dollar_volume}
+                    "min_dollar_volume": min_dollar_volume, "untradable_dropped": untradable}
+        trades = pl.concat(trades_out) if trades_out else pl.DataFrame()
+        if trades.height and "ticker" in w.columns:
+            names = w.sort("date").group_by("security_id").agg(pl.col("ticker").drop_nulls().last())
+            trades = trades.join(names, on="security_id", how="left")
+        elif trades.height:
+            trades = trades.with_columns(pl.lit(None, pl.String).alias("ticker"))
+        if trades.height:
+            trades = trades.select("date", "security_id", "ticker", "before", "after", "cost", "spread_bps",
+                                   "impact_bps", "adv", "vol")
+        flagged = self._cost_warnings(trades, costs)
         return Backtest(daily=daily.select("date", "gross", "net", "long", "short", "borrow", "cost", "turnover",
                                            "gross_exposure", "net_exposure", "nav"),
-                        trades=pl.concat(trades_out) if trades_out else pl.DataFrame(),
-                        weights=w, market=mk, settings=settings)
+                        trades=trades, weights=w, market=mk, settings=settings, cost_warnings=flagged)
+
+    @staticmethod
+    def _cost_warnings(trades: pl.DataFrame, costs: CostModel) -> pl.DataFrame | None:
+        """Trades above warn_bps per unit traded; one warning names the count and the worst."""
+        if not costs.warn_bps or trades.is_empty():
+            return None
+        bad = (trades.with_columns((pl.col("spread_bps") + pl.col("impact_bps")).alias("unit_bps"))
+               .filter(pl.col("unit_bps") > costs.warn_bps).sort("unit_bps", descending=True))
+        if bad.height:
+            top = bad.row(0, named=True)
+            warnings.warn(
+                f"{bad.height} trades ({bad['security_id'].n_unique()} securities) cost more than "
+                f"{costs.warn_bps:g} bp per unit traded; worst: {top['ticker']} ({top['security_id']}) "
+                f"{top['unit_bps']:,.0f} bp on {top['date']} (21-day dollar volume {top['adv'] or 0:,.0f}). "
+                "A data error (wrong market cap or volume) or a position too large for the stock: "
+                "see Backtest.cost_warnings.", stacklevel=3)
+        return bad
 
     def _borrow(self, shorts: pl.DataFrame, costs: CostModel) -> pl.DataFrame | None:
         """security_id, date, rate (annual) for short positions on their execution dates."""

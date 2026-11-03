@@ -67,7 +67,9 @@ def daily_returns(bars: pl.LazyFrame, links: pl.DataFrame | None, calendar: list
     d = d.with_columns((pl.col("ret") > BREAK).fill_null(False).alias("break"))
     d = d.with_columns(pl.when(pl.col("break")).then(0.0).otherwise(pl.col("ret")).alias("ret"))
     d = d.with_columns(
-        pl.col("__dv").rolling_mean(ADV_WINDOW, min_samples=5).over(g).alias("adv"),
+        # A new listing has fewer than 21 days: average what there is (else its first trades
+        # would fall back to the spread cap).
+        pl.col("__dv").rolling_mean(ADV_WINDOW, min_samples=1).over(g).alias("adv"),
         pl.col("ret").clip(-VOL_CLIP, VOL_CLIP).rolling_std(VOL_WINDOW, min_samples=20).over(g).alias("vol"),
         (pl.col("__ar").rolling_mean(SPREAD_WINDOW, min_samples=20).over(g).clip(lower_bound=0).sqrt() / 2)
         .alias("half_spread"),

@@ -43,10 +43,53 @@ successors, short interest) and Massive daily bars.
 - **Ticker-based return series:** break at reorganizations and reuse tickers across companies.
 
 ## Found while building
-Penny ADRs with wrong ratios reach vinculum's top 1,000 with impossible market caps (NCNA:
-$0.81, $37k a day, shown as a $6B company). They cost hundreds of basis points to trade with
-impact. Backtests that model impact should use `min_dollar_volume`; the ADR ratio check belongs
-in vinculum.
+Penny ADRs with wrong ratios reached vinculum's top 1,000 with impossible market caps (NCNA:
+$0.81 and $37k a day, shown as a $6B company), and impact costs on them ran to hundreds of
+basis points. The first version worked around this with `min_dollar_volume`. vinculum has since
+fixed it (0004, addendum 2026-11-03).
+
+## Addendum (2026-11-03): the liquidity floor, untradable targets, cost warnings
+On the rebuilt data, with the combined long-short book (top 1,000, monthly, 2012-2026):
+
+| AUM | floor | net return | net Sharpe | cost per unit traded | max | trades over 100 bp |
+|---|---|---|---|---|---|---|
+| none | off | 4.97% | 0.54 | 5.0 bp | 201 bp | 44 |
+| none | $1M | 5.03% | 0.55 | 4.8 bp | 69 bp | 0 |
+| $10M | off | 4.14% | 0.46 | 12.1 bp | 978 bp | 237 |
+| $10M | $1M | 4.26% | 0.47 | 11.3 bp | 716 bp | 56 |
+| $100M | off | 2.51% | 0.30 | 26.0 bp | 2,545 bp | 767 |
+| $100M | $1M | 2.73% | 0.32 | 24.4 bp | 1,915 bp | 546 |
+
+(Before the adv fix below; turnover 11.2-11.3 a year in every row.)
+
+- **The floor is a tradability rule, off by default.** It changes the net return by under 0.2
+  points and does not remove the data errors below, several of which trade over $1M a day.
+  It stays for mandates and capacity studies.
+- **Untradable targets.** 36 targets had no bar on their execution day, because the company was
+  acquired between the month-end signal and the next day's trade (Broadcom Corp, Salix,
+  TriQuint/RFMD, Sprint, Tableau, Yamana, Cimarex). The engine used to "buy" them at the 200 bp
+  spread cap; now they are dropped and the leg rescaled.
+- **New listings.** The 21-day dollar volume needed 5 days, so trades in a stock's first week
+  (Albertsons after its 2020 IPO, the Hillshire and Tegna spin-offs) fell back to the cap. It
+  now averages the days there are.
+- **Cost warnings.** Trades above `CostModel.warn_bps` (100 bp) are listed in
+  `Backtest.cost_warnings` and reported in one warning. With impact on, most flagged trades are
+  real illiquid US listings of foreign companies (James Hardie, Woori, Nomura, KEPCO, ICL, ORIX,
+  Advantest, Makita, Nidec, Mizuho), thin-float US companies (Seaboard, Valhi, Clear Channel
+  Outdoor), or squeezes (Wins Finance, Regencell). Twelve are vinculum data errors, reported
+  there:
+  - ADSs that Massive types as CS, valued as if 1 ADS = 1 share: FANH `BBG000TJXWP2`, PLL
+    `BBG00YJ7NBQ1`, MFH `BBG007WGC6B4`, TAOM `SYM:TAOM:2011-06-09`, SOS `BBG00GCTC8Y9`, SPI
+    `CIK:0001210618:SPI`, MOB `BBG017F91SX8`, QH `BBG00V95T6J5`, ISS `CIK:0001500308:ISS`,
+    TCL `SYM:TCL:2008-02-13`.
+  - US share counts: BIOL `BBG000DDG8B9` (32.5 billion shares in 2024) and ARDM
+    `BBG00HVZ59F9` (pre-reverse-split count in 2014).
+
+  All twelve were fixed in vinculum the same day (0004, second addendum of 2026-11-03). Fixing
+  them surfaced a thirteenth: LATAM's old ADS `BBG000JJBNH6`, shown at up to $2.4T in 2020
+  because its counts were scaled to its 2022 reorganization's 1000x issuance. Its warning
+  (201 bp on no recorded volume, July 2020) came through the successor link as LTM
+  `BBG01PDH58Y1`. That was fixed as well (0004, follow-up).
 
 ## Limits
 No risk model or optimizer (planned for `borg-queen`). Delisting recoveries, borrow recalls and

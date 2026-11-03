@@ -8,8 +8,8 @@ docs/decisions/0008-unimatrix-zero.md.
 | Name | Use |
 |---|---|
 | `Engine(vinculum=None, store=None)` | `.run(weights, start, end, lag=1, costs, delisting, min_price, min_dollar_volume, market="SPY")` -> `Backtest`; `.returns(ids, start, end, delisting)`, `.market(start, end)`, `.forward_returns(panel, lag)`, `.ic(panel, cols, lag)`, `.quantile_returns(panel, col, n, lag)`, `.links()`, `.calendar(start, end)` |
-| `Backtest` | `.daily`, `.trades`, `.weights`, `.market`, `.settings`; `.summary()`, `.by_year()`, `.exposures()` |
-| `CostModel`, `NO_COSTS` | commission, spread ("volume" / "estimate" / bps), impact (with `aum`), borrow (GC / hard to borrow) |
+| `Backtest` | `.daily`, `.trades` (with spread_bps, impact_bps, adv, vol), `.weights`, `.market`, `.settings`, `.cost_warnings`; `.summary()`, `.by_year()`, `.exposures()` |
+| `CostModel`, `NO_COSTS` | commission, spread ("volume" / "estimate" / bps), impact (with `aum`), borrow (GC / hard to borrow), `warn_bps` (cost warnings, default 100) |
 | `quantile_weights`, `rank_weights`, `top_n_weights`, `cap_weights` | signal panel -> weights (date, security_id, weight, sector, issuer_market_cap) |
 | `daily_returns(bars, links, calendar, delisting)` | the return panel builder |
 | `summary`, `by_year`, `exposures`, `stats` | analytics on a daily frame / weights |
@@ -33,6 +33,9 @@ Invariants:
   last day must not look like the end of the data).
 - Delisted positions are cash after their delisting row; closing them costs nothing.
 - A daily return above +300% is a data break (return 0, `break` set), never P&L.
+- A target with no bar on its execution date is dropped (leg rescaled), never "bought".
+- `min_price` / `min_dollar_volume` are tradability rules (mandates, capacity), off by default.
+  Never use them to hide data errors: those surface in `cost_warnings` and belong to vinculum.
 - Successors: relabel weights and returns with neural_processor.relabel; returns across a link
   come from raw closes.
 - Sort before any shift or rolling window: polars joins do not keep row order.

@@ -56,12 +56,25 @@ capital). Each returns date, security_id, weight, sector, issuer_market_cap.
   Positions then drift with returns; at the next execution date the book trades from drifted to
   target weights.
 - **Turnover** is two-sided, as a multiple of capital, and includes the initial build-up.
-- **Filters:** `min_price` and `min_dollar_volume` (on the signal date) drop names and rescale
-  each leg.
+- **Untradable targets:** a name with no bar on its execution date is dropped and its leg
+  rescaled. These are mostly completed acquisitions between the signal and the trade, such as
+  Broadcom Corp in February 2016; the count is in `settings["untradable_dropped"]`.
+- **Tradability rules** (optional, on the signal date): `min_price` and `min_dollar_volume`
+  (21-day mean) drop names and rescale each leg. Use them for what a real book could trade: a
+  mandate's price or liquidity floor, or a capacity study. There, set the floor from the
+  position size, e.g. AUM x weight / (a participation limit such as 10% of daily volume).
+  The default is off. The universes are vinculum size ranks, so illiquid names are rare, and
+  the cost model already charges them. In the top 1,000 since 2012, a $1M-a-day floor changes
+  the combined book's net return by under 0.2 points a year. The floors are not a data
+  filter: a wrong market cap is vinculum's to fix, and the cost warnings below are how one
+  shows up.
 - **Result `Backtest`:**
   - `daily`: date, gross, net, long, short, borrow, cost, turnover, gross_exposure, net_exposure,
     nav;
-  - `trades`;
+  - `trades`: before and after weights, cost, `spread_bps` and `impact_bps` per unit traded, and
+    `adv` and `vol`;
+  - `cost_warnings`: trades costing more than `CostModel.warn_bps` (100 bp by default) per unit
+    traded. One warning reports the count and the worst security.
   - `weights`, as traded;
   - `summary()`, `by_year()`, `exposures()`.
 
@@ -73,6 +86,12 @@ capital). Each returns date, security_id, weight, sector, issuer_market_cap.
 | commission | 1 bp per trade |
 | market impact | only with `aum`: 1.0 x daily vol x sqrt(trade $ / ADV $) |
 | borrow | 25 bp a year on short value; 300 bp when short interest > 20% of float |
+
+**Cost warnings:** a trade in a listed stock rarely costs 100 bp. One that does is either a
+position too large for the stock (raise the AUM and they multiply) or a data problem: a market
+cap inflated by a wrong share count or ADS ratio puts a tiny company into a size universe.
+`Backtest.cost_warnings` lists them with ticker, dollar volume and the cost split; report data
+problems to vinculum rather than filtering them here.
 
 `spread="estimate"` uses the Abdi-Ranaldo estimate instead. It is noisy for liquid stocks:
 about half of large caps read 0 and the rest 10-40 bp, which roughly triples costs. A number
@@ -97,7 +116,9 @@ reading daily bars, which are cached between runs on the same universe.
 
 - No risk model or optimizer (planned: `borg-queen`): exposures are reported, not controlled.
 - Delisting returns are a rule of thumb; bankruptcy recoveries are not in the data.
-- Costs are models; no borrow recalls, locate failures or intraday fills. A few penny ADRs carry
-  wrong market caps in vinculum and reach the top 1,000; use `min_dollar_volume` (e.g. $1M a
-  day) whenever impact matters.
+- Costs are models; no borrow recalls, locate failures or intraday fills.
+- Market caps come from vinculum. The cost warnings found twelve wrong market caps on
+  2026-11-03, fixed in vinculum the same day (0004 addendum): ADSs typed as common stock and two
+  US share counts. LATAM's old ADS ($2.4T in 2020) followed. New ones would show up the same
+  way.
 - Signals and trades at daily closes only.

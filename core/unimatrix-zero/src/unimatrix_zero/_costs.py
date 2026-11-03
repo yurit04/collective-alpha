@@ -22,6 +22,10 @@ class CostModel:
         impact_coef x daily volatility x sqrt(trade dollars / 21-day mean dollar volume).
     Per day on shorts (fraction of short value / 252): borrow_bps a year, htb_bps when short
       interest is above htb_threshold of the float (hard to borrow).
+    warn_bps: a trade whose estimated cost per unit traded is above this is listed in
+      Backtest.cost_warnings and reported once with a warning (None: off). Real trades in
+      listed equities rarely cost 100 bp; one that does is usually a data problem (a wrong
+      market cap or volume) or a position too large for the stock.
     """
 
     commission_bps: float = 1.0
@@ -34,10 +38,24 @@ class CostModel:
     borrow_bps: float = 25.0
     htb_bps: float = 300.0
     htb_threshold: float = 0.20
+    warn_bps: float | None = 100.0
 
     def unit_cost(self, trade: pl.Expr, nav: float) -> pl.Expr:
         """Cost per unit traded for a row with half_spread, vol and adv columns; `trade` is the
         traded fraction of capital, `nav` the capital multiple (1.0 at the start)."""
+        return self.spread_cost() + self.impact_cost(trade, nav)
+
+    def impact_cost(self, trade: pl.Expr, nav: float) -> pl.Expr:
+        """Square-root market impact per unit traded (0 without an AUM)."""
+        if not self.aum:
+            return pl.lit(0.0)
+        dollars = trade.abs() * self.aum * nav
+        impact = (self.impact_coef * pl.col("vol").fill_null(0.03)
+                  * (dollars / pl.when(pl.col("adv") > 0).then(pl.col("adv")).otherwise(None)).sqrt())
+        return impact.fill_null(self.spread_cap_bps / 1e4)
+
+    def spread_cost(self) -> pl.Expr:
+        """Half-spread plus commission per unit traded."""
         lo, hi = self.spread_floor_bps / 1e4, self.spread_cap_bps / 1e4
         if self.spread == "volume":
             adv_m = pl.when(pl.col("adv") > 0).then(pl.col("adv") / 1e6)
@@ -46,13 +64,7 @@ class CostModel:
             hs = pl.col("half_spread").fill_null(hi).clip(lo, hi)
         else:
             hs = pl.lit(float(self.spread) / 1e4)
-        cost = hs + self.commission_bps / 1e4
-        if self.aum:
-            dollars = trade.abs() * self.aum * nav
-            impact = (self.impact_coef * pl.col("vol").fill_null(0.03)
-                      * (dollars / pl.when(pl.col("adv") > 0).then(pl.col("adv")).otherwise(None)).sqrt())
-            cost = cost + impact.fill_null(self.spread_cap_bps / 1e4)
-        return cost
+        return hs + self.commission_bps / 1e4
 
     def borrow_rate(self) -> pl.Expr:
         """Annual borrow rate for a row with si_pct_float (null: general collateral)."""

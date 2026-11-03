@@ -5,7 +5,7 @@ else, such as a composite), so "top" is always the side expected to do better. L
 portfolios have long weights summing to +1 and short weights to -1; long-only to +1. With
 `sector_neutral`, each sector's long and short legs are the same size (its share of the
 names), so every sector nets to zero. Output: date, security_id, weight, plus the panel's
-sector and issuer_market_cap for exposure reports.
+ticker, sector and issuer_market_cap (for reports).
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from collections.abc import Iterable
 import polars as pl
 from neural_processor import SIGNALS
 
-KEEP = ["sector", "issuer_market_cap"]
+KEEP = ["ticker", "sector", "issuer_market_cap"]
 Weighting = str  # "equal", "cap" or "signal"
 
 

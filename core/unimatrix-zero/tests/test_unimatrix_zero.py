@@ -225,3 +225,21 @@ def test_data_breaks_are_not_returns():
     r = daily_returns(bars.lazy(), None, days, "shumway")
     assert r["break"].sum() == 1 and r["ret"].drop_nulls().abs().max() == 0.0
     assert r["vol"].drop_nulls().max() < 0.2
+
+
+def test_targets_that_stopped_trading_are_dropped(eng):
+    # C trades until 2024-03-01; a signal on that day executes on 2024-03-04 (lag 1): no bar.
+    w = weights([(D(2024, 3, 1), "C", 0.5), (D(2024, 3, 1), "A", 0.5), (D(2024, 3, 1), "B", -1.0)])
+    bt = eng.run(w, costs=NO_COSTS, lag=1, market=None)
+    got = dict(zip(bt.weights["security_id"], bt.weights["weight"], strict=True))
+    assert got == pytest.approx({"A": 1.0, "B": -1.0}) and bt.settings["untradable_dropped"] == 1
+
+
+def test_cost_warnings_name_expensive_trades(eng):
+    w = weights([(D(2024, 1, 31), "A", 1.0), (D(2024, 1, 31), "B", -1.0)])
+    with pytest.warns(UserWarning, match="cost more than"):
+        bt = eng.run(w, costs=CostModel(spread=150, warn_bps=100), lag=0, market=None)
+    assert set(bt.cost_warnings["security_id"]) == {"A", "B"}
+    quiet = eng.run(w, costs=CostModel(spread=150, warn_bps=None), lag=0, market=None)
+    assert quiet.cost_warnings is None
+    assert {"spread_bps", "impact_bps", "adv", "vol"} <= set(bt.trades.columns)
