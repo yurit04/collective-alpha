@@ -163,4 +163,9 @@ history (it accumulates only from the first download) and may not be in smaller 
   never in the top 1,000; MFG and JHX in the top 1,000 on 2023-05-31.
 - **Effect.** `vinculum build` prints the security-days only this rule withheld
   (`penny_adr_days` in `vinculum status`); `basis()` shows `penny_days`, `penny_turnover` and
-  `thin_days` per ADR. Results of this version: pending its first build.
+  `thin_days` per ADR.
+- **Results (third build, 33.7 s).** 14 ADR bases marked `implausible` (all had been
+  `calibrated`); 14,104 security-days withheld by the ADR rules alone. Every `vinculum check`
+  passes: NCNA, SVRE and BDRX are never in the top 1,000; MFG rank 260 and JHX rank 635 on
+  2023-05-31 (unchanged); 3 ADRs remain under $2 above $5B (130 days), none trading under $1M a
+  day; calibrated securities within 10% of Massive's current market cap: 98.4% of 4,403.
