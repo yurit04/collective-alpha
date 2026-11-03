@@ -35,6 +35,8 @@ FLOAT_KNOWN = [
 JUNK_ADRS = {"BBG00HMJNMV8": "NCNA", "BBG015VQFP30": "SVRE", "BBG00BLVW2R4": "BDRX"}
 # Large ADRs that trade mostly abroad (low US dollar volume): must stay ranked.
 REAL_ADRS = [("MFG", D(2023, 5, 31)), ("JHX", D(2023, 5, 31))]
+# Real ADRs that dipped under $2 while trading under $1M a day in the US (they trade at home).
+REAL_PENNY_ADRS = {"ENIC": "Enel Chile", "TUYA": "Tuya"}
 TOP_N = 1000
 TOP = {
     D(2012, 12, 31): {"AAPL", "XOM", "GOOG", "WMT", "MSFT", "BRK.B", "BRK.A", "GE", "IBM", "CVX", "JNJ"},
@@ -171,6 +173,14 @@ def _adr_checks(v, lf) -> list[tuple[str, bool, str]]:
                 hits.height == 0,
                 ", ".join(f"{JUNK_ADRS[s]} {n} days" for s, n in hits.group_by("security_id").len().iter_rows())
                 or "none"))
+    for t, name in REAL_PENNY_ADRS.items():
+        r = (lf.filter((pl.col("ticker") == t) & (pl.col("close") < 2) & pl.col("shares_end").is_not_null())
+             .select(pl.len().alias("n"), pl.col("market_cap").is_not_null().sum().alias("kept"),
+                     (pl.col("basis") == "implausible").any().alias("bad")).collect().row(0, named=True))
+        ok = r["n"] > 0 and not r["bad"] and r["kept"] >= 0.9 * r["n"]
+        out.append((f"{t} ({name}) keeps its market cap under $2 (real ADR, trades mostly at home)", ok,
+                    f"{r['kept']} of {r['n']} penny days" + (", basis implausible" if r["bad"] else "")
+                    if r["n"] else "no penny days with a share count"))
     for t, d in REAL_ADRS:
         r = v.ranks(d).filter(pl.col("ticker") == t)
         rank = r["rank"][0] if r.height else None
