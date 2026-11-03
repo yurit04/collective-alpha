@@ -52,6 +52,7 @@ A panel has one row per security (primary class) and month end (`freq="1m"`) or 
 - **Universe:** `top` and `size` use `vinculum.ranks()` on each date (survivorship free);
   `rank_by="float_market_cap"` ranks on float. Or pass `universe` (date, security_id).
 - **Price signals:**
+  - a daily return above +300% counts as 0 (data breaks such as bankruptcy emergences);
   - momentum: return from 12 months to 1 month ago;
   - reversal: the last month's return;
   - 52-week high: on split-adjusted prices;

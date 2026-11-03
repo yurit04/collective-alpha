@@ -144,3 +144,12 @@ catalogue()                                                     # every signal's
 - Use these definitions instead of writing ratios by hand; add new signals to the library.
 - Point in time, survivorship-free universes, successors followed. Price signals read daily
   bars for the whole universe: request only the signals a study needs.
+
+## Backtests (unimatrix-zero)
+```python
+from unimatrix_zero import Engine, CostModel, quantile_weights
+w = quantile_weights(s, "fcf_yield", q=0.2)          # s: a neural-processor panel
+bt = Engine().run(w)                                  # next-day close, costs, delistings, successors
+bt.summary(); bt.by_year(); bt.exposures()
+```
+- Use the engine for any strategy return; quick screens: `Engine().ic(...)`, `.quantile_returns(...)`.

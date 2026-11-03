@@ -13,6 +13,7 @@ folder. Design: docs/decisions/0007-neural-processor.md.
 | `transform`, `winsorize`, `neutralize`, `composite` | per-date cross-sectional operations on a panel |
 | `add_lags(df, cols, freq, links)`, `short_signals(si, keys)` | building blocks used by `panel` |
 | `SECTORS`, `sic_sector(sic)` | Fama-French 12 sectors from SIC codes |
+| `security_links(successors)`, `relabel(df, links)`, `predecessors(ids, links)` | follow vinculum security handoffs (predecessor rows before a link take the successor's id) |
 
 `panel` columns: date, security_id, ticker, cik, sector, issuer_market_cap, [rank, size_bucket],
 one column per signal (raw, or transformed when asked).

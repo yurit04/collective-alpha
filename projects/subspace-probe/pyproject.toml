@@ -10,6 +10,7 @@ dependencies = [
     "vinculum",
     "finra-sensor-array",
     "neural-processor",
+    "unimatrix-zero",
     "matplotlib>=3.9",
     "ipykernel>=6.29",
 ]
@@ -20,6 +21,7 @@ edgar-cortical-node = { workspace = true }
 vinculum = { workspace = true }
 finra-sensor-array = { workspace = true }
 neural-processor = { workspace = true }
+unimatrix-zero = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

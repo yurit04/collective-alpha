@@ -17,6 +17,7 @@ STALE = "10d"             # a price lookup further back than this is missing (st
 VOL_WINDOW = 63
 BETA_WINDOW = 252
 HIGH_WINDOW = 252
+BREAK = 3.0               # daily return above +300%: a data break
 
 
 def daily(bars: pl.LazyFrame, caps: pl.LazyFrame | None, links: pl.DataFrame | None = None) -> pl.LazyFrame:
@@ -42,7 +43,11 @@ def daily(bars: pl.LazyFrame, caps: pl.LazyFrame | None, links: pl.DataFrame | N
     same = pl.col("__orig") == pl.col("__orig").shift(1).over(g)
     step = lambda col: pl.when(same).then(pl.col(col) / pl.col(col).shift(1).over(g)).otherwise(  # noqa: E731
         pl.col("__raw") / pl.col("__raw").shift(1).over(g))
-    d = (d.with_columns((step("__tr") - 1).alias("ret"), (step("__px")).alias("__pxr"))
+    # A daily return above +300% is a data break (bankruptcy emergences: pennies to $20+ under the
+    # same security), not a return: count it as 0.
+    brk = (step("__tr") - 1) > BREAK
+    d = (d.with_columns(pl.when(brk).then(0.0).otherwise(step("__tr") - 1).alias("ret"),
+                        pl.when(brk).then(1.0).otherwise(step("__px")).alias("__pxr"))
          .with_columns((1 + pl.col("ret").fill_null(0)).cum_prod().over(g).alias("tr"),
                        pl.col("__pxr").fill_null(1).cum_prod().over(g).alias("px")))
     if caps is None:
