@@ -116,3 +116,67 @@ history (it accumulates only from the first download) and may not be in smaller 
   quarters itself: w = EPS x cumulative split product at filing, divided by the product on the
   day of use. NVDA's P/E now tracks market cap / net income through the split.
 - **Build:** about 65 s instead of 30 s (successor detection and the larger EDGAR read).
+
+## Addendum (2026-11-03): penny ADRs with a wrong ratio
+- **Problem.** A few penny ADRs reached the top 1,000 by issuer market cap because their ADS
+  ratio (basis) was wrong: NCNA at $0.81 and about $37k a day shown as a $6.2B company (May
+  2023), SVRE at about $8.7B, BDRX at $0.22 shown as about $50B. Trading them in the
+  unimatrix-zero backtester cost hundreds of basis points of impact. Their turnover (about
+  6e-6 a day) sits just above the safety net's floor of 10^-5.5, so the net missed them.
+- **Decision.** Penny ADRs (raw close under $2) are judged against Massive's current market cap
+  (the anchor), which is right for these securities: a wrong ratio inflates their history, not
+  today. The ratio is one number per security (from today's counts), so a wrong one inflates
+  the years above $2 as well.
+  - **Thin day:** under $2, shown above $1B, 60-day median dollar volume under $1M, and above
+    10x the anchor. Withheld, however few such days a security has.
+  - **Implausible basis:** an ADR with 20+ thin days, or with 20+ days under $2 whose pooled
+    median turnover is under 10^-4.5 a day and median market cap above 10x the anchor, gets
+    basis `implausible` and no market cap on any day.
+- **How it got there (four builds; the data store was not reachable from where the rule was
+  written, so each version was checked by a build on the data machine).**
+  1. *Per share-count period:* median price under $2 and median turnover under 10^-4.5 over
+     each period one SEC count was in use. 2,491 security-days withheld; SVRE out of the top
+     1,000; MFG rank 260 and JHX rank 636 (2023-05-31) unchanged. But NCNA stayed in the top
+     1,000 on 909 days and BDRX on 175: in their periods above $2 (NCNA traded at $3-10 for
+     years) the wrong ratio still showed them at $15-60B. Ten ADRs had 420 days under $2 above
+     $5B: five traded under $1M a day (BDRX, RDHL, NCNA, XHG, YMT), five heavily, confirming
+     that a price rule alone would remove real companies.
+  2. *Pooled penny turnover per security:* 4 bases implausible, 3,995 days withheld; NCNA and
+     BDRX out. But SVRE and XHG pooled at 4e-5, just above the floor: SVRE back in the top
+     1,000 on 231 days (up to $29.5B), XHG at $116B; RDHL (inflated in one stretch only) and
+     YMT not caught.
+  3. *Plus thin days (absolute dollar volume):* 14 bases implausible, 14,104 days withheld,
+     every check passing. Reviewing the 14 by name: 12 were small companies worth $1M-1.1B
+     today (NCNA, BDRX, SVRE, RDHL, JZ, YMT, TC, ARBK, XHG, UXIN, LOT, AHG) shown at billions, but
+     two were real companies with a correct ratio: Enel Chile (ENIC, $5.9B, 50 shares per ADS)
+     and Tuya (TUYA, $1B). Both dipped under $2 while trading under $1M a day in the US
+     because they trade mostly at home, so "no real $1B+ company has a penny ADR that thin"
+     was false.
+  4. *Plus the 10x anchor (this version):* ENIC and TUYA stay within about 1-2x of today's
+     value on their penny days, while NCNA ($6.2B vs $4M today) and BDRX ($50B vs $0.8M) sat
+     thousands of times above it. The ones worth more today (XHG $161M, LOT $259M, UXIN $199M,
+     AHG $1.1B) may keep some days; the build shows which.
+- **Rejected alternatives.**
+  - A stricter turnover floor for all ADRs: real ADRs that trade mostly abroad sit at
+    1e-5..1e-4 of their company-wide value in the US (Chinese SOEs whose count includes A and H
+    shares, Japanese banks, James Hardie); a floor high enough to catch the junk with margin
+    would remove them.
+  - An implied ordinary-share price: it needs the ordinary shares per ADS, which is exactly the
+    quantity that is wrong.
+  - Keying on basis status (`calibrated_raw`/`unknown`): ADRs with `unknown` basis have no
+    market cap already, and all 14 flagged ratios were `calibrated`.
+  - A price rule alone ("no ADR under $2 above $5B"): it would remove Lloyds and Ambev.
+  - Dollar volume without the anchor: removes Enel Chile and Tuya (version 3).
+- **Checks.** No ranked ADR under $2 above $5B on a median dollar volume under $1M a day (the
+  detail shows each offender's basis, penny days, turnover and thin days); NCNA, SVRE and BDRX
+  never in the top 1,000; MFG and JHX in the top 1,000 on 2023-05-31; ENIC and TUYA keep a
+  market cap on at least 90% of their penny days.
+- **Effect.** `vinculum build` prints the security-days only these rules withheld
+  (`penny_adr_days` in `vinculum status`); `basis()` shows `penny_days`, `penny_turnover`,
+  `penny_market_cap` and `thin_days` per ADR.
+- **Results (version 4, build 33.5 s).** 10 ADR bases `implausible` (14 in version 3: ENIC,
+  TUYA and two others released); 9,611 security-days withheld by the ADR rules alone. Every
+  `vinculum check` passes: NCNA, SVRE and BDRX never in the top 1,000; MFG rank 260, JHX rank
+  635; ENIC keeps 173 of 173 penny days, TUYA 540 of 540; 3 ADRs under $2 above $5B (130 days),
+  none trading under $1M a day; calibrated securities within 10% of Massive's current market
+  cap: 98.4% of 4,407.

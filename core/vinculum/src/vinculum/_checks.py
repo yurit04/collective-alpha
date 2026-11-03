@@ -31,6 +31,13 @@ FLOAT_KNOWN = [
     ("META", D(2025, 6, 30), 0.80, 0.92, "founder's Class B"),
     ("DELL", D(2025, 6, 30), 0.30, 0.55, "Michael Dell and Silver Lake"),
 ]
+# Penny ADRs whose ADS ratio was wrong, shown as $6-50B companies (now withheld by ADR_PENNY).
+JUNK_ADRS = {"BBG00HMJNMV8": "NCNA", "BBG015VQFP30": "SVRE", "BBG00BLVW2R4": "BDRX"}
+# Large ADRs that trade mostly abroad (low US dollar volume): must stay ranked.
+REAL_ADRS = [("MFG", D(2023, 5, 31)), ("JHX", D(2023, 5, 31))]
+# Real ADRs that dipped under $2 while trading under $1M a day in the US (they trade at home).
+REAL_PENNY_ADRS = {"ENIC": "Enel Chile", "TUYA": "Tuya"}
+TOP_N = 1000
 TOP = {
     D(2012, 12, 31): {"AAPL", "XOM", "GOOG", "WMT", "MSFT", "BRK.B", "BRK.A", "GE", "IBM", "CVX", "JNJ"},
     D(2020, 12, 31): {"AAPL", "MSFT", "AMZN", "GOOGL", "GOOG", "FB", "TSLA", "BABA", "TSM", "JNJ", "WMT"},
@@ -121,11 +128,64 @@ def run_checks(v) -> list[tuple[str, bool, str]]:
                     med is not None and med < 0.10, f"median gap {med:.1%} over {j.height:,}" if med is not None
                     else "no overlap"))
 
+    out += _adr_checks(v, lf)
     out += _short_checks(v, lf)
 
     biggest = lf.filter(pl.col("is_primary")).select(pl.col("issuer_market_cap").max()).collect().item()
     out.append(("no company above $8T", biggest is not None and biggest < 8e12,
                 f"max {biggest / 1e12:.2f}T" if biggest is not None else "no market caps"))
+    return out
+
+
+def _adr_checks(v, lf) -> list[tuple[str, bool, str]]:
+    """Penny ADRs with a wrong ratio stay out of the ranks; real large ADRs stay in."""
+    out = []
+    ranked = lf.filter(pl.col("is_primary") & pl.col("issuer_market_cap").is_not_null()
+                       & (pl.col("type").is_in(["CS", "ADRC"]) | pl.col("type").is_null()))
+    # A real company above $5B with an ADR under $2 has billions of ADSs and trades heavily (LYG,
+    # ABEV, SAN: tens of millions of dollars a day); one trading under $1M a day is a wrong ratio.
+    penny = (ranked.filter((pl.col("type") == "ADRC") & (pl.col("close") < 2) & (pl.col("issuer_market_cap") > 5e9))
+             .group_by("security_id").agg(pl.col("ticker").last(), pl.len().alias("days"),
+                                         pl.col("dollar_volume").median().alias("dv"),
+                                         pl.col("issuer_market_cap").max().alias("cap"))
+             .collect())
+    bad = penny.filter(pl.col("dv") < 1e6).sort("cap", descending=True)
+    b = v.basis()
+    if "penny_days" in b.columns:   # built before the penny rule: no stats
+        cols = [c for c in ("basis", "penny_days", "penny_turnover", "thin_days") if c in b.columns]
+        bad = bad.join(b.select("security_id", *cols), on="security_id", how="left")
+    why = lambda r: (f" ({r.get('basis')}, {r.get('penny_days') or 0} penny days at "  # noqa: E731
+                     f"{r.get('penny_turnover') or 0:.0e}, {r.get('thin_days') or 0} thin)" if "penny_days" in r else "")
+    out.append(("no ranked ADR under $2 above $5B trading under $1M a day", bad.height == 0,
+                f"{penny.height} ADRs, {penny['days'].sum()} days under $2 above $5B; thin: "
+                + (", ".join(f"{r['ticker']} {r['cap'] / 1e9:,.1f}B{why(r)}" for r in bad.head(5).iter_rows(named=True))
+                   or "none")))
+
+    junk = (ranked.filter(pl.col("security_id").is_in(list(JUNK_ADRS)))
+            .select("date", "security_id", "issuer_market_cap").collect())
+    hits = junk.clear()
+    if junk.height:
+        days = junk.select("date").unique()
+        thr = (ranked.join(days.lazy(), on="date").group_by("date")
+               .agg(pl.col("issuer_market_cap").top_k(TOP_N).min().alias("__thr")).collect())
+        hits = junk.join(thr, on="date").filter(pl.col("issuer_market_cap") >= pl.col("__thr"))
+    out.append((f"penny ADRs with a wrong ratio never in the top {TOP_N} ({', '.join(JUNK_ADRS.values())})",
+                hits.height == 0,
+                ", ".join(f"{JUNK_ADRS[s]} {n} days" for s, n in hits.group_by("security_id").len().iter_rows())
+                or "none"))
+    for t, name in REAL_PENNY_ADRS.items():
+        r = (lf.filter((pl.col("ticker") == t) & (pl.col("close") < 2) & pl.col("shares_end").is_not_null())
+             .select(pl.len().alias("n"), pl.col("market_cap").is_not_null().sum().alias("kept"),
+                     (pl.col("basis") == "implausible").any().alias("bad")).collect().row(0, named=True))
+        ok = r["n"] > 0 and not r["bad"] and r["kept"] >= 0.9 * r["n"]
+        out.append((f"{t} ({name}) keeps its market cap under $2 (real ADR, trades mostly at home)", ok,
+                    f"{r['kept']} of {r['n']} penny days" + (", basis implausible" if r["bad"] else "")
+                    if r["n"] else "no penny days with a share count"))
+    for t, d in REAL_ADRS:
+        r = v.ranks(d).filter(pl.col("ticker") == t)
+        rank = r["rank"][0] if r.height else None
+        out.append((f"{t} {d} in the top {TOP_N} (large ADR, mostly traded abroad)",
+                    rank is not None and rank <= TOP_N, f"rank {rank}" if rank is not None else "not ranked"))
     return out
 
 

@@ -75,6 +75,7 @@ def build(
     typer.echo(f"  built {info['rows']:,} rows ({info['years'][0]}-{info['years'][1]}) in {info['seconds']}s")
     typer.echo(f"  CIKs: {info['cik_status']}")
     typer.echo(f"  basis: {info['basis']}")
+    typer.echo(f"  penny ADRs withheld: {info['penny_adr_days']:,} security-days")
 
 
 @app.command()

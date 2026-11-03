@@ -181,7 +181,21 @@ everything else (ETFs, preferreds, OTC stocks).
    `loose` within 2x, `disagree` beyond), round ratios for ADRs (TSM 0.2) and classes (BRK.B
    1500). Securities without a current Massive count: stocks assume 1, ADRs get none.
 5. Safety net: while a count is in use, an impossible median turnover withholds the market cap
-   (`implausible`).
+   (`implausible`). Penny ADRs (under $2) have two more rules, because a wrong ADS ratio shows
+   a micro-cap as a giant (NCNA at $0.81 and $37k a day was shown as a $6.2B company, and at
+   $15-60B in its years above $2), while real large ADRs under $2 (Lloyds, Ambev, Santander)
+   trade tens of millions of dollars a day:
+   - a day under $2 shown above $1B on under $1M a day (60-day median) and at more than 10x
+     Massive's current market cap is withheld;
+   - an ADR with 20 or more such days, or whose days under $2 (pooled over its history) trade
+     under 10^-4.5 of the market cap a day at more than 10x today's value, gets basis
+     `implausible` and is withheld on every day, since the ratio is one number per security.
+   The 10x anchor keeps real ADRs that trade mostly at home and dip under $2 on thin US volume
+   (Enel Chile, Tuya): they stay near today's value, while a wrong ratio shows a micro-cap
+   hundreds to tens of thousands of times too large (BDRX: about $50B, $0.8M today).
+   ADRs above $2 that trade mostly abroad (Mizuho, James Hardie, ICL) are not affected.
+   `basis()` shows `penny_days`, `penny_turnover`, `penny_market_cap` and `thin_days` per ADR.
+   `vinculum status` reports the security-days this rule withheld (`penny_adr_days`).
 
 ## Results (2026-11-01 build)
 
