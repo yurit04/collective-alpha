@@ -156,6 +156,19 @@ def test_engine_arithmetic_and_lag(eng):
     assert bt1.weights["signal_date"][0] == D(2024, 1, 31)
 
 
+def test_signal_on_a_non_trading_day_counts_from_its_last_close(eng):
+    cal = weekdays(D(2024, 1, 1), D(2024, 1, 12))
+    sat = D(2024, 1, 6)
+    assert Engine.execution_dates([sat], cal, 0) == {sat: D(2024, 1, 5)}       # known at Friday's close
+    assert Engine.execution_dates([sat], cal, 1) == {sat: D(2024, 1, 8)}       # trades Monday, not Tuesday
+    assert Engine.execution_dates([D(2023, 12, 30)], cal, 1) == {}            # before the calendar
+    assert Engine.execution_dates([D(2024, 1, 12)], cal, 1) == {}             # past its end
+    # The engine itself: a Saturday signal with the default lag trades on the Monday.
+    w = weights([(sat, "A", 1.0), (sat, "B", -1.0)])
+    bt = eng.run(w, costs=NO_COSTS, lag=1, market=None)
+    assert bt.daily["date"][0] == D(2024, 1, 8) and bt.weights["signal_date"][0] == sat
+
+
 def test_rebalance_turnover_costs_and_borrow(eng):
     w = weights([(D(2024, 1, 31), "A", 1.0), (D(2024, 1, 31), "B", -1.0),
                  (D(2024, 2, 29), "A", 1.0), (D(2024, 2, 29), "B", -1.0)])

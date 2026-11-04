@@ -23,6 +23,8 @@ from ._costs import CostModel
 from ._returns import daily_returns
 
 LOOKBACK = timedelta(days=120)   # bars before the first date (volatility, spread, ADV windows)
+GRACE = timedelta(days=10)       # returns start this long before the first signal date, so a signal
+                                 # dated on a non-trading day finds its last trading day
 
 
 def _day(d: Any) -> date | None:
@@ -126,12 +128,16 @@ class Engine:
 
     # ------------------------------------------------------------------ helpers
     @staticmethod
-    def _exec_dates(signal_dates: list[date], cal: list[date], lag: int) -> dict[date, date]:
+    def execution_dates(signal_dates: list[date], cal: list[date], lag: int) -> dict[date, date]:
+        """signal date -> execution date: `lag` trading days of `cal` after the signal date. A
+        signal dated on a non-trading day is known at the close of the last trading day on or
+        before it, so that day counts as day 0 (a Saturday signal with lag 1 trades on Monday).
+        Signal dates before the calendar, or whose execution falls past it, are left out."""
         out = {}
         for s in signal_dates:
-            i = bisect.bisect_left(cal, s)
+            i = bisect.bisect_right(cal, s) - 1
             j = i + lag
-            if i < len(cal) and j < len(cal):
+            if i >= 0 and j < len(cal):
                 out[s] = cal[j]
         return out
 
@@ -193,11 +199,11 @@ class Engine:
         w = w.group_by("date", "security_id").agg(pl.col("weight").sum(), *[pl.col(c).first() for c in w.columns
                                                                             if c not in ("date", "security_id", "weight")])
         first = w["date"].min()
-        r = self.returns(w["security_id"].unique().to_list(), first, e, delisting)
+        r = self.returns(w["security_id"].unique().to_list(), first - GRACE, e, delisting)
         cal = sorted(r["date"].unique().to_list())
         if not cal:
             raise ValueError("no returns for these securities")
-        exec_map = self._exec_dates(sorted(w["date"].unique().to_list()), cal, lag)
+        exec_map = self.execution_dates(sorted(w["date"].unique().to_list()), cal, lag)
         w = (w.rename({"date": "signal_date"})
              .with_columns(pl.col("signal_date").replace_strict(exec_map, default=None, return_dtype=pl.Date).alias("date"))
              .filter(pl.col("date").is_not_null()))
@@ -350,9 +356,9 @@ class Engine:
         links = self.links()
         p = relabel(panel, links)
         dates = sorted(p["date"].unique().to_list())
-        r = self.returns(p["security_id"].unique().to_list(), dates[0], None, delisting)
+        r = self.returns(p["security_id"].unique().to_list(), dates[0] - GRACE, None, delisting)
         cal = sorted(r["date"].unique().to_list())
-        ex = self._exec_dates(dates, cal, lag)
+        ex = self.execution_dates(dates, cal, lag)
         nxt = {d: ex.get(dates[i + 1]) if i + 1 < len(dates) else None for i, d in enumerate(dates)}
         idx = r.sort("security_id", "date").with_columns((1 + pl.col("ret")).cum_prod().over("security_id").alias("tr"))
         idx = idx.select("security_id", "date", "tr").sort("date")

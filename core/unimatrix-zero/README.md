@@ -52,7 +52,9 @@ capital). Each returns date, security_id, weight, sector, issuer_market_cap.
 
 ## Engine (`Engine.run`)
 
-- Weights dated by **signal date** trade at the close `lag` trading days later (default 1).
+- Weights dated by **signal date** trade at the close `lag` trading days later (default 1). A
+  signal dated on a weekend or holiday counts from the last trading day on or before it
+  (`Engine.execution_dates`).
   Positions then drift with returns; at the next execution date the book trades from drifted to
   target weights.
 - **Turnover** is two-sided, as a multiple of capital, and includes the initial build-up.

@@ -225,6 +225,10 @@ class Conduit:
             reqs = [OrderRequest(con_id=int(r["con_id"]), symbol=r["ib_symbol"], primary_exchange=r["ib_exchange"],
                                  action=r["action"], quantity=abs(float(r["trade_shares"])),
                                  order_type=sheet.order_type, order_ref=sheet_id) for r in send.iter_rows(named=True)]
+            # Recorded before anything is sent: if journaling the placed orders fails, the event
+            # still shows that this sheet's orders (orderRef = sheet id) may be at the broker.
+            self.journal.event("submitting", sheet_id=sheet_id, account=mask(acct), orders=len(reqs),
+                               live=not is_paper(acct))
             placed = b.place(reqs)
         self.journal.record_orders(placed, sheet_id, acct)
         sheet.status = "submitted"

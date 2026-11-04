@@ -44,6 +44,12 @@ def test_flush_and_hourly_compaction(settings):
     assert pl.read_parquet(live_files(day_dir)).height == 3
 
 
+def test_live_files_tolerates_other_file_names(tmp_path):
+    for name in ("hour-2024120214.parquet", "part-2024120214-1-000001.parquet", "notes.parquet"):
+        (tmp_path / name).touch()
+    assert [f.name for f in live_files(tmp_path)] == ["hour-2024120214.parquet", "notes.parquet"]
+
+
 def test_live_files_skips_parts_already_merged(tmp_path):
     for name in ["hour-2024120214.parquet", "part-2024120214-1-000001.parquet", "part-2024120215-2-000002.parquet"]:
         (tmp_path / name).touch()

@@ -25,7 +25,7 @@ members = ["core/*", "projects/*"]
 testpaths = ["tests", "core", "projects"]
 addopts = "--import-mode=importlib -m 'not live'"
 markers = [
-    "live: hits the real Massive API (needs credentials); run with -m live",
+    "live: hits a real service (Massive, SEC, FINRA, or a running IB Gateway); run with -m live",
 ]
 
 [tool.ruff]

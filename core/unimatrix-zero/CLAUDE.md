@@ -7,7 +7,7 @@ docs/decisions/0008-unimatrix-zero.md.
 
 | Name | Use |
 |---|---|
-| `Engine(vinculum=None, store=None)` | `.run(weights, start, end, lag=1, costs, delisting, min_price, min_dollar_volume, market="SPY")` -> `Backtest`; `.returns(ids, start, end, delisting)`, `.market(start, end)`, `.forward_returns(panel, lag)`, `.ic(panel, cols, lag)`, `.quantile_returns(panel, col, n, lag)`, `.links()`, `.calendar(start, end)` |
+| `Engine(vinculum=None, store=None)` | `.run(weights, start, end, lag=1, costs, delisting, min_price, min_dollar_volume, market="SPY")` -> `Backtest`; `.returns(ids, start, end, delisting)`, `.market(start, end)`, `.forward_returns(panel, lag)`, `.ic(panel, cols, lag)`, `.quantile_returns(panel, col, n, lag)`, `.links()`, `.calendar(start, end)`, `.execution_dates(signal_dates, cal, lag)` (static; the one rule for signal date -> execution date, used by borg-queen too) |
 | `Backtest` | `.daily`, `.trades` (with spread_bps, impact_bps, adv, vol), `.weights`, `.market`, `.settings`, `.cost_warnings`; `.summary()`, `.by_year()`, `.exposures()` |
 | `CostModel`, `NO_COSTS` | commission, spread ("volume" / "estimate" / bps), impact (with `aum`), borrow (GC / hard to borrow), `warn_bps` (cost warnings, default 100) |
 | `quantile_weights`, `rank_weights`, `top_n_weights`, `cap_weights` | signal panel -> weights (date, security_id, weight, sector, issuer_market_cap) |
@@ -25,7 +25,8 @@ _analytics.py  statistics, by year, exposures
 ```
 
 Invariants:
-- Weights are dated by signal date; execution is `lag` trading days later at the close. Never
+- Weights are dated by signal date; execution is `lag` trading days later at the close (a signal
+  dated on a non-trading day counts from the last trading day on or before it). Never
   let a return on or before the execution date accrue to new weights.
 - Weights are fractions of NAV; long-short legs +1 / -1. Positions drift between rebalances,
   and turnover is measured against the drifted weights (two-sided, initial build included).

@@ -239,7 +239,7 @@ def test_plan_submit_fill_reconcile(tmp_path):
     nxt = c.plan(targets(AAPL=0.02, MSFT=-0.02))
     r = {x["ticker"]: x for x in nxt.orders.iter_rows(named=True)}
     assert r["XOM"]["trade_shares"] == -100 and r["AAPL"]["status"] == "none"
-    assert [e["event"] for e in c.journal.events()] == ["plan", "submit", "fills", "reconcile", "plan"]
+    assert [e["event"] for e in c.journal.events()] == ["plan", "submitting", "submit", "fills", "reconcile", "plan"]
 
 
 def test_partial_fill_shows_unfilled(tmp_path):

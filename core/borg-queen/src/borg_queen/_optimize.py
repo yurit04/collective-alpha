@@ -3,12 +3,11 @@ and a rebalance loop that carries holdings forward between rebalances."""
 
 from __future__ import annotations
 
-import bisect
 import logging
 import time
 import warnings
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import cvxpy as cp
@@ -245,6 +244,8 @@ class Portfolio:
         """alpha: date (signal date), security_id, alpha. Returns (weights: date, security_id,
         weight, sector, issuer_market_cap, for Engine.run with the same lag and CostModel;
         diagnostics: one row per date with Solution.info)."""
+        from unimatrix_zero import Engine
+
         s, e = _day(start), _day(end)
         a = alpha
         if s:
@@ -256,18 +257,18 @@ class Portfolio:
             raise ValueError("no alpha in the period")
         ex = self.opt.risk.exposures().filter(pl.col("date") >= self.opt.risk._month(dates[0]))
         ids = sorted(set(ex["security_id"].to_list()) | set(a["security_id"].to_list()))
-        r = self.engine.returns(ids, dates[0], e)
+        r = self.engine.returns(ids, dates[0] - timedelta(days=10), e)   # a non-trading first date
         cal = sorted(r["date"].unique().to_list())
+        exec_map = Engine.execution_dates(dates, cal, lag)           # the engine's rule, same lag
         rets = r.select("security_id", "date", "ret").sort("date")
         aux = r.select("security_id", "date", "adv", "vol").sort("date")
         held = pl.DataFrame(schema={"security_id": pl.String, "weight": pl.Float64})
         nav, prev_exec = 1.0, None
         weights, diags = [], []
         for d in dates:
-            i = bisect.bisect_left(cal, d)
-            if i + lag >= len(cal):
+            ex_day = exec_map.get(d)
+            if ex_day is None:
                 break
-            ex_day = cal[i + lag]
             if prev_exec is not None and held.height:
                 held, growth = self._drift(held, rets, prev_exec, ex_day)
                 nav *= growth

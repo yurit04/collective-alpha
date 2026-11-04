@@ -7,7 +7,7 @@ import logging
 import os
 import time
 from dataclasses import asdict, dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -95,7 +95,7 @@ class RiskModel:
             tmp = self.root / f".{name}.parquet.tmp"
             df.write_parquet(tmp)
             tmp.replace(self.root / f"{name}.parquet")
-        info = {"built_at": datetime.now().isoformat(timespec="seconds"), "start": str(s), "end": str(e) if e else None,
+        info = {"built_at": datetime.now(UTC).isoformat(timespec="seconds"), "start": str(s), "end": str(e) if e else None,
                 "first_month": str(exposures["date"].min()), "last_month": str(exposures["date"].max()),
                 "days": fr.height, "median_r2": round(float(fr["r2"].median()), 4), "factors": FACTORS,
                 "settings": asdict(st), "seconds": round(time.time() - t0, 1)}

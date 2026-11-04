@@ -258,6 +258,9 @@ class Store:
             if wanted is not None:
                 lf = lf.filter(pl.col("security_id").is_in(wanted))
         if adjust and master is not None:
+            if self._identity("splits") is None or (adjust == "all" and self._identity("dividends") is None):
+                warnings.warn("the security master has no mapped splits/dividends yet, so adjust="
+                              f"{adjust!r} leaves prices unadjusted. Run: subspace identity build", stacklevel=2)
             div_table = dividend_factor_table_from_steps(self._identity_or_empty("dividends")) \
                 if adjust == "all" else None
             split_table = split_factor_table(self._identity_or_empty("splits"), key="security_id")
@@ -586,5 +589,10 @@ class Store:
 def live_files(day_dir: Path) -> list[Path]:
     """Parquet files in a live day folder, skipping part files already merged into an hourly file."""
     files = sorted(day_dir.glob("*.parquet"))
-    merged_hours = {f.stem.split("-")[1] for f in files if f.name.startswith("hour-")}
-    return [f for f in files if f.name.startswith("hour-") or f.stem.split("-")[1] not in merged_hours]
+
+    def hour(f: Path) -> str | None:   # hour-YYYYMMDDHH / part-YYYYMMDDHH-<pid>-<n>; anything else: None
+        parts = f.stem.split("-")
+        return parts[1] if len(parts) > 1 else None
+
+    merged_hours = {hour(f) for f in files if f.name.startswith("hour-")}
+    return [f for f in files if f.name.startswith("hour-") or hour(f) not in merged_hours]
