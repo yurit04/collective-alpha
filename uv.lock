@@ -12,6 +12,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "borg-queen",
     "collective-alpha",
     "edgar-cortical-node",
     "finra-sensor-array",
@@ -185,6 +186,31 @@ wheels = [
 [package.optional-dependencies]
 css = [
     { name = "tinycss2" },
+]
+
+[[package]]
+name = "borg-queen"
+version = "0.1.0"
+source = { editable = "core/borg-queen" }
+dependencies = [
+    { name = "massive-subspace-stream" },
+    { name = "neural-processor" },
+    { name = "numpy" },
+    { name = "polars" },
+    { name = "typer" },
+    { name = "unimatrix-zero" },
+    { name = "vinculum" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "massive-subspace-stream", editable = "core/massive-subspace-stream" },
+    { name = "neural-processor", editable = "core/neural-processor" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "polars", specifier = ">=1.20" },
+    { name = "typer", specifier = ">=0.12" },
+    { name = "unimatrix-zero", editable = "core/unimatrix-zero" },
+    { name = "vinculum", editable = "core/vinculum" },
 ]
 
 [[package]]
