@@ -37,9 +37,10 @@ Current core graph:
 | `neural-processor` | Point-in-time signals per security (value, profitability, quality, leverage, growth, price, short interest), per-date transforms and composites | vinculum, edgar-cortical-node, massive-subspace-stream |
 | `unimatrix-zero` | Backtests: daily returns across successors with delisting exits, portfolio builders, daily engine with lag and costs, analytics | neural-processor, vinculum, massive-subspace-stream |
 | `borg-queen` | Risk model: market, sector and style factors, daily factor returns, EWMA covariance with regime adjustment, specific risk, forecasts, attribution; cost-aware optimizer (cvxpy) and rebalance loop | unimatrix-zero, neural-processor, vinculum, massive-subspace-stream |
+| `transwarp-conduit` | Execution through Interactive Brokers: IB contract mapping, order sheets with limits, paper-first MOC orders, journal, reconciliation | unimatrix-zero, massive-subspace-stream |
 
 Planned names (not built):
-`transwarp-conduit` (broker/execution) and orchestration.
+orchestration (scheduled runs), `transwarp-conduit` phases 2-3 (cost calibration, live).
 
 ## Commands
 
@@ -53,6 +54,7 @@ uv run cortical --help                 # SEC EDGAR CLI (see core/edgar-cortical-
 uv run vinculum --help                 # market cap / universes (see core/vinculum/README.md)
 uv run sensor --help                   # FINRA short data (see core/finra-sensor-array/README.md)
 uv run queen --help                    # risk model (see core/borg-queen/README.md)
+uv run conduit --help                  # IB execution (see core/transwarp-conduit/README.md)
 ```
 
 ## Market data
@@ -77,6 +79,10 @@ uv run queen --help                    # risk model (see core/borg-queen/README.
   `cortical profiles` (1.4 / 1.6 GB), `sensor backfill short-volume` (~13,000 files, ~3 GB), or
   `service install`.
 - Only one websocket connection per API key: use the stream service, don't open another.
+- Orders (transwarp-conduit): `conduit status`, `contracts`, `plan`, `show`, `orders`, `fills` and
+  `reconcile` only read. Never run `submit`, `cancel` or `cancel-all` (or the same `Conduit`
+  methods) without the user's explicit go-ahead for that sheet, and never pass `--live` or set
+  `live = true` unless the user asks for live trading in so many words.
 
 ## Conventions
 
