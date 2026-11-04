@@ -62,3 +62,6 @@ Invariants:
   source "redated"; 10-Q copies and values dated after the year end are never moved.
 - Never send the user's own e-mail to the SEC unless they put it in their config.
 - Respect the SEC's 10 requests/second limit (default 8, shared across threads).
+- The parse workers use the `spawn` start method (`_ingest._SPAWN`). Never let them fork: the
+  parent has used polars' thread pool by then, and a forked child deadlocks in it (Linux's
+  default; it hung CI and a forced fork hangs on macOS too).

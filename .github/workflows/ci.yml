@@ -16,6 +16,7 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 20          # the suite takes under a minute; a hang must fail, not run for hours
     strategy:
       fail-fast: false
       matrix:

@@ -10,6 +10,7 @@ sync()   for each day since the last sync, read the SEC daily index, re-fetch co
 from __future__ import annotations
 
 import logging
+import multiprocessing
 import shutil
 import zipfile
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
@@ -50,6 +51,9 @@ from ._parse import (
 log = logging.getLogger("edgar_cortical_node")
 CHUNK_MEMBERS = 400  # companies per conversion task
 PROFILE_CHUNK = 5000  # submissions documents per conversion task
+# Parse workers are spawned, never forked: by the time the pool starts the parent has used
+# polars' thread pool, and a forked child deadlocks in it (fork is Linux's default start method).
+_SPAWN = multiprocessing.get_context("spawn")
 
 
 @dataclass
@@ -121,7 +125,7 @@ class Ingestor:
         log.info("bulk: converting %d companies in %d chunks with %d processes", len(members), len(chunks),
                  self.settings.parse_workers)
         companies: list[dict] = []
-        with ProcessPoolExecutor(max_workers=self.settings.parse_workers) as pool:
+        with ProcessPoolExecutor(max_workers=self.settings.parse_workers, mp_context=_SPAWN) as pool:
             futures = [pool.submit(parse_chunk, str(zip_path), chunk, str(staging / "chunks"), i)
                        for i, chunk in enumerate(chunks)]
             for n, fut in enumerate(as_completed(futures), 1):
@@ -189,7 +193,7 @@ class Ingestor:
         log.info("profiles: reading %d documents in %d chunks", len(members), len(chunks))
         profiles: list[dict] = []
         names: list[dict] = []
-        with ProcessPoolExecutor(max_workers=self.settings.parse_workers) as pool:
+        with ProcessPoolExecutor(max_workers=self.settings.parse_workers, mp_context=_SPAWN) as pool:
             for n, fut in enumerate(as_completed([pool.submit(parse_profiles_chunk, str(zip_path), c)
                                                   for c in chunks]), 1):
                 p, nm = fut.result()
