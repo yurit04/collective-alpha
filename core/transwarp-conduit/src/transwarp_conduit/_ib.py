@@ -17,12 +17,26 @@ SUMMARY_TAGS = {"NetLiquidation": "net_liquidation", "TotalCashValue": "cash",
                 "GrossPositionValue": "gross_position_value"}
 
 
+def _allow_nested_loop(ib_async) -> None:
+    """ib_async drives its own asyncio loop synchronously. Inside a Jupyter kernel a loop is
+    already running in this thread, so connecting would fail with "This event loop is already
+    running"; ib_async's `util.startLoop()` (nest_asyncio) makes the two coexist."""
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    ib_async.util.startLoop()
+
+
 class IBBroker:
     def __init__(self, settings: ConduitSettings, readonly: bool = True):
         import ib_async
 
         logging.getLogger("ib_async").setLevel(logging.WARNING)
         self.s, self.readonly, self._ib_mod = settings, readonly, ib_async
+        _allow_nested_loop(ib_async)
         self.ib = ib_async.IB()
         try:
             self.ib.connect(settings.host, settings.port, clientId=settings.client_id, timeout=settings.timeout,

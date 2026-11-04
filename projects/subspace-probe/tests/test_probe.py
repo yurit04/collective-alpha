@@ -4,7 +4,8 @@ from pathlib import Path
 import pytest
 from subspace_probe import SECTORS, human_bytes, sic_sector, timed
 
-NOTEBOOKS = sorted((Path(__file__).parents[1] / "notebooks").rglob("*.ipynb"))
+NOTEBOOKS = sorted(p for p in (Path(__file__).parents[1] / "notebooks").rglob("*.ipynb")
+                   if ".ipynb_checkpoints" not in p.parts)
 
 
 def test_human_bytes():
@@ -34,11 +35,18 @@ def test_there_are_notebooks():
     assert NOTEBOOKS
 
 
-@pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.name)
-def test_notebook_is_valid_and_uses_public_api(path):
+CORE = sorted(p.name for p in (Path(__file__).parents[3] / "core").iterdir() if (p / "pyproject.toml").exists())
+
+
+@pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: f"{p.parent.name}/{p.name}")
+def test_notebook_is_valid_executed_and_in_a_module_folder(path):
     nb = json.loads(path.read_text())
     assert nb["nbformat"] == 4
-    code = "\n".join("".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code")
-    # Notebooks read data through the public API only, never private modules.
-    assert "massive_subspace_stream._" not in code
-    assert "_store import" not in code
+    # One folder per core module, named after the package (the import rules themselves are
+    # checked by tools/check_architecture.py, rule 6).
+    assert path.parent.name in CORE, f"{path.parent.name} is not a core package"
+    code = [c for c in nb["cells"] if c["cell_type"] == "code"]
+    # Committed with outputs: every code cell has run, and none ended in an error.
+    assert all(c.get("execution_count") for c in code), "a code cell was never executed"
+    assert not any(o.get("output_type") == "error" for c in code for o in c.get("outputs", [])), "a cell errored"
+    assert any(c.get("outputs") for c in code), "no outputs at all"

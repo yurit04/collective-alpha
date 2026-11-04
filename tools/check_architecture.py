@@ -10,6 +10,10 @@ Rules
 4. No core package depends on a project.
 5. Code may only import another workspace package that its pyproject.toml
    declares, and only that package's public names (no `pkg._private`).
+6. Demo notebooks: a project's `notebooks/<core-package>/` folder shows that core
+   package, so its notebooks may import that package and the core packages it
+   declares as dependencies (plus the project's own helpers), nothing else. Folders
+   under `notebooks/` must be named after a core package.
 
 Usage
 -----
@@ -105,6 +109,67 @@ def _is_private(part: str) -> bool:
     return part.startswith("_") and not (part.startswith("__") and part.endswith("__"))
 
 
+def _imports(tree: ast.AST) -> list[tuple[int, str, list[str]]]:
+    """(line, module, imported names) for every import statement in a parsed module."""
+    out: list[tuple[int, str, list[str]]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            out += [(node.lineno, alias.name, []) for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            out.append((node.lineno, node.module, [a.name for a in node.names]))
+    return out
+
+
+def _notebook_code(path: Path) -> str:
+    """The code cells of a notebook as one module; IPython magics and shell lines are dropped."""
+    nb = json.loads(path.read_text())
+    lines: list[str] = []
+    for cell in nb.get("cells", []):
+        if cell.get("cell_type") != "code":
+            continue
+        src = "".join(cell.get("source", []))
+        lines += [line for line in src.splitlines() if not line.lstrip().startswith(("%", "!"))]
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _notebook_errors(project: Member, members: dict[str, Member], owners: dict[str, Member], root: Path) -> list[str]:
+    """Rule 6 for one project's notebooks/ folder."""
+    errors: list[str] = []
+    base = project.path / "notebooks"
+    if not base.is_dir():
+        return errors
+    for folder in sorted(p for p in base.iterdir() if p.is_dir() and p.name not in SKIP_DIRS):
+        shown = members.get(normalize(folder.name))
+        rel_folder = folder.relative_to(root)
+        if shown is None or shown.kind != "core":
+            errors.append(f"{rel_folder}: notebook folders are named after a core package; "
+                          f"'{folder.name}' is not one (packages: {', '.join(sorted(m for m in members if members[m].kind == 'core'))})")
+            continue
+        allowed = {shown.name} | {d for d in shown.deps if d in members} | {project.name}
+        for nb in sorted(folder.rglob("*.ipynb")):
+            if SKIP_DIRS.intersection(nb.relative_to(folder).parts):
+                continue
+            rel = nb.relative_to(root)
+            try:
+                tree = ast.parse(_notebook_code(nb), filename=str(nb))
+            except (SyntaxError, ValueError, json.JSONDecodeError) as exc:
+                errors.append(f"{rel}: cannot parse its code cells ({exc})")
+                continue
+            for _, module, names in _imports(tree):
+                parts = module.split(".")
+                target = owners.get(parts[0])
+                if target is None:
+                    continue
+                if target.name not in allowed:
+                    errors.append(f"{rel}: imports '{parts[0]}', but notebooks under '{folder.name}' show "
+                                  f"{shown.name} and may use only it and its dependencies "
+                                  f"({', '.join(sorted(allowed - {project.name})) or 'none'})")
+                if any(_is_private(p) for p in parts[1:]) or any(_is_private(n) for n in names):
+                    errors.append(f"{rel}: imports a private part of '{target.name}' ({module}); use its public API")
+    return errors
+
+
 def find_cycles(members: dict[str, Member]) -> list[list[str]]:
     graph = {
         m.name: sorted(d for d in m.deps if d in members and members[d].kind == "core")
@@ -158,22 +223,21 @@ def check(root: Path = REPO_ROOT) -> list[str]:
             except SyntaxError as exc:
                 errors.append(f"{rel}: cannot parse ({exc.msg})")
                 continue
-            for node in ast.walk(tree):
-                modules: list[tuple[str, list[str]]] = []
-                if isinstance(node, ast.Import):
-                    modules = [(alias.name, []) for alias in node.names]
-                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                    modules = [(node.module, [a.name for a in node.names])]
-                for module, names in modules:
-                    parts = module.split(".")
-                    target = owners.get(parts[0])
-                    if target is None or target is m:
-                        continue
-                    where = f"{rel}:{node.lineno}"
-                    if target.name not in m.deps:
-                        errors.append(f"{where}: imports '{parts[0]}' but '{m.name}' does not declare a dependency on '{target.name}'")
-                    if any(_is_private(p) for p in parts[1:]) or any(_is_private(n) for n in names):
-                        errors.append(f"{where}: imports a private part of '{target.name}' ({module}); use its public API")
+            for lineno, module, names in _imports(tree):
+                parts = module.split(".")
+                target = owners.get(parts[0])
+                if target is None or target is m:
+                    continue
+                where = f"{rel}:{lineno}"
+                if target.name not in m.deps:
+                    errors.append(f"{where}: imports '{parts[0]}' but '{m.name}' does not declare a dependency on '{target.name}'")
+                if any(_is_private(p) for p in parts[1:]) or any(_is_private(n) for n in names):
+                    errors.append(f"{where}: imports a private part of '{target.name}' ({module}); use its public API")
+
+    # Demo notebooks (rule 6).
+    for m in members.values():
+        if m.kind == "project":
+            errors += _notebook_errors(m, members, owners, root)
     return errors
 
 
@@ -196,7 +260,7 @@ def _hook_should_run() -> bool:
     except (json.JSONDecodeError, ValueError):
         return True
     file_path = str(payload.get("tool_input", {}).get("file_path", ""))
-    return not file_path or file_path.endswith((".py", "pyproject.toml"))
+    return not file_path or file_path.endswith((".py", ".ipynb", "pyproject.toml"))
 
 
 def main(argv: list[str] | None = None) -> int:

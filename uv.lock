@@ -3005,24 +3005,30 @@ name = "subspace-probe"
 version = "0.1.0"
 source = { editable = "projects/subspace-probe" }
 dependencies = [
+    { name = "borg-queen" },
     { name = "edgar-cortical-node" },
     { name = "finra-sensor-array" },
     { name = "ipykernel" },
     { name = "massive-subspace-stream" },
     { name = "matplotlib" },
     { name = "neural-processor" },
+    { name = "transwarp-conduit" },
+    { name = "unicomplex" },
     { name = "unimatrix-zero" },
     { name = "vinculum" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "borg-queen", editable = "core/borg-queen" },
     { name = "edgar-cortical-node", editable = "core/edgar-cortical-node" },
     { name = "finra-sensor-array", editable = "core/finra-sensor-array" },
     { name = "ipykernel", specifier = ">=6.29" },
     { name = "massive-subspace-stream", editable = "core/massive-subspace-stream" },
     { name = "matplotlib", specifier = ">=3.9" },
     { name = "neural-processor", editable = "core/neural-processor" },
+    { name = "transwarp-conduit", editable = "core/transwarp-conduit" },
+    { name = "unicomplex", editable = "core/unicomplex" },
     { name = "unimatrix-zero", editable = "core/unimatrix-zero" },
     { name = "vinculum", editable = "core/vinculum" },
 ]

@@ -41,3 +41,7 @@ description: Scaffold a new core package under core/ (e.g. features, backtesting
 5. `uv sync --all-packages`, then `uv run pytest` and `uv run python tools/check_architecture.py`.
 6. Add the package to the "Current core graph" table in the root `CLAUDE.md`, and write a short
    `docs/decisions/NNNN-<name>.md` if there were notable design choices.
+7. Add a demo notebook folder `projects/subspace-probe/notebooks/<name>/` (at least `00_*.ipynb`)
+   showing the module's functionality, using only the module and its declared dependencies;
+   declare the module in subspace-probe's `pyproject.toml`; execute the notebook and commit it
+   with outputs; add it to the project's README.

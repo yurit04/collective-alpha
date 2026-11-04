@@ -8,6 +8,7 @@ uv workspace: reusable **core** packages plus independent **projects**.
 ```
 core/<package>/        reusable building blocks (src layout, own tests, own CLAUDE.md)
 projects/<project>/    research / strategies; consume core packages only
+projects/subspace-probe/notebooks/<core-package>/   demo notebooks, one folder per core module (rule 5)
 tools/check_architecture.py   enforces the dependency rules below
 tests/                 repo-level tests (architecture rules)
 .github/workflows/ci.yml      lint, dependency rules and offline tests on push and pull request (3.12, 3.13)
@@ -23,9 +24,13 @@ docs/decisions/        short design records: why X over Y
 4. Import another workspace package only if your `pyproject.toml` declares it, and only
    its public API (names exported from its top-level `__init__`). Modules starting with
    `_` are private.
+5. Demo notebooks live in `projects/subspace-probe/notebooks/<core-package>/`, one folder per
+   core package. A notebook there shows that package and may use only it, the packages it
+   declares as dependencies, and the project's own helpers. Outputs are committed (the
+   notebooks are read on GitHub); never strip them.
 
-`python tools/check_architecture.py` checks all of this (also run by pytest and by a
-Claude Code hook after every edit). `--graph` prints the current graph.
+`python tools/check_architecture.py` checks all of this, notebooks included (also run by pytest
+and by a Claude Code hook after every edit). `--graph` prints the current graph.
 
 Current core graph:
 

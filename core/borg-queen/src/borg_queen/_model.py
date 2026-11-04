@@ -296,8 +296,10 @@ class RiskModel:
 def bias_stat(b: pl.DataFrame, window: int | None = None) -> pl.DataFrame | float:
     """From RiskModel.bias: the bias statistic over everything (window None) or over rolling
     windows of `window` periods (date, bias)."""
+    # A date with no following days, or a zero forecast, has no usable z: leave it out.
+    b = b.filter((pl.col("days") > 0) & pl.col("z_sq_mean").is_finite())
     z2 = pl.col("z_sq_mean") * pl.col("days")
     if window is None:
-        return float(np.sqrt((b["z_sq_mean"] * b["days"]).sum() / b["days"].sum()))
+        return float(np.sqrt((b["z_sq_mean"] * b["days"]).sum() / b["days"].sum())) if b.height else float("nan")
     return b.sort("date").select("date", (z2.rolling_sum(window) / pl.col("days").rolling_sum(window))
                                  .sqrt().alias("bias")).drop_nulls()

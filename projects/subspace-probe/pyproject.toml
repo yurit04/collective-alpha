@@ -1,7 +1,7 @@
 [project]
 name = "subspace-probe"
 version = "0.1.0"
-description = "Exploratory data analysis of every data source in the collective (notebooks by source)."
+description = "Demo notebooks for every core module of the collective, one folder per module, following the dependency graph."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -11,6 +11,9 @@ dependencies = [
     "finra-sensor-array",
     "neural-processor",
     "unimatrix-zero",
+    "borg-queen",
+    "transwarp-conduit",
+    "unicomplex",
     "matplotlib>=3.9",
     "ipykernel>=6.29",
 ]
@@ -22,6 +25,9 @@ vinculum = { workspace = true }
 finra-sensor-array = { workspace = true }
 neural-processor = { workspace = true }
 unimatrix-zero = { workspace = true }
+borg-queen = { workspace = true }
+transwarp-conduit = { workspace = true }
+unicomplex = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

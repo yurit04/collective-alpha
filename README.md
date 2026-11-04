@@ -10,7 +10,7 @@ Assimilation of multi-asset market data, quantitative signals, and systematic ex
   - [`edgar-cortical-node`](core/edgar-cortical-node/README.md): SEC EDGAR fundamentals and share counts, point in time
   - [`vinculum`](core/vinculum/README.md): joins the two: checked CIKs, daily market cap, size universes, fundamentals per security
 - `projects/`: independent research and strategies. They depend on core only, never on each other.
-  - [`subspace-probe`](projects/subspace-probe/README.md): exploratory data analysis notebooks, one folder per data source
+  - [`subspace-probe`](projects/subspace-probe/README.md): demo notebooks, one folder per core module, each showing that module with its dependencies only
 - `tools/check_architecture.py`: enforces those rules (`--graph` prints the graph).
 
 ## Quick start
