@@ -10,6 +10,7 @@ core/<package>/        reusable building blocks (src layout, own tests, own CLAU
 projects/<project>/    research / strategies; consume core packages only
 tools/check_architecture.py   enforces the dependency rules below
 tests/                 repo-level tests (architecture rules)
+.github/workflows/ci.yml      lint, dependency rules and offline tests on push and pull request (3.12, 3.13)
 docs/decisions/        short design records: why X over Y
 .claude/skills/        new-core-module, new-project, query-market-data
 ```

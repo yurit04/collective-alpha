@@ -1,0 +1,41 @@
+# The same checks the pre-commit hooks and `uv run pytest` run locally, on every push to main
+# and every pull request: lint, the dependency rules, and the offline test suite. Live tests
+# (`-m live`: Massive, SEC, FINRA, IB Gateway) are deselected by the pytest config and never
+# run here; no credentials or market data exist on the runner.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+
+      - name: Install the workspace (locked)
+        run: uv sync --all-packages --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Dependency rules
+        run: uv run python tools/check_architecture.py
+
+      - name: Offline tests
+        run: uv run pytest -q
