@@ -1,0 +1,34 @@
+[project]
+name = "unicomplex"
+version = "0.1.0"
+description = "Orchestration for the collective. Phase 1: one read-only status of every store's freshness."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "massive-subspace-stream",
+    "edgar-cortical-node",
+    "finra-sensor-array",
+    "vinculum",
+    "borg-queen",
+    "transwarp-conduit",
+    "polars>=1.0",
+    "typer>=0.12",
+]
+
+[project.scripts]
+collective = "unicomplex.cli:app"
+
+[tool.uv.sources]
+massive-subspace-stream = { workspace = true }
+edgar-cortical-node = { workspace = true }
+finra-sensor-array = { workspace = true }
+vinculum = { workspace = true }
+borg-queen = { workspace = true }
+transwarp-conduit = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/unicomplex"]
