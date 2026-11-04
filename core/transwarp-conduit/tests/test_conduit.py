@@ -191,6 +191,19 @@ def test_make_orders_rules(tmp_path):
     assert r2["BBG_AAPL"]["est_cost_usd"] == pytest.approx(r2["BBG_AAPL"]["est_cost_bps"] / 1e4 * 20_000)
 
 
+def test_no_price_blocks_instead_of_skipping(tmp_path):
+    contracts, market = _inputs(tmp_path)
+    market = market.filter(pl.col("security_id") != "BBG_AAPL")                       # AAPL has no close
+    held = pl.DataFrame({"security_id": ["BBG_XOM"], "con_id": [13977], "shares": [100.0]})
+    o, issues, _ = make_orders(targets(AAPL=0.02, MSFT=0.01), held, contracts, market.filter(
+        pl.col("security_id") != "BBG_XOM"), 1_000_000, Limits())
+    r = {x["security_id"]: x for x in o.iter_rows(named=True)}
+    assert r["BBG_AAPL"]["status"] == "blocked: no price"                              # a target without a price
+    assert r["BBG_XOM"]["status"] == "blocked: no price"                               # a position to close without one
+    assert r["BBG_MSFT"]["status"] == "send"
+    assert len(issues) == 1 and "2 order(s) blocked" in issues[0] and "no price" in issues[0]
+
+
 def test_sheet_limits(tmp_path):
     contracts, market = _inputs(tmp_path)
     t = targets(AAPL=0.05, MSFT=0.04, XOM=0.03)

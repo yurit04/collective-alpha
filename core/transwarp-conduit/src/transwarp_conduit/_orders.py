@@ -121,8 +121,11 @@ def make_orders(targets: pl.DataFrame, held: pl.DataFrame, contracts: pl.DataFra
     tv = pl.col("trade_value").abs()
     closing = (pl.col("target_shares") == 0) & (pl.col("current_shares") != 0)
     new_short = pl.max_horizontal(-pl.col("target_shares"), 0) - pl.max_horizontal(-pl.col("current_shares"), 0)
-    status = (pl.when(trade == 0).then(pl.lit(NONE))
-              .when(~price_ok).then(pl.lit("blocked: no price"))
+    # Without a price the target and current shares are set equal (trade 0), so the price check
+    # must come first: a name that should be bought, sold or closed is blocked, never skipped.
+    wanted = (pl.col("target_weight") != 0) | (pl.col("current_shares") != 0)
+    status = (pl.when(~price_ok & wanted).then(pl.lit("blocked: no price"))
+              .when(trade == 0).then(pl.lit(NONE))
               .when(~pl.col("contract_status").is_in(["ok", "override"]).fill_null(False))
               .then(pl.lit("blocked: contract ") + pl.col("contract_status").fill_null("missing"))
               .when(~closing & ((tv < L.min_trade_usd) | (tv < L.min_trade_weight * capital))).then(pl.lit(SMALL))
