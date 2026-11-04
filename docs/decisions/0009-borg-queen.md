@@ -56,8 +56,53 @@ and the value spread realized 1.4-1.5× its forecast.
 - **Centring styles equal weighted:** the cap-weighted universe would then carry style bets
   (a small-size tilt), which makes market risk harder to read.
 
-## Next (part 2)
-An optimizer (cvxpy): expected return from a composite score (Grinold: IC × specific vol ×
-score), minus risk aversion × forecast variance, minus the cost unimatrix-zero will charge
-(spread and square-root impact); sector, style, position and ADV limits; holdings carried
-forward between rebalances. Notebook 07 compares it with the quintile book at $10M-$1B.
+## Decision (part 2, 2026-11-03)
+A cost-aware optimizer in the same package (`Optimizer`, `Portfolio`), solved with cvxpy and
+Clarabel (about 0.1 s per rebalance).
+
+- **Expected return from the score, Grinold style:** IC (0.03 a month) × z × specific
+  volatility. Scaling by specific volatility keeps the implied information ratio per name
+  equal; the IC is an assumption, not fitted.
+- **Volatility target as a constraint (8% a year), not a risk-aversion coefficient.** A target
+  is readable and comparable across AUMs; a coefficient's meaning changes with the alpha scale.
+  Risk aversion is available but off by default.
+- **The backtest's own cost model in the objective.** The optimizer calls unimatrix-zero's
+  `CostModel` (half-spread + commission, square-root impact at the AUM, borrow), so it avoids
+  what the engine charges. Impact is a 1.5 power cone; weights are in percent of capital
+  because Clarabel reports "optimal_inaccurate" in plain fractions.
+- **Hard limits for what the strategy should not bet on:** each sector's net within ±1%, beta
+  within ±0.05, size within ±0.1, 2% per name, trades ≤ 10% of ADV. Infeasible problems relax
+  step by step (participation, exposures ×3, exposures off) and finally hold the current book.
+- **Holdings carried forward:** `Portfolio.build` drifts each month's targets with daily returns
+  to the next execution day, as `Engine.run` holds them, so trades happen only when their
+  expected gain exceeds their cost.
+
+## Results (part 2, notebook 07)
+Notebook 06's combined score, monthly from December 2012, the same CostModel in optimizer and
+engine:
+
+| AUM | optimized net return | net Sharpe | turnover / year | quintile net Sharpe | quintile sector-neutral |
+|---|---|---|---|---|---|
+| none | 5.1% | 0.59 | 9.4 | 0.57 | 0.54 |
+| $10M | 4.1% | 0.50 | 6.8 | 0.50 | 0.45 |
+| $100M | 3.3% | 0.41 | 4.9 | 0.36 | 0.28 |
+| $1B | 3.0% | 0.40 | 2.9 | -0.01 | -0.18 |
+
+Go criteria, set before the run: net Sharpe at $100M ≥ 0.30 (0.41), a positive net return at
+$1B (3.0%), sector bets ≤ 1% (1.00% at every rebalance; the quintile book reaches 23%). All
+pass with the default settings; nothing was tuned to the result. With no AUM the optimizer adds
+control rather than return; its gain is capacity (cost drag about 1.2% a year at every size,
+against 6.9% for the quintile books at $1B). All 167 rebalances solved at every AUM without
+relaxing. Realized volatility ran above the 8% target (bias 1.13 at $100M against 1.02-1.06
+for the quintile books): an optimizer leans toward under-forecast risks. Momentum,
+profitability and value earned 2.8%, 1.7% and 1.5% a year; specific returns cost 0.7%.
+
+A Sharpe ratio over 14 years has a standard error near 0.27, so the margin at $100M is not
+decisive; the capacity gap at $1B is. A variant score (different value and quality signals)
+gave 0.83 / 0.58 at no AUM / $100M against 0.64 / 0.42 for its quintile book: the same pattern
+at a higher level.
+
+## Next
+Execution (`transwarp-conduit`): turn target weights into orders. Possible refinements: an IC
+estimated out of sample per signal, more style limits (momentum carries most of the risk), and
+weekly rebalances now that a solve is cheap.

@@ -36,10 +36,10 @@ Current core graph:
 | `vinculum` | Massive x EDGAR x FINRA join: checked CIKs, successors, market cap, public float, size universes, fundamentals and short data per security | massive-subspace-stream, edgar-cortical-node, finra-sensor-array |
 | `neural-processor` | Point-in-time signals per security (value, profitability, quality, leverage, growth, price, short interest), per-date transforms and composites | vinculum, edgar-cortical-node, massive-subspace-stream |
 | `unimatrix-zero` | Backtests: daily returns across successors with delisting exits, portfolio builders, daily engine with lag and costs, analytics | neural-processor, vinculum, massive-subspace-stream |
-| `borg-queen` | Risk model: market, sector and style factors, daily factor returns, EWMA covariance with regime adjustment, specific risk, forecasts, attribution (optimizer planned) | unimatrix-zero, neural-processor, vinculum, massive-subspace-stream |
+| `borg-queen` | Risk model: market, sector and style factors, daily factor returns, EWMA covariance with regime adjustment, specific risk, forecasts, attribution; cost-aware optimizer (cvxpy) and rebalance loop | unimatrix-zero, neural-processor, vinculum, massive-subspace-stream |
 
 Planned names (not built):
-`transwarp-conduit` (broker/execution); `borg-queen` part 2 (optimizer) and orchestration.
+`transwarp-conduit` (broker/execution) and orchestration.
 
 ## Commands
 

@@ -9,6 +9,7 @@ dependencies = [
     "vinculum",
     "neural-processor",
     "unimatrix-zero",
+    "cvxpy>=1.5",
     "numpy>=1.26",
     "polars>=1.20",
     "typer>=0.12",

@@ -1,8 +1,8 @@
 # borg-queen
 
-Risk and portfolio construction. **Part 1 (built): a point-in-time factor risk model** over
-vinculum's top companies. Part 2 (planned): a cost-aware optimizer whose weights feed
-`unimatrix_zero.Engine.run`.
+Risk and portfolio construction: **a point-in-time factor risk model** over vinculum's top
+companies (part 1), and **a cost-aware optimizer** whose weights feed `unimatrix_zero.Engine.run`
+(part 2).
 
 ```python
 from borg_queen import RiskModel, bias_stat
@@ -17,6 +17,17 @@ rm.factor_returns(); rm.factor_cov("2026-10-30", annualize=True); rm.exposures("
 ```
 
 CLI: `queen build [--start 2011-01-01] [--top 1000] | status | check`.
+
+```python
+from borg_queen import Constraints, Optimizer, Portfolio, alpha_from_score
+from unimatrix_zero import CostModel
+
+alpha = alpha_from_score(panel, "combined", rm)      # expected return per name and month end
+cm = CostModel(aum=1e8)                              # the same costs in optimizer and backtest
+w, diag = Portfolio(Optimizer(rm, cm, Constraints())).build(alpha)   # ~25 s for 14 years monthly
+bt = rm.engine.run(w, costs=cm)
+Optimizer(rm, cm).solve(alpha_one_date, on, current_weights, market)  # one rebalance
+```
 
 ## The model
 
@@ -76,6 +87,43 @@ CLI: `queen build [--start 2011-01-01] [--top 1000] | status | check`.
   the regime adjustment and the 252-day correlation half-life helped most (0.54 → 0.62 of
   12-month windows inside for the market, 0.60 → 0.79 for value).
 
+## The optimizer
+
+- **Expected return** (`alpha_from_score`, Grinold): IC × z × specific volatility over the
+  horizon, where z is the score standardized per date (clipped at ±3) and the specific
+  volatility comes from that month's risk model. IC defaults to 0.03 a month.
+- **Objective** at each rebalance: expected return − cost − borrow (− risk aversion × forecast
+  variance, off by default). Cost is unimatrix-zero's `CostModel`: half-spread + commission per
+  unit traded and, with an AUM, square-root impact (daily vol × √(trade / ADV)), so the
+  optimizer avoids exactly what the backtest will charge. Borrow is charged on shorts.
+- **Constraints** (`Constraints`, defaults): long-short with net 0 and gross 2; forecast
+  volatility ≤ 8% a year; each sector's net weight within ±1%; predicted beta to the
+  cap-weighted universe within ±0.05; size exposure within ±0.1 (more styles can be added);
+  ≤ 2% per name; each trade ≤ 10% of ADV (with an AUM). `Constraints.long_only()` gives a fully
+  invested long-only book with no exposure limits.
+- **When infeasible** it relaxes step by step: drop the participation limit, triple the
+  exposure limits, drop them; if nothing works it holds the current book (`relaxed` in the
+  diagnostics says which). Names outside the model's universe are sold; names with no volume
+  cannot be costed and are sold too.
+- **`Portfolio.build`** rebalances at each alpha date, executing `lag` trading days later as
+  `Engine.run` does: each solve starts from the previous targets drifted with daily returns.
+  Diagnostics per date: status, relaxed, alpha, forecast vol, expected cost, turnover, names,
+  gross, beta, nav, seconds.
+- Solved with cvxpy and Clarabel, about 0.1 s per rebalance for 1,000 names.
+
+### Results (notebook 07, notebook 06's combined score, 2013-2026)
+
+| AUM | optimized net return / Sharpe / turnover | quintile net Sharpe | quintile sector-neutral net Sharpe |
+|---|---|---|---|
+| none | 5.1% / 0.59 / 9.4× | 0.57 | 0.54 |
+| $10M | 4.1% / 0.50 / 6.8× | 0.50 | 0.45 |
+| $100M | 3.3% / 0.41 / 4.9× | 0.36 | 0.28 |
+| $1B | 3.0% / 0.40 / 2.9× | -0.01 | -0.18 |
+
+Small, it matches the quintile books while holding sectors to 1% (quintile: up to 23%); large,
+it keeps earning where they lose money. Every rebalance solved without relaxing. Realized
+volatility ran about 10% above the 8% target (bias 1.13 at $100M).
+
 ## Files (data root)
 
 `exposures.parquet` (month ends), `factor_returns.parquet` (daily: one column per factor, r2,
@@ -86,6 +134,8 @@ n), `residuals.parquet` (date, security_id, ret, resid), `specific.parquet` (mon
 
 - Exposures change only at month ends; daily price styles (beta, volatility) lag up to a month.
 - `attribute` and `bias` hold weights constant between their dates (no drift).
+- The optimizer's limits apply at each rebalance; between rebalances holdings drift.
+- The IC is an assumption: the optimizer trusts expected returns as given.
 - The estimation universe is the top 1,000: a name outside it has no exposures or specific risk
   (`predict` reports its weight as `uncovered`).
 - No currency factors; ADRs are treated as US stocks.
