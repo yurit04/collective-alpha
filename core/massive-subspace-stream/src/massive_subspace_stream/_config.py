@@ -74,6 +74,7 @@ class Settings:
     download_workers: int = 4
     tick_workers: int = 1
     keep_raw: bool = False
+    disk_margin_gb: float = 50.0   # free space a flat-file job must leave under the data root
 
     # Live stream
     stream_channels: tuple[str, ...] = ("AM", "A")

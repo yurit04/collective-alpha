@@ -3,6 +3,7 @@ from datetime import date
 
 import polars as pl
 import pyarrow.parquet as pq
+import pytest
 from massive_subspace_stream import Ingestor
 from massive_subspace_stream._datasets.flat import convert_ticks, read_bars_csv
 
@@ -64,6 +65,17 @@ def test_day_bars_backfill_is_resumable_and_merges_years(settings):
     assert ing.catalog.partition_keys("bars_day") == ["2024-01-02", "2024-01-03", "2025-01-02"]
     assert ing.flat("bars_day", "2024-01-01", "2025-12-31").done == 0
     assert not any(ing.layout.root.joinpath("raw").rglob("*.gz"))  # raw files cleaned up
+
+
+def test_disk_guard_uses_the_margin_setting(settings):
+    from dataclasses import replace
+
+    from massive_subspace_stream._ingest.backfill import DiskSpaceError
+
+    ing, flat = make_ingestor(replace(settings, disk_margin_gb=1e9))   # more than any disk has
+    with pytest.raises(DiskSpaceError, match="disk_margin_gb"):
+        ing.flat("bars_day", "2024-01-01", "2024-01-02")
+    assert flat.downloads == []                                         # refused before downloading
 
 
 def test_minute_backfill_and_verify(settings):

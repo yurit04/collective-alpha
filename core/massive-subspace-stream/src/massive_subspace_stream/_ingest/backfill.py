@@ -34,7 +34,6 @@ log = logging.getLogger("massive_subspace_stream")
 
 REST_FLUSH_ROWS = 250_000   # convert raw API rows to a DataFrame this often
 REST_WRITE_ROWS = 3_000_000  # merge into year files this often (each merge rewrites them)
-DISK_MARGIN_BYTES = 50 * 1024**3
 SNAPSHOT_SHRINK_TOLERANCE = 0.02  # a snapshot answer this much shorter than stored is suspect
 # Parquet output relative to the downloaded .csv.gz size (measured; used for disk checks).
 OUTPUT_RATIO = {"bars": 1.0, "ticks": 1.3}
@@ -172,10 +171,12 @@ class Ingestor:
         if spec.kind == "ticks" and todo[0][1]:  # ticker-filtered: output is a small fraction
             need = sum(biggest) * 1.2
         free = shutil.disk_usage(self.layout.root).free
-        if need + DISK_MARGIN_BYTES > free:
+        margin = self.settings.disk_margin_gb * 1024**3
+        if need + margin > free:
             raise DiskSpaceError(
-                f"{spec.name}: needs about {need / 1e9:,.0f} GB (+{DISK_MARGIN_BYTES / 1e9:.0f} GB margin) but only "
-                f"{free / 1e9:,.0f} GB is free under {self.layout.root}. Free up space or narrow the date range."
+                f"{spec.name}: needs about {need / 1e9:,.0f} GB (+{margin / 1e9:.0f} GB margin, the disk_margin_gb "
+                f"setting) but only {free / 1e9:,.0f} GB is free under {self.layout.root}. Free up space or narrow "
+                "the date range."
             )
 
     def _run_parallel(self, todo, fn: Callable, workers: int, result: JobResult) -> None:

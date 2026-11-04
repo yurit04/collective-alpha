@@ -9,6 +9,7 @@
 # backfill_since = "2003-09-10"      # earliest flat file
 # download_workers = 4               # Massive throttles above ~4-8 parallel downloads
 # tick_workers = 1                   # trades/quotes files are 3-9 GB each
+# disk_margin_gb = 50                # a flat-file job refuses to start with less than this left free
 # keep_raw = false                   # keep downloaded .csv.gz after conversion
 
 # Live stream: channels for ALL tickers, plus heavier channels for a watchlist only.

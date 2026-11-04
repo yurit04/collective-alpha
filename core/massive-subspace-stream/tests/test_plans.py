@@ -27,7 +27,7 @@ def _fixed_today(monkeypatch):
 @pytest.fixture
 def starter(settings):
     return load_settings(data_root=settings.data_root, env_file=None, api_key="test-key",
-                         s3_access_key_id="id", s3_secret_access_key="secret", plan="starter")
+                         s3_access_key_id="id", s3_secret_access_key="secret", plan="starter", disk_margin_gb=0)
 
 
 # ---------------------------------------------------------------- settings

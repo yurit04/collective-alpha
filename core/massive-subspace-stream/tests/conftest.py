@@ -23,8 +23,9 @@ def _isolated_env(monkeypatch, tmp_path):
 
 @pytest.fixture
 def settings(tmp_path):
+    # disk_margin_gb=0: the fake flat files are bytes, and a CI runner's /tmp may hold a few GB.
     return load_settings(data_root=tmp_path / "data", env_file=None, api_key="test-key",
-                         s3_access_key_id="id", s3_secret_access_key="secret")
+                         s3_access_key_id="id", s3_secret_access_key="secret", disk_margin_gb=0)
 
 
 def ns(dt: datetime) -> int:
