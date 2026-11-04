@@ -109,8 +109,18 @@ def sync() -> None:
 
 
 @app.command()
+def series() -> None:
+    """Rebuild the materialized series and share counts from the facts (also done by backfill
+    and sync); reads are then instant instead of rebuilding from facts."""
+    from ._ingest import Ingestor
+
+    _report(Ingestor(_settings()).series())
+
+
+@app.command()
 def status() -> None:
-    """Bulk file date, sync progress, number of companies, size on disk."""
+    """Bulk file date, sync progress, number of companies, size on disk, whether the
+    materialized series are current."""
     from ._store import EdgarStore
 
     info = EdgarStore(settings=_settings()).status()

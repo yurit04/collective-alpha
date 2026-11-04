@@ -134,7 +134,7 @@ class EdgarStore:
 
     # ------------------------------------------------------------------ point-in-time series
     def series(self, items: str | Iterable[str], ciks: Any = None, policy: Policy = "first",
-               backend: Backend = "polars"):
+               backend: Backend = "polars", materialized: bool | None = None):
         """Point-in-time series for items in CONCEPTS (long format).
 
         Flows: one row per fiscal quarter (reported, or derived from year-to-date figures and
@@ -144,34 +144,90 @@ class EdgarStore:
         otherwise the sum of four quarters, left empty when a split falls inside the window.
         Per-share values are as filed (not split-adjusted).
         Every row has `filed` and `available_from` (the day after filing).
-        """
-        from ._concepts import FISCAL_YEAR_END_TAGS, SHARE_TAGS
 
+        With policy "first" the rows come from the materialized `series.parquet` when it was
+        built from the current facts (`cortical series`, also run by `backfill` and `sync`);
+        otherwise, and for policy "latest", they are built from the facts on the fly (the same
+        result, slower). `materialized` forces one path (True raises if the table is stale).
+        """
         items = [items] if isinstance(items, str) else list(items)
         unknown = [i for i in items if i not in CONCEPTS]
         if unknown:
             raise ValueError(f"unknown item(s) {unknown}; choose from {sorted(CONCEPTS)}")
+        use = self._use_materialized(policy, materialized)
+        if use:
+            lf = pl.scan_parquet(self.layout.series_file).filter(pl.col("item").is_in(items))
+            ciks = self._ciks(ciks)
+            if ciks:
+                lf = lf.filter(pl.col("cik").is_in(ciks))
+            return self._out(lf.collect(), backend)
+        return self._out(self._build_series(items, ciks, policy), backend)
+
+    def _build_series(self, items: list[str], ciks: Any, policy: Policy,
+                      shares: pl.DataFrame | None = None) -> pl.DataFrame:
+        """Series of `items` straight from the facts. `shares` (build_shares output) saves
+        rebuilding share counts for per-share items."""
+        from ._concepts import FISCAL_YEAR_END_TAGS, SHARE_TAGS
+
         per_share = any(CONCEPTS[i].kind == "per_share" for i in items)
-        extra = set(SHARE_TAGS) if per_share else set()
+        extra = set(SHARE_TAGS) if per_share and shares is None else set()
         if any(CONCEPTS[i].second_quarter for i in items):
             extra |= set(FISCAL_YEAR_END_TAGS)
         tags = sorted({t for i in items for t in CONCEPTS[i].tags} | extra)
         facts = self.facts(ciks, tags=tags)
-        sh = build_shares(facts, policy) if per_share else None
+        sh = shares if shares is not None else (build_shares(facts, policy) if per_share else None)
         frames = [build_series(facts, i, CONCEPTS[i], policy, shares=sh) for i in items]
-        df = pl.concat(frames) if frames else pl.DataFrame(schema=SERIES_SCHEMA)
-        return self._out(df, backend)
+        return pl.concat(frames) if frames else pl.DataFrame(schema=SERIES_SCHEMA)
 
-    def shares(self, ciks: Any = None, policy: Policy = "first", backend: Backend = "polars"):
+    def shares(self, ciks: Any = None, policy: Policy = "first", backend: Backend = "polars",
+               materialized: bool | None = None):
         """Shares outstanding over time, as reported (not split-adjusted: splits show as lasting
         jumps). Main concept per company (in most filings; cover page > balance sheet > weighted
         average on ties), gaps filled from other concepts that agree with it within 1.5x, isolated
         filing errors (a value far from both neighbours) dropped. Multi-class companies have no
-        cover-page total in company facts and use the weighted average of all classes."""
+        cover-page total in company facts and use the weighted average of all classes.
+        Read from the materialized `shares.parquet` when current (see `series`)."""
         from ._concepts import SHARE_TAGS
 
+        if self._use_materialized(policy, materialized):
+            lf = pl.scan_parquet(self.layout.shares_file)
+            ciks = self._ciks(ciks)
+            if ciks:
+                lf = lf.filter(pl.col("cik").is_in(ciks))
+            return self._out(lf.collect(), backend)
         facts = self.facts(ciks, tags=list(SHARE_TAGS))
         return self._out(build_shares(facts, policy), backend)
+
+    # ------------------------------------------------------------------ materialized tables
+    def series_status(self) -> dict[str, Any]:
+        """Whether `series.parquet` / `shares.parquet` exist and were built from the current
+        facts: built_at, facts_version (a counter every facts write increments),
+        series_facts_version (the one the tables were built from), facts_updated_at, current."""
+        st = self.layout.read_state()
+        exist = self.layout.series_file.exists() and self.layout.shares_file.exists()
+        built_for = st.get("series_facts_version")
+        return {"built_at": st.get("series_built_at"), "facts_version": st.get("facts_version"),
+                "series_facts_version": built_for, "facts_updated_at": st.get("facts_updated_at"),
+                "current": bool(exist and built_for is not None and built_for == st.get("facts_version"))}
+
+    def _use_materialized(self, policy: str, materialized: bool | None) -> bool:
+        if policy != "first":
+            if materialized:
+                raise ValueError("only policy='first' is materialized")
+            return False
+        current = self.series_status()["current"]
+        if materialized and not current:
+            raise FileNotFoundError("the materialized series are missing or older than the facts. Run: cortical series")
+        return current if materialized is None else materialized
+
+    def build_tables(self) -> tuple[pl.DataFrame, pl.DataFrame]:
+        """Every item's series (policy "first") and the share counts, for all companies, from
+        the facts: what `cortical series` writes. Sorted for selective reads by item and CIK."""
+        from ._concepts import SHARE_TAGS
+
+        shares = build_shares(self.facts(None, tags=list(SHARE_TAGS)), "first")
+        series = self._build_series(list(CONCEPTS), None, "first", shares=shares)
+        return series.sort("item", "cik", "end"), shares.sort("cik", "end")
 
     def as_of(self, on: Any, ciks: Any = None, items: Iterable[str] | None = None, policy: Policy = "first",
               stale_days: int = STALE_DAYS, backend: Backend = "polars"):
@@ -201,4 +257,6 @@ class EdgarStore:
         comps = self.companies()
         profiles = (pl.scan_parquet(self.layout.profiles_file).select(pl.len()).collect().item()
                     if self.layout.profiles_file.exists() else 0)
-        return {**state, "companies": comps.height, "profiles": profiles, "facts_bytes": size, "root": str(self.root)}
+        series = self.series_status()
+        return {**state, "companies": comps.height, "profiles": profiles, "facts_bytes": size,
+                "series_current": series["current"], "root": str(self.root)}

@@ -49,7 +49,9 @@ def choose(df: pl.DataFrame, policy: str = "first") -> pl.DataFrame:
     if policy not in ("first", "latest"):
         raise ValueError("policy must be 'first' or 'latest'")
     keys = ["cik", "taxonomy", "tag", "unit", "start", "end"]
-    return (df.sort("filed", "accn")
+    # Every sort before a unique() has a complete key: polars sorts are not stable, so an
+    # incomplete key would make the surviving row depend on the input order.
+    return (df.sort("filed", "accn", "val")
             .unique(keys, keep="first" if policy == "first" else "last", maintain_order=True))
 
 
@@ -61,7 +63,7 @@ def resolve_tags(df: pl.DataFrame, tags: tuple[str, ...], keys: list[str], polic
     rank = {t: i for i, t in enumerate(tags)}
     return (df.with_columns(_tag_col().alias("__tag"))
             .with_columns(pl.col("__tag").replace_strict(rank, default=len(tags), return_dtype=pl.Int32).alias("__rank"))
-            .sort("filed", "__rank", descending=[policy == "latest", False])
+            .sort("filed", "__rank", "unit", "start", "val", descending=[policy == "latest", False, False, False, False])
             .unique(keys, keep="first", maintain_order=True)
             .drop("__rank"))
 
@@ -140,7 +142,9 @@ def periodize(flows: pl.DataFrame, span: tuple[int, int] | None = None, by_tag: 
                .filter(_days().is_between(span[0] - 1, span[1])))
     cols = ["cik", "unit", "start", "end", "val", "filed", "__tag", "source"] + (["__real_tag"] if not by_tag else [])
     q = pl.concat([direct.select(cols), derived.select(cols)])
-    q = (q.sort("cik", "unit", "__tag", "end", pl.col("source") != "reported")
+    # Per period end: reported before derived, then the earliest filed, then the earliest start
+    # (a quarter reported as 01-02 .. 03-31 in one filing and 01-01 .. 03-31 in another).
+    q = (q.sort("cik", "unit", "__tag", "end", pl.col("source") != "reported", "filed", "start", "val")
          .unique(["cik", "unit", "__tag", "end"], keep="first", maintain_order=True)
          .sort("cik", "unit", "end"))
     return q.with_columns(pl.col("__real_tag").alias("__tag")).drop("__real_tag") if not by_tag else q
@@ -178,7 +182,8 @@ def _pick_tag(per_tag: pl.DataFrame, tags: tuple[str, ...], nonnegative: bool, p
     rank = {t: i for i, t in enumerate(tags)}
     return (per_tag.with_columns(pl.col("__tag").replace_strict(rank, default=len(tags), return_dtype=pl.Int32).alias("__rank"),
                                  (pl.col("source") != "reported").alias("__derived"))
-            .sort("filed", "__derived", "__rank", descending=[policy == "latest", False, False])
+            .sort("filed", "__derived", "__rank", "unit", "start", "val",
+                  descending=[policy == "latest", False, False, False, False, False])
             .unique(["cik", "end"], keep="first", maintain_order=True).drop("__rank", "__derived"))
 
 
@@ -197,8 +202,9 @@ def per_share_ttm(out: pl.DataFrame, shares: pl.DataFrame | None) -> pl.DataFram
     the last four quarters (two halves). Sums are dropped when the share count jumped (a split)
     between the filings of the first and the last of those quarters, since they would then mix
     share bases (a filing restates earlier periods for a split only after it happened)."""
-    annual = out.filter(pl.col("period") == "annual").select("cik", "end", pl.col("ttm").alias("__a"))
-    out = (out.join(annual.unique(["cik", "end"]), on=["cik", "end"], how="left")
+    annual = (out.filter(pl.col("period") == "annual").sort("cik", "end", "filed", "unit", "ttm")
+              .select("cik", "end", pl.col("ttm").alias("__a")).unique(["cik", "end"], keep="first", maintain_order=True))
+    out = (out.join(annual, on=["cik", "end"], how="left")
            .with_columns(pl.coalesce("__a", "ttm").alias("ttm"),
                          pl.when(pl.col("__a").is_not_null())
                          .then(pl.coalesce("ttm_available_from", available(pl.col("filed"))))
@@ -286,7 +292,7 @@ def _share_concepts(facts: pl.DataFrame, policy: str) -> pl.DataFrame:
     f = f.join(amb, on=["cik", "__tag"], how="anti")
     filings = f.group_by("cik", "__tag").agg(pl.col("accn").n_unique().alias("__filings"))
     f = choose(f, policy)
-    return (f.with_columns(_days().fill_null(0).alias("__dur")).sort("__dur")
+    return (f.with_columns(_days().fill_null(0).alias("__dur")).sort("__dur", "filed", "val")
             .unique(["cik", "__tag", "end"], keep="first", maintain_order=True)
             .join(filings, on=["cik", "__tag"])
             .select("cik", "__tag", "end", "val", "filed", "__filings").sort("cik", "end"))
@@ -320,7 +326,7 @@ def _stitch(s: pl.DataFrame) -> pl.DataFrame:
     fill = (near.join(ok, on=["cik", "__tag"])
             .filter(pl.col("__dist").is_null() | (pl.col("__dist") > SHARE_FILL_DAYS))
             .with_columns(pl.col("__tag").replace_strict(rank, return_dtype=pl.Int32).alias("__rank"))
-            .sort("__rank").unique(["cik", "end"], keep="first", maintain_order=True)
+            .sort("__rank", "__dist", "val").unique(["cik", "end"], keep="first", maintain_order=True)
             .select(primary.columns))
     out = pl.concat([primary, fill]).sort("cik", "end").drop("__main", "__filings")
     # Two fill concepts can still land close together; keep one value per ~quarter.
@@ -363,6 +369,7 @@ def latest_as_of(df: pl.DataFrame, on: date, keys: list[str], stale_days: int = 
         df = df.with_columns(pl.col("period").replace_strict({"quarter": 2, "half": 1}, default=0,
                                                              return_dtype=pl.Int8).alias("__q"))
         order.append("__q")
+    order += [c for c in ("filed", "value", "shares") if c in df.columns]   # complete key: ties are deterministic
     out = (df.filter((pl.col("available_from") <= on) & (pl.col("end") >= on - timedelta(days=stale_days)))
            .sort(order)
            .unique(keys, keep="last", maintain_order=True))

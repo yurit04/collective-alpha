@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import multiprocessing
 import shutil
+import time
 import zipfile
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -47,6 +48,7 @@ from ._parse import (
     quarter_of,
     write_atomic,
 )
+from ._store import EdgarStore
 
 log = logging.getLogger("edgar_cortical_node")
 CHUNK_MEMBERS = 400  # companies per conversion task
@@ -159,11 +161,39 @@ class Ingestor:
 
         built = parsedate_to_datetime(remote).date() if remote else now.date()
         state.update({"bulk_last_modified": remote, "bulk_loaded_at": now.isoformat(timespec="seconds"),
-                      "sync_through": (built - timedelta(days=1)).isoformat(), "retry_ciks": []})
+                      "sync_through": (built - timedelta(days=1)).isoformat(), "retry_ciks": [],
+                      "facts_updated_at": now.isoformat(timespec="seconds"),
+                      "facts_version": int(state.get("facts_version", 0)) + 1})
         self.layout.write_state(state)
         result.done = len(members)
         result.bytes = total_bytes
-        result.note = f"{comp.height:,} companies"
+        result.note = f"{comp.height:,} companies; {self.series().line()}"
+        return result
+
+    # ------------------------------------------------------------------ materialized series
+    def series(self) -> JobResult:
+        """Build `series.parquet` (every item, first-filed policy) and `shares.parquet` for all
+        companies from the facts, stamped with the facts version they came from, so that
+        `EdgarStore.series` and `.shares` read instead of rebuilding. Runs at the end of `bulk`
+        and `sync`; `cortical series` runs it by hand."""
+        from ._store import EdgarStore
+
+        result = JobResult("series")
+        state = self.layout.read_state()
+        if not state.get("bulk_loaded_at"):
+            result.note = "skipped: no bulk load yet"
+            return result
+        t0 = time.time()
+        version = int(state.get("facts_version") or 1)      # a store from before versions: this is version 1
+        series, shares = EdgarStore(settings=self.settings).build_tables()
+        result.bytes = write_atomic(series, self.layout.series_file) + write_atomic(shares, self.layout.shares_file)
+        state = self.layout.read_state()
+        state.update({"facts_version": int(state.get("facts_version") or version), "series_facts_version": version,
+                      "series_built_at": datetime.now(UTC).isoformat(timespec="seconds")})
+        self.layout.write_state(state)
+        result.done = series["item"].n_unique()
+        result.rows = series.height
+        result.note = f"{shares.height:,} share counts, {time.time() - t0:.0f}s"
         return result
 
     # ------------------------------------------------------------------ profiles
@@ -294,6 +324,11 @@ class Ingestor:
             path = self.layout.companies_file
             cur = pl.read_parquet(path) if path.exists() else pl.DataFrame(schema=COMPANY_SCHEMA)
             write_atomic(pl.concat([cur.filter(~pl.col("cik").is_in(upd["cik"].to_list())), upd]).sort("cik"), path)
+        if frames:  # the facts changed: the materialized series are stale until rebuilt
+            state = self.layout.read_state()
+            state["facts_updated_at"] = datetime.now(UTC).isoformat(timespec="seconds")
+            state["facts_version"] = int(state.get("facts_version", 0)) + 1
+            self.layout.write_state(state)
         return rows, failed
 
     def _sync_profiles(self, ciks: list[str]) -> str:
@@ -339,6 +374,8 @@ class Ingestor:
         result.done = len(ciks) - len(failed)
         result.rows = rows
         result.note = f"{days} day(s) of filings" + (f"; {profile_note}" if profile_note else "")
+        if rows or not EdgarStore(settings=self.settings).series_status()["current"]:
+            result.note += f"; {self.series().line()}"
         if failed:
             result.failed = {c: "fetch failed (retried next sync)" for c in failed}
         return result

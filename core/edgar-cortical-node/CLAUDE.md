@@ -8,19 +8,23 @@ User docs: README.md in this folder. Design: docs/decisions/0003-edgar-cortical-
 | Name | Use |
 |---|---|
 | `EdgarStore(root=None, settings=None)` | all reads; see below |
-| `Ingestor(settings)` | `.bulk(force, download)`, `.profiles(force, download)`, `.sync(through)`, `.refresh_ciks(ciks)`, `.refresh_profiles(ciks)` |
+| `Ingestor(settings)` | `.bulk(force, download)`, `.profiles(force, download)`, `.sync(through)`, `.refresh_ciks(ciks)`, `.refresh_profiles(ciks)`, `.series()` (materialize series.parquet / shares.parquet; bulk and sync call it) |
 | `load_settings(config_file=None, **overrides)` / `Settings` | resolved configuration |
 | `CONCEPTS` / `Concept` | item name -> kind (flow, instant, per_share), unit, tags in priority order, nonnegative, second_quarter |
 | `ConfigError`, `JobResult` | errors / job summaries |
 
 `EdgarStore` methods (all take `backend="polars"|"pandas"`; `ciks` are ints or padded strings):
-- `series(items, ciks, policy="first"|"latest")`: long table cik, item, unit, period
+- `series(items, ciks, policy="first"|"latest", materialized=None)`: long table cik, item, unit, period
   (quarter/half/annual/instant), start, end, value, filed, available_from, tag, source
   (reported/derived/redated), ttm, ttm_available_from. 31 items (flows, instants, eps_basic and
   eps_diluted); per-share `ttm` = annual figure at fiscal year ends, else four quarters summed,
-  empty across a split (values as filed, not split-adjusted)
-- `shares(ciks, policy)`: cik, end, shares, filed, available_from, tag (as reported: splits are
-  lasting jumps; main concept plus agreeing concepts; isolated outliers dropped)
+  empty across a split (values as filed, not split-adjusted). With policy "first" it reads the
+  materialized `series.parquet` when that was built from the current facts (a few hundred ms),
+  else builds from the facts (~2 s per item for 10k companies); `materialized=True/False` forces a path
+- `shares(ciks, policy, materialized=None)`: cik, end, shares, filed, available_from, tag (as reported: splits are
+  lasting jumps; main concept plus agreeing concepts; isolated outliers dropped); `shares.parquet` when current
+- `series_status()`: built_at, facts_updated_at, series_facts_updated_at, current; `build_tables()`:
+  (series of every item, shares) for all companies from the facts (what `Ingestor.series` writes)
 - `as_of(on, ciks, items, policy, stale_days=400)`: newest usable value per company and item, plus shares
 - `facts(ciks, tags, start, end, filed_before, lazy)`: raw facts; `scan(ciks)`: lazy frame
 - `profiles(ciks)`: cik, name, entity_type, sic, sic_description, category, fiscal_year_end,
@@ -28,26 +32,36 @@ User docs: README.md in this folder. Design: docs/decisions/0003-edgar-cortical-
 - `names(ciks)`: cik, name, valid_from, valid_to (name history; null = open)
 - `companies()`, `concepts()`, `status()`
 
-CLI: `cortical init | backfill | profiles | sync | status | show CIK | service install|remove|status`.
+CLI: `cortical init | backfill | profiles | sync | series | status | show CIK | service install|remove|status`.
 
 ## Internals (private)
 
 ```
 _config.py    settings (collective.toml [edgar_cortical_node], EDGAR_DATA_ROOT, EDGAR_USER_AGENT)
-_layout.py    paths, CIK buckets, state.json
+_layout.py    paths (facts buckets, companies, profiles, names, series, shares), state.json
 _client.py    SEC HTTP: User-Agent, shared rate limit (<= 8/s), retries, streamed downloads
 _parse.py     company-facts JSON -> long table; submissions -> profiles/names; daily index; workers
-_ingest.py    bulk load (parallel processes, per-bucket compaction, swap), profiles, daily sync
+_ingest.py    bulk load (parallel processes, per-bucket compaction, swap), profiles, daily sync,
+              series() (materialized tables, stamped with the facts version)
 _concepts.py  CONCEPTS and share tags
 _pit.py       point-in-time rules: choose first/latest, tag priority, quarters, TTM, per-share TTM and
               split guard, float re-dating, shares (stitch, spikes), as-of
-_store.py     EdgarStore
+_store.py     EdgarStore (reads; the materialized series/shares when current, else built from facts)
 _services.py  launchd plist for the daily sync
 cli.py        `cortical`
 ```
 
 Invariants:
 - Facts are never edited: a re-fetch replaces all rows of that CIK; only exact duplicates are dropped.
+- `series.parquet` / `shares.parquet` are a cache of `build_tables()` (policy "first", every
+  company). Anything that changes the facts (`bulk`, `refresh_ciks`) increments `facts_version`
+  in state.json (a counter, not a timestamp: two writes can share a second); `Ingestor.series`
+  records the version it built from (`series_facts_version`), and reads use the tables only
+  when the two match. Never read them without that check, and never write facts without
+  bumping the version. Design: docs/decisions/0011-materialized-edgar-series.md.
+- Every `sort` before a `unique` in `_pit.py` has a complete key (…, filed, start, val):
+  polars sorts are not stable, and an incomplete key made ties depend on input order, so the
+  same series could differ between a 300-company read and the full build.
 - A fact is usable from `filed + 1 day`; never use `end` (period end) as an availability date.
 - Default policy is first-filed per (cik, tag, unit, start, end); across tags, the value known first
   wins (tag priority only breaks ties within a filing date). Restated values only with policy="latest".

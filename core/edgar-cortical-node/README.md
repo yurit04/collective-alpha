@@ -19,6 +19,11 @@ uv run cortical sync         # daily: only companies that filed since the last s
 uv run cortical status
 ```
 
+`backfill` and `sync` end by materializing every item's point-in-time series and the share
+counts (`series.parquet`, `shares.parquet`, about two minutes), so `series()` and `shares()`
+read instead of rebuilding from 100 million facts on every call. `cortical series` rebuilds
+them by hand; `cortical status` shows `series_current`.
+
 The SEC requires a contact e-mail in the User-Agent. The default is a placeholder; to use your
 own, put it in your local `collective.toml` (outside the repo):
 
@@ -119,6 +124,15 @@ companies that filed): every company that ever filed a 10-K/10-Q/20-F/40-F or li
 (48,000), with SIC code, fiscal year end, filer category, state, current tickers and the name
 history with dates. Values are current, not point in time (the name history is dated).
 
+### Materialized series
+With the default `policy="first"`, `series()` and `shares()` read `series.parquet` and
+`shares.parquet` when those were built from the current facts: `state.json` records the facts
+version (`facts_version`, a counter that `backfill` and every per-company refresh increment) and
+the version the tables were built from; a mismatch means a rebuild is pending and reads fall back to building
+from the facts (same result, about 2 s per item for 10,000 companies). `policy="latest"` is
+always built from the facts. `EdgarStore.series_status()` tells which path a read takes;
+`materialized=True` insists on the tables and raises when they are stale.
+
 ## Limits
 - XBRL starts 2009 (large filers) to 2011 (small): nothing earlier.
 - Foreign filers use their own currency (`unit` column) and often `ifrs-full` tags; no FX here.
@@ -134,7 +148,8 @@ history with dates. Values are current, not point in time (the name history is d
   facts/bucket=NN/part.parquet   all numeric facts, CIKs split into 64 buckets
   companies.parquet              cik, name, facts, last_filed, fetched_at
   profiles.parquet  names.parquet   company profiles and name history (submissions)
-  state.json                     bulk file date, sync progress, CIKs to retry
+  series.parquet  shares.parquet  materialized point-in-time series (every item) and share counts
+  state.json                     bulk file date, sync progress, CIKs to retry, facts/series versions
   raw/companyfacts.zip           last bulk download (kept for re-parsing)
   raw/submissions.zip            last profiles download
   _logs/

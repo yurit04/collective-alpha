@@ -228,6 +228,31 @@ def test_sync_refreshes_only_filers(loaded, settings):
     assert EdgarStore(settings=settings).series("revenue", ciks=3333).height == 1
 
 
+def test_materialized_series_match_the_facts_and_track_their_version(loaded, settings):
+    from edgar_cortical_node import CONCEPTS
+
+    store, ing, fake = loaded["store"], loaded["ingestor"], loaded["fake"]
+    assert store.series_status()["current"] and "series:" in loaded["result"].note   # built by bulk
+    items = sorted(CONCEPTS)
+    fast = store.series(items, materialized=True).sort("item", "cik", "end", "start", "unit")
+    slow = store.series(items, materialized=False).sort("item", "cik", "end", "start", "unit")
+    assert fast.equals(slow) and fast.height > 0
+    assert store.shares(materialized=True).sort("cik", "end").equals(store.shares(materialized=False).sort("cik", "end"))
+    with pytest.raises(ValueError, match="policy"):
+        store.series("revenue", policy="latest", materialized=True)
+    # A facts refresh outside sync leaves the tables stale: reads fall back to the facts.
+    new_q1 = fact("2024-01-01", "2024-03-31", 140, "C1", "2024-05-02", fy=2024)
+    fake.docs["0000001111"] = acme(extra_revenue=[new_q1])
+    ing.refresh_ciks(["0000001111"])
+    assert not store.series_status()["current"] and store.status()["series_current"] is False
+    assert q(store.series("revenue", ciks=1111), D(2024, 3, 31))["value"] == 140   # fresh, from the facts
+    with pytest.raises(FileNotFoundError, match="cortical series"):
+        store.series("revenue", materialized=True)
+    res = ing.series()
+    assert res.ok and res.rows == fast.height + 1 and store.series_status()["current"]   # one new quarter
+    assert q(store.series("revenue", ciks=1111, materialized=True), D(2024, 3, 31))["value"] == 140
+
+
 def test_bulk_skips_unchanged_file(loaded):
     again = loaded["ingestor"].bulk()
     assert again.note.startswith("bulk file unchanged")
