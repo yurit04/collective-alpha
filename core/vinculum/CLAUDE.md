@@ -58,7 +58,8 @@ CLI: `vinculum build | check | status | show TICKER | universe DATE --top N | se
 _config.py    settings ([vinculum] in collective.toml, VINCULUM_DATA_ROOT)
 _layout.py    paths, atomic writes, build.json
 _names.py     company-name tokens and matching (Massive vs SEC names), looks_equity(), looks_adr(),
-              adr_ratio() (ordinary shares per ADS stated in a name), looks_converted()
+              adr_ratio() (ordinary shares per ADS stated in a name; "each N representing M" -> M/N),
+              looks_converted()
 _cikmap.py    CIK runs per security, verification, conflicts, repair by name, overrides, cik_on()
 _shares.py    split attribution, restated-basis choice, spikes, unit levels by turnover, basis ratios
 _build.py     equity filter, liquidity table, calibration, yearly market-cap panels, public float
@@ -105,7 +106,9 @@ Invariants:
   its 2023 split, 3 after), else `unknown` (no market cap); converted ADRs and stocks -> 1
   (`assumed`).
   The same applies when the SEC counts are too old to meet Massive's current one (Baidu, counts
-  end 2010). Don't calibrate on Massive's dated ticker details: their pre-2017 counts are
+  end 2010); the large ones have rows in basis_overrides.csv, each checked against a known value.
+  Never add an override where the counts are wrong for the security (missing classes, pre-IPO,
+  after the last trade) or a security spans two companies (GRUB). Don't calibrate on Massive's dated ticker details: their pre-2017 counts are
   often in ordinary shares (half disagreed in validation, 0004).
 - Share-count turnover (`_shares._turnover`) uses only years the security itself traded; a
   count dated before a security's first trade is dropped when more than JUMP off its first own

@@ -48,6 +48,11 @@ RATIO_CAPS = [
     ("BBG000JJBNH6", "LTM", D(2019, 6, 3), 4e9, 12e9, "1 share per ADS; the 2022 reorganization's 1000x counts not applied"),
     ("BBG00JQ09RM6", "CTRP", D(2017, 12, 1), 15e9, 40e9, "override: 8 ADS per share (Massive's name reverses it)"),
     ("BBG0059GVX06", "SKM", D(2019, 6, 3), 10e9, 30e9, "counts after its last trade (post-2021 split) not applied"),
+    ("BBG000QXWHD1", "BIDU", D(2010, 12, 31), 25e9, 45e9, "override: 10 ADS per share; SEC counts end 2010"),
+    ("CIK:0001508913:QIHU", "QIHU", D(2015, 12, 1), 6e9, 14e9, "override: 2 ADS per 3 shares (name says 3)"),
+    ("BBG000C4R6H6", "VOD", D(2020, 12, 31), 35e9, 70e9, "override: 10 shares per ADS"),
+    ("CIK:0000936402:SHPGY", "SHPG", D(2018, 6, 1), 40e9, 75e9, "override: 3 shares per ADS"),
+    ("BBG011DJJ3G6", "DIDI", D(2022, 5, 31), 2e9, 15e9, "name: four ADSs per share"),
 ]
 # ADSs once aligned across a real 1000x share issuance (shown at $2.4T): never above $50B.
 GIANT_ADRS = {"BBG000JJBNH6": "LTM"}

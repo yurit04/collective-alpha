@@ -286,3 +286,20 @@ history (it accumulates only from the first download) and may not be in smaller 
 - **Instead.** The gap is documented under Limits. Overrides in `basis_overrides.csv` (one
   documented row each) fix single names when a study needs them.
 
+### Follow-up: overrides for the large unknown ADRs, N-for-M names
+- **Overrides.** 39 new rows in `basis_overrides.csv` for unknown ADRs trading over ~$3M a day.
+  Each ratio is the documented ADS ratio, checked against a known company value (a buyout price,
+  a year-end value). Unknown ADRs with SEC counts trading over $5M a day: 46 -> 16.
+- **Left out.** A ratio does not help where the counts are wrong for the security: counts
+  missing share classes (Itau, Bancolombia, CEMIG, Shell A/B), pre-IPO counts (iQIYI, Qunar),
+  counts only after the last US trade (America Movil, VimpelCom, Telefonica Brasil, Luckin),
+  and GRUB, one security for Grubhub's stock and then Just Eat Takeaway's ADS (ratio 5 would
+  have shown Grubhub at $66B).
+- **Names giving N ADSs for M shares.** "each four representing one Class A" (DiDi) was read as
+  1 share per ADS. `adr_ratio` now reads M / N for "each N [ADSs] representing M" and "N ADS
+  REPTG M". Five securities changed: DiDi 1 -> 1/4 per ADS (basis 4; $5B in May 2022, not
+  $1.3B), Jianpu, Dingdong, Onion Global, Sunlands. Qihoo's "ADS RPSTG 3 CL A SHS" (really 2 for
+  3) is an override: the name alone cannot say it.
+- **Reversed names.** Scanned all 58,749 month-end names. The only other "1 ADR TO N" name is
+  Daqo's "1 ADR TO 25 ORD SHS": right for its time, and Daqo is calibrated anyway.
+- **Checks.** Known values for BIDU 2010, QIHU 2015, VOD 2020, SHPG 2018 and DIDI 2022.

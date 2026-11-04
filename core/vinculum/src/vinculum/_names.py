@@ -146,6 +146,14 @@ _RATIO = [
     re.compile(r"\(\s*" + _NUM + _UNIT),                                                      # "ADS (4 ORD SHS)", "(5 UTS)"
     re.compile(r"\b" + _NUM + r"\s*(?:ORD|COM|SH)[A-Z]*\b"),                                 # "ADS 5 ORD SHS"
 ]
+# "each two representing three Ordinary Shares", "each ten (10) ADSs representing one (1) Class A",
+# "4 ADS REPTGS 1 ORD": N depositary shares for M shares, so M / N per ADS.
+_PAREN = r"\s*(?:\(\d+\)\s*)?"
+_GROUP = [
+    re.compile(r"\bEACH\s+" + _NUM + _PAREN + r"(?:ADSS?|ADRS?|AMERICAN DEPOSITARY SHARES)?\s*REPRESENT(?:ING|S)?\s+"
+               + _NUM + _PAREN + _UNIT),
+    re.compile(r"\b" + _NUM + r"\s+(?:ADSS?|ADRS?)\s+(?:REPRESENT(?:ING|S)?|REPTGS?|REPSTG)\s+" + _NUM + _PAREN + _UNIT),
+]
 
 
 # A former ADR whose latest name says it is ordinary shares now (Fanhua -> "AIFU Inc. Class A
@@ -167,18 +175,28 @@ def adr_ratio(name: str | None) -> float | None:
     if not looks_adr(name):
         return None
     up = name.upper()
+    for rx in _GROUP:
+        m = rx.search(up)
+        if m:
+            n, k = _number(m.group(1)), _number(m.group(2))
+            val = k / n if n and k else None
+            if val and 1e-3 <= val <= 1e4:
+                return float(val)
     for rx in _RATIO:
         m = rx.search(up)
         if not m:
             continue
-        tok = m.group(1).replace(" ", "-") if m.group(1) else ""
-        if "/" in tok:
-            a, b = tok.split("/")
-            val = float(a) / float(b) if float(b) else None
-        elif tok.replace(".", "", 1).isdigit():
-            val = float(tok)
-        else:
-            val = _WORDS.get(tok, _WORDS.get(tok.replace("-", " ")))
+        val = _number(m.group(1))
         if val and 1e-3 <= val <= 1e4:
             return float(val)
     return None
+
+
+def _number(tok: str | None) -> float | None:
+    tok = tok.replace(" ", "-") if tok else ""
+    if "/" in tok:
+        a, b = tok.split("/")
+        return float(a) / float(b) if float(b) else None
+    if tok.replace(".", "", 1).isdigit():
+        return float(tok)
+    return _WORDS.get(tok, _WORDS.get(tok.replace("-", " ")))

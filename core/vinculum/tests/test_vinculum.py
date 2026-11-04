@@ -614,7 +614,21 @@ def test_adr_names_and_ratios():
     assert adr_ratio("NIDEC CP (NIHON KABUSHIKI KAISHA)1 ADS REPTG .25 SH") == 0.25
     assert adr_ratio("SOS Limited American Depositary Shares, each representing five hundred (500) Class A") == 500
     assert adr_ratio("TAOMEE HLDGS LTD SPON ADR (CYM)") is None and adr_ratio("Apple Inc.") is None
+    # N ADSs for M shares: M / N per ADS
+    assert adr_ratio("DiDi Global Inc. American depositary shares, each four representing one Class A ordinary share") == 0.25
+    assert adr_ratio("Dingdong (Cayman) Limited American Depositary Shares (each two representing three Ordinary Shares)") == 1.5
+    assert adr_ratio("Onion Global Limited American Depositary Shares (each ten (10) ADSs representing one (1) Class A") == 0.1
+    assert adr_ratio("ETABLISSEMENT DELHZ ADS 4 ADS REPTGS 1 ORD SHS") == 0.25
+    assert adr_ratio("Honda Motor Co., Ltd. American Depositary Share, each representing three Common Stock") == 3
     assert looks_converted("AIFU Inc. Class A Ordinary Share") and not looks_converted("YOUKU TUDOU INC.(CAYMAN ISLS)")
+
+
+def test_basis_overrides_file():
+    from vinculum._build import load_basis_overrides
+    ov = load_basis_overrides()
+    assert ov.height >= 40 and ov["security_id"].is_unique().all()
+    assert ov["basis_ratio"].is_not_null().all() and (ov["basis_ratio"] > 0).all()
+    assert ov["note"].str.len_chars().min() > 10
 
 
 def test_adr_flags_and_dated_name_ratios():

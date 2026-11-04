@@ -2,3 +2,42 @@
 security_id,basis_ratio,note
 BBG000DWG505,1500,BRK.B: Berkshire reports Class A equivalents; 1 A = 1500 B since the 2010 split
 BBG00JQ09RM6,8,CTRP (Ctrip): 8 ADS per ordinary share after 2-for-1 ADS splits in 2006 and 2015; Massive names it "1 ADR TO 4 ORD SHS" (reversed)
+BBG000QXWHD1,10,BIDU (Baidu): 10 ADS per ordinary share since the 2010 ADS split; SEC counts end 2010 (pre-2021 shares); end-2010 value $34B
+CIK:0001508913:QIHU,0.666667,QIHU (Qihoo 360): 2 ADS per 3 Class A shares; Massive's "ADS RPSTG 3 CL A SHS" drops the 2; $9.3B at the 2016 buyout price
+BBG00K7T3037,1,BILI (Bilibili): 1 ADS = 1 Class Z share; SEC counts end 2019; end-2019 value $6B
+BBG000C4R6H6,0.1,VOD (Vodafone): 1 ADS = 10 ordinary shares; SEC counts end 2021-03 ($50B then)
+BBG00JQ09QM8,0.5,MOMO (Momo; to 2021-08): 1 ADS = 2 Class A shares
+BBG005MYZ634,0.05,YY (YY; to 2019-12): 1 ADS = 20 Class A shares
+BBG00JQ24CL1,0.5,WUBA (58.com): 1 ADS = 2 Class A shares; $9.7B at the 2020 buyout
+CIK:0000936402:SHPGY,0.333333,SHPG (Shire): 1 ADS = 3 ordinary shares; $55B in 2018
+BBG000KHT4K7,1,GFI (Gold Fields): 1 ADS = 1 ordinary share; $11.8B at end 2024
+CIK:0001330017:FMCN,0.2,FMCN (Focus Media): 1 ADS = 5 ordinary shares; $3.4B at end 2012
+BBG00JPZ24F6,0.083333,GWPH (GW Pharmaceuticals): 1 ADS = 12 ordinary shares; $6.9B at Jazz's 2021 bid
+BBG000BRVF72,1,CS (Credit Suisse): 1 ADS = 1 share; $12B at end 2022
+BBG000BX93G1,1,HMY (Harmony Gold): 1 ADS = 1 ordinary share; matches Massive's current $9.5B
+CIK:0000928340:MR,1,MR (Mindray): 1 ADS = 1 Class A share; $3.3B at the 2016 buyout
+CIK:0001278308:SNDA,0.5,SNDA (Shanda Interactive): 1 ADS = 2 ordinary shares; $2.3B at the 2012 buyout
+CIK:0001110649:FBR,1,FBR (Fibria): 1 ADS = 1 common share; $8B at end 2017
+BBG000BQ94L8,0.2,TSU (TIM Participacoes): 1 ADS = 5 common shares; $9B at end 2019
+BBG000C3VPQ1,0.25,LYG (Lloyds): 1 ADS = 4 ordinary shares; SEC counts end 2019 ($58B then)
+BBG00X71QNZ0,0.5,CD (Chindata): 1 ADS = 2 Class A shares; $2.9B at end 2022
+BBG000CKYG71,1,CUK (Carnival plc): 1 ADS = 1 ordinary share; SEC counts end 2015
+BBG00JQDNGC7,1,BITA (Bitauto): 1 ADS = 1 ordinary share; $1B at end 2019
+BBG00PMMBQS1,1,VIST (Vista Energy): 1 ADS = 1 Series A share; $2.8B at end 2023
+CIK:0001403849:PWRD,0.2,PWRD (Perfect World): 1 ADS = 5 Class B shares; $1B at the 2015 buyout price
+BBG00TSYD7Q3,0.25,DADA (Dada Nexus): 1 ADS = 4 ordinary shares
+BBG00JPVN6D9,1,TLND (Talend): 1 ADS = 1 ordinary share; $2.2B in 2021
+CIK:0001376972:HMIN,0.5,HMIN (Home Inns): 1 ADS = 2 ordinary shares; $1.7B at the 2016 buyout price
+CIK:0001287950:SPRD,0.333333,SPRD (Spreadtrum): 1 ADS = 3 ordinary shares
+BBG000B9XWX4,0.1,ASR (Grupo Aeroportuario del Sureste): 1 ADS = 10 Series B shares; $5B at end 2020
+CIK:0001111759:SPIL,0.2,SPIL (Siliconware): 1 ADS = 5 common shares; $5.2B at end 2017
+SYM:VEDL:2015-05-11,0.25,VEDL (Vedanta): 1 ADS = 4 equity shares
+CIK:0001417961:VIT,1,VIT (VanceInfo): 1 ADS = 1 ordinary share
+BBG000F0XHJ8,0.4,TKC (Turkcell): 1 ADS = 2.5 ordinary shares; $4.7B at end 2020
+CIK:0001415016:GA,1,GA (Giant Interactive): 1 ADS = 1 ordinary share; $2.9B at the 2014 buyout
+CIK:0001524190:KANG,2,KANG (iKang): 2 ADS per Class A share; $1.4B in 2018
+BBG00ZHZXYC2,1,OLK (Olink): 1 ADS = 1 ordinary share; $3.1B at Thermo's 2024 bid
+BBG00XRJJLG2,1,ABCM (Abcam): 1 ADS = 1 ordinary share
+BBG00JSK60T5,1,LN (LINE): 1 ADS = 1 common share; $12B in 2020
+BBG00K5SZVR2,0.01,CHA (China Telecom): 1 ADS = 100 H shares
+CIK:0001470157:GAME,0.5,GAME (Shanda Games): 1 ADS = 2 Class A shares; $1.9B at the 2015 buyout

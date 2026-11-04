@@ -207,12 +207,17 @@ everything else (ETFs, preferreds, OTC stocks).
    - stocks, and former ADRs that converted to ordinary shares, assume 1;
    - an ADR takes the ratio its name states (`name`), as of its latest SEC count. Honda's ADS
      was 1 share until its 2023 split and 3 after, and its counts stop in 2020, so it gets 1.
-     Examples: iSoftStone "ADS EACH REPSTG 10 ORD", Sony, ABB, HDFC Bank;
+     Examples: iSoftStone "ADS EACH REPSTG 10 ORD", Sony, ABB, HDFC Bank. A name giving N ADSs
+     for M shares means M / N per ADS: DiDi "each four representing one Class A" is 1/4,
+     Dingdong "each two representing three" is 1.5;
    - an ADR whose names state no ratio gets none (`unknown`): no market cap rather than a wrong
-     one. Taomee, Tata Communications, Focus Media, Mindray, Qihoo and Makita lose theirs;
-     `basis_overrides.csv` can restore one with a documented ratio. It also corrects names that
-     state a ratio backwards: Ctrip's "1 ADR TO 4 ORD SHS" meant 4 ADSs per share (8 after its
-     2015 ADS split), so its override is 8 ($22B in 2017, not $0.7B).
+     one. Taomee, Tata Communications and Makita have none;
+   - `basis_overrides.csv` sets a documented ratio by hand: 41 large ADRs whose names state
+     none or whose SEC counts are too old to calibrate (Baidu, Vodafone, Lloyds, Shire, Mindray,
+     Focus Media, ...; each checked against a known company value). It also corrects names that
+     get a ratio wrong: Ctrip's "1 ADR TO 4 ORD SHS" meant 4 ADSs per share (8 after its 2015
+     ADS split), so its override is 8 ($22B in 2017, not $0.7B); Qihoo's "ADS RPSTG 3 CL A SHS"
+     was 2 ADSs per 3 shares.
 5. Safety net: while a count is in use, an impossible median turnover withholds the market cap
    (`implausible`). Penny ADRs (under $2) have two more rules, because a wrong ADS ratio shows
    a micro-cap as a giant (NCNA at $0.81 and $37k a day was shown as a $6.2B company, and at
@@ -250,10 +255,13 @@ everything else (ETFs, preferreds, OTC stocks).
   name; a delisted ADR whose name states none has no market cap.
 - The same holds for an ADR whose SEC share counts stopped years ago, even if it still trades:
   its counts cannot be calibrated against Massive's current one, so it is `unknown` unless its
-  name states a ratio. Examples: Baidu (counts end 2010), Vodafone, Itau, Lloyds, Bilibili. In
-  the 2026-11-03 build, 266 ADRs with SEC counts are `unknown`, 46 of them trading over $5M a
-  day. A documented row in `basis_overrides.csv` restores one. Massive's past share counts
-  (ticker details as of a date) were tested as a fix and rejected (0004).
+  name states a ratio or it has an override. The largest now have overrides (Baidu, Vodafone,
+  Lloyds, Bilibili, ...). In the 2026-11-03 build, 234 ADRs with SEC counts are still
+  `unknown`, 16 of them trading over $5M a day. Those are left out on purpose: their SEC counts
+  miss share classes (Itau, Bancolombia, Shell's A and B), are pre-IPO (iQIYI, Qunar) or
+  postdate their last US trade (America Movil, VimpelCom), or one security joins two companies
+  (GRUB: Grubhub, then Just Eat Takeaway). Massive's past share counts (ticker details as of a
+  date) were tested as a fix and rejected (0004).
 - Multi-class companies without a company-wide SEC count after some date (Berkshire after 2016)
   have no market cap from then on; tracking stocks (Liberty) get none.
 - Ratios only for USD reporters (no FX conversion).
