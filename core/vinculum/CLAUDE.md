@@ -104,6 +104,9 @@ Invariants:
   its latest SEC count (`name_ratio_as_of`; a ratio belongs to its period, e.g. Honda 1 before
   its 2023 split, 3 after), else `unknown` (no market cap); converted ADRs and stocks -> 1
   (`assumed`).
+  The same applies when the SEC counts are too old to meet Massive's current one (Baidu, counts
+  end 2010). Don't calibrate on Massive's dated ticker details: their pre-2017 counts are
+  often in ordinary shares (half disagreed in validation, 0004).
 - Share-count turnover (`_shares._turnover`) uses only years the security itself traded; a
   count dated before a security's first trade is dropped when more than JUMP off its first own
   count, and a count dated after its last trade when more than JUMP off its last own count

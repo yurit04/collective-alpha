@@ -248,6 +248,12 @@ everything else (ETFs, preferreds, OTC stocks).
 - No market cap before XBRL (2009 large filers, 2011 small; foreign filers about 2017-18).
 - ADR and class ratios come from today's counts or, for delisted ADRs, the ratio in their
   name; a delisted ADR whose name states none has no market cap.
+- The same holds for an ADR whose SEC share counts stopped years ago, even if it still trades:
+  its counts cannot be calibrated against Massive's current one, so it is `unknown` unless its
+  name states a ratio. Examples: Baidu (counts end 2010), Vodafone, Itau, Lloyds, Bilibili. In
+  the 2026-11-03 build, 266 ADRs with SEC counts are `unknown`, 46 of them trading over $5M a
+  day. A documented row in `basis_overrides.csv` restores one. Massive's past share counts
+  (ticker details as of a date) were tested as a fix and rejected (0004).
 - Multi-class companies without a company-wide SEC count after some date (Berkshire after 2016)
   have no market cap from then on; tracking stocks (Liberty) get none.
 - Ratios only for USD reporters (no FX conversion).

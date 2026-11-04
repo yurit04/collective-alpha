@@ -265,3 +265,24 @@ history (it accumulates only from the first download) and may not be in smaller 
   - Against the build before this addendum: 17,216,668 -> 17,241,509 security-days with a
     market cap; 184,243 changed across 648 securities. Top-1,000 month-end memberships: 2,060
     of 201,398 left and 2,080 entered (Ctrip is among those entering).
+
+### Rejected the same day: ADS ratios from Massive's past share counts
+- **Problem.** 266 ADRs with SEC share counts have no basis (`unknown`), 46 of them trading
+  over $5M a day, including ones still listed (Baidu, Vodafone, Itau, Lloyds, Bilibili). Their
+  SEC counts stop years ago (Baidu's in 2010), so they cannot be calibrated against Massive's
+  current count, and their names state no ratio. This predates the addendum above; it only
+  moved delisted ADRs with no stated ratio from an assumed 1 to `unknown`.
+- **Tried.** Massive's ticker details as of a past date (`/v3/reference/tickers/{t}?date=`)
+  return share counts. The idea was to calibrate each ADR at the month end of its latest SEC
+  count, putting the dated count into today's units with the security's later splits.
+- **Validation (go if >= 90% agree).** The test re-calibrated ADRs already calibrated on today's
+  counts, at one of their past SEC counts:
+  - 87 of 100 agreed for counts from 2020-22;
+  - 19 of 38 agreed for counts from 2009-16.
+
+  The older counts are often in ordinary shares rather than ADSs: NetEase 2015 gave 1 instead of
+  0.2, and JD and Huazhu were off too. The unknown ADRs' counts are mostly from 2008-16, so it was
+  a no-go. No code was kept.
+- **Instead.** The gap is documented under Limits. Overrides in `basis_overrides.csv` (one
+  documented row each) fix single names when a study needs them.
+
