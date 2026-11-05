@@ -18,6 +18,7 @@ notebooks/
   unimatrix-zero/            factor sorts, information coefficients, backtests with costs
   borg-queen/                the factor risk model and the cost-aware optimizer
   transwarp-conduit/         execution: order sheets, the simulated broker, reconciliation
+  nanoprobe-array/           intraday bars on a session clock, empty bars and halts, auction prices, features, daily intraday summaries
   unicomplex/                `collective status`
 src/subspace_probe/          small shared helpers (chart style, timing, byte formatting)
 ```
@@ -85,6 +86,12 @@ Re-run a notebook to refresh it after its module changes.
 | Notebook | What it shows |
 |---|---|
 | `00_paper_execution.ipynb` | Settings and limits, the simulated broker and name matching, contract mapping, planning a sheet and its checks, submitting to the simulator with fills and reconciliation, the next rebalance, a read-only look at the paper account (nothing is ever sent to IB) |
+
+## nanoprobe-array
+
+| Notebook | What it shows |
+|---|---|
+| `00_intraday.ipynb` | The session clock and early closes, empty bars and the 2020-03-09 halt on a grid, the closing auction missing from minute bars, features through a day, the top 500 one day at a time, daily summaries: SPY overnight vs intraday and intraday momentum |
 
 ## unicomplex
 

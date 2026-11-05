@@ -18,6 +18,7 @@ DAG; **projects** use core packages and never each other.
 ```mermaid
 flowchart LR
     massive[massive-subspace-stream] --> vinculum
+    vinculum --> nanoprobe[nanoprobe-array]
     edgar[edgar-cortical-node] --> vinculum
     finra[finra-sensor-array] --> vinculum
     vinculum --> neural[neural-processor]
@@ -41,6 +42,7 @@ out; `uv run python tools/check_architecture.py --graph` prints the full graph.<
 | [`unimatrix-zero`](core/unimatrix-zero/README.md) | | Backtests: returns across successors with delisting exits, portfolio builders, daily engine with lag and costs, analytics |
 | [`borg-queen`](core/borg-queen/README.md) | `queen` | Factor risk model (market, sector, style), covariance forecasts, attribution; cost-aware optimizer |
 | [`transwarp-conduit`](core/transwarp-conduit/README.md) | `conduit` | Execution through Interactive Brokers: order sheets with limits, paper-first market-on-close orders, journal, reconciliation |
+| [`nanoprobe-array`](core/nanoprobe-array/README.md) | `nanoprobe` | Intraday: minute bars resampled on a session clock with gap rules, auction prices, per-bar features, daily intraday summaries since 2003 |
 | [`unicomplex`](core/unicomplex/README.md) | `collective` | Orchestration: `collective status`, a read-only freshness report over every store |
 
 Projects:

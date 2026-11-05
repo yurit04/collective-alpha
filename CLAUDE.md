@@ -44,9 +44,11 @@ Current core graph:
 | `unimatrix-zero` | Backtests: daily returns across successors with delisting exits, portfolio builders, daily engine with lag and costs, analytics | neural-processor, vinculum, massive-subspace-stream |
 | `borg-queen` | Risk model: market, sector and style factors, daily factor returns, EWMA covariance with regime adjustment, specific risk, forecasts, attribution; cost-aware optimizer (cvxpy) and rebalance loop | unimatrix-zero, neural-processor, vinculum, massive-subspace-stream |
 | `transwarp-conduit` | Execution through Interactive Brokers: IB contract mapping, order sheets with limits, paper-first MOC orders, journal, reconciliation | unimatrix-zero, massive-subspace-stream |
+| `nanoprobe-array` | Intraday: regular-session bar clock, minute bars resampled with gap rules, auction prices, per-bar features, daily intraday summaries store | massive-subspace-stream, vinculum |
 | `unicomplex` | Orchestration: `collective status`, a read-only freshness report over every store against the nightly schedule (phase 1) | massive-subspace-stream, edgar-cortical-node, finra-sensor-array, vinculum, borg-queen, transwarp-conduit |
 
 Planned (not built):
+`tactical-cube` intraday backtester (decision 0014 phase 2), intraday cost calibration (phase 3),
 `unicomplex` phase 2 (scheduled runs with one log and lock), `transwarp-conduit` phases 2-3 (cost calibration, live).
 
 ## Commands
@@ -62,6 +64,7 @@ uv run vinculum --help                 # market cap / universes (see core/vincul
 uv run sensor --help                   # FINRA short data (see core/finra-sensor-array/README.md)
 uv run queen --help                    # risk model (see core/borg-queen/README.md)
 uv run conduit --help                  # IB execution (see core/transwarp-conduit/README.md)
+uv run nanoprobe --help                # intraday bars, features, daily intraday summaries (core/nanoprobe-array/README.md)
 uv run collective status               # is every store as fresh as the schedule allows? (core/unicomplex/README.md)
 ```
 

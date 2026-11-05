@@ -14,6 +14,7 @@ dependencies = [
     "borg-queen",
     "transwarp-conduit",
     "unicomplex",
+    "nanoprobe-array",
     "matplotlib>=3.9",
     "ipykernel>=6.29",
 ]
@@ -28,6 +29,7 @@ unimatrix-zero = { workspace = true }
 borg-queen = { workspace = true }
 transwarp-conduit = { workspace = true }
 unicomplex = { workspace = true }
+nanoprobe-array = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

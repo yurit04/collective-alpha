@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Catch up every data source, then rebuild vinculum.
+# Catch up every data source, then rebuild vinculum and the intraday summaries.
 #
 # Each sync resumes from its own last stored day, so a machine that was off for a few days
 # catches up on the next run. Run by the collective-sync systemd user timer
@@ -55,6 +55,7 @@ run subspace sync
 run cortical sync
 run sensor sync
 run vinculum build   # rebuilds from whatever is stored, so it runs even if a sync failed
+run nanoprobe build  # only the years behind the minute bars (about a minute)
 
 if [ ${#failed[@]} -gt 0 ]; then
     echo "=== $(date '+%F %T') done with failures: ${failed[*]}"
