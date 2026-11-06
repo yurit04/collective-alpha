@@ -18,7 +18,7 @@ User docs: README.md in this folder. Design: docs/decisions/0004-vinculum.md.
 - `build(years=None)`: rebuild everything (~30 s); `check()`: [(name, passed, detail)]; `status()`
 - `market_cap(tickers, start, end, by="ticker"|"security", primary_only=False, lazy=False)`:
   date, security_id, ticker, type, cik, cik_status, close (raw), volume, dollar_volume,
-  split_factor, shares (that day's units), shares_end, shares_filed, shares_tag, shares_jump,
+  split_factor (Massive's, less price-only events), shares (that day's units), shares_end, shares_filed, shares_tag, shares_jump,
   basis_ratio, basis, market_cap, issuer_market_cap, is_primary, implausible,
   float_fraction, float_date, float_market_cap, issuer_float_market_cap (public float from the
   latest 10-K, usable the day after filing, for 400 days)
@@ -61,7 +61,7 @@ _names.py     company-name tokens and matching (Massive vs SEC names), looks_equ
               adr_ratio() (ordinary shares per ADS stated in a name; "each N representing M" -> M/N),
               looks_converted()
 _cikmap.py    CIK runs per security, verification, conflicts, repair by name, overrides, cik_on()
-_shares.py    split attribution, restated-basis choice, spikes, unit levels by turnover, basis ratios
+_shares.py    split attribution, price-only events (spin-offs recorded as splits), restated-basis choice, spikes, unit levels by turnover, basis ratios
 _build.py     equity filter, liquidity table, calibration, yearly market-cap panels, public float
               (float_table after the panels, then add_float rewrites them), scan_panels, build()
 _store.py     Vinculum (reads, ranks, universes, fundamentals with predecessor fallback, short data)
@@ -129,6 +129,14 @@ Invariants:
   Never go back to overlapping first-to-last-trade spans: a stock's temporary ticker after a
   reverse split (TOPSD) sits inside its gap, and the test drops real splits of a stock that
   issues shares between reverse splits (Top Ships, $167B in 2018).
+- Price-only events (`_shares.price_only_events`): Massive records some spin-offs as splits
+  (Dell's VMware spin, 1.973; DuPont's Qnity spin, 2.39). A non-round ratio moving the price
+  > 10% while the SEC count across it moves < 15% and < a third of the ratio is price-only: kept
+  out of the counts, inherited counts and per-share conversion, and taken out of `close` and
+  `split_factor` in the liquidity table and the panels (raw close, volume, dollar volume
+  unchanged). Without counts on both sides an event stays a split. Recorded in
+  split_attribution.parquet (`price_only`). Never apply a price-only event to a count: a count
+  dated before the spin would show the company k times too large until the next filing.
 - Tickers given with `by="security"` that no longer trade resolve to their last holder.
 - Float fraction = public float / issuer market cap on the float date (company-wide, every class);
   kept only within FLOAT_RANGE after a 1000^n unit fix; usable from the 10-K's available_from.

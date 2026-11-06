@@ -328,10 +328,42 @@ history (it accumulates only from the first download) and may not be in smaller 
   one basis and the counts on another. Dell 2019 is now $36.5B (was $18.5B), DuPont 2019 $50.9B
   (was $21.3B). The top 500 changes at 59 of 215 month ends since 2009: TOPS leaves (2018-10 to
   2019-02), and DuPont, shown at $13-14B instead of about $33B, is back from 2021-06 to 2026-01.
-- **Left.** A spin-off recorded as a split is a price adjustment, not a share change, so a count
-  dated before it is still multiplied by its ratio until the next count is filed: Dell shows
-  about 2x too high from 2021-11-02 for about four months, DuPont 2.4x from 2025-11-03 to
-  2026-02-17. Massive has 24 such non-round events beyond 1.22x on 22 securities, 23 of them applied
-  as before. Treating them as price-only (neither prices nor counts adjusted) would close it.
+- **Left (fixed the same day, below).** A spin-off recorded as a split is a price adjustment,
+  not a share change, so a count dated before it was still multiplied by its ratio until the
+  next count was filed: Dell about 2x too high from 2021-11-02 for about four months, DuPont
+  2.4x from 2025-11-03 to 2026-02-17.
 - **Checks.** TOPS 2018, DELL 2019 and DD 2019 market caps in `vinculum check`.
 
+### Follow-up the same day: spin-offs recorded as splits are price-only
+- **Rule.** A Massive "split" is price-only when:
+  - its ratio is not a simple fraction (k or 1/k within 0.2% of n/m, m <= 10);
+  - it moves the price by more than 10%;
+  - the SEC count across it (last filed before, first dated after, at most 400 days apart)
+    moves by less than 15% and less than a third of the ratio.
+
+  Without counts on both sides an event stays a split.
+- **Use.** Price-only events never touch share counts, inherited successor counts or per-share
+  conversion. They are taken out of the split-adjusted close and `split_factor` in the
+  liquidity table and the daily panels, so market cap = close x shares_now x basis holds on
+  both sides of the spin. Raw close, volume and dollar volume do not change.
+  `split_attribution.parquet` has a `price_only` column, and `build.json` has
+  `price_only_events`.
+- **Found:** 18 events on 15 securities. YUM, DHR, GE (2), HSIC, MDU (2), MMM, LH, AIV, XPO (2),
+  XRX, FTV, DD, ASH, DELL, GPUS.
+- **Not found, rightly:** odd ratios with real share changes, where the counts moved:
+  - Astronics' 15% stock dividends, Four Corners 1.37, AGBA 1.94;
+  - reverse splits with issuance (ARCW, FOXO, PBM).
+- **Effect** (same data, without and with the rule): only the window between each spin and the
+  next count changes, by 1/k (8 to 232 trading days per spin). Dell 2021-12-31 is $43.1B (was
+  $86B), DuPont 2025-12-31 $16.8B (was $40B), Aimco January 2021 $0.68B (was $0.55B, ratio
+  0.81). Earlier days, basis ratios and share-count rows are unchanged.
+  - The top 500 changes at 5 of 215 month ends: Xerox (2017-01), Fortive (2025-06) and DuPont
+    (2025-11 to 2026-01) leave, no longer shown at their pre-spin size.
+  - Dell's TTM EPS in November 2021 is $4.84, not $2.45 (pre-spin quarters were divided by
+    1.973).
+- **Consumers.** The panel's `split_factor` now leaves these events out. neural-processor
+  converts EPS and shares to today's units with it, so its share issuance and EPS growth no
+  longer show a 2x change at a spin.
+- **Not changed.** `Store`'s `adjust="splits"` and unimatrix-zero's returns still fold the spin
+  into the price series. For returns that is right, as it keeps the spin's value in the holding.
+- **Checks.** DELL 2021-12-31 and DD 2025-12-31 market caps in `vinculum check`.

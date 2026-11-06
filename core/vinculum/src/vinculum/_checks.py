@@ -57,6 +57,9 @@ RATIO_CAPS = [
     ("CIK:0001296484:TOPT", "TOPS", D(2018, 11, 30), 1e6, 0.1e9, "TOPSD after a reverse split is not a second class"),
     ("BBG00DW3SZS1", "DELL", D(2019, 6, 28), 25e9, 50e9, "the 2021 VMware spin, recorded as a split, applies"),
     ("BBG00BN961G4", "DD", D(2019, 8, 30), 35e9, 65e9, "the 2025 Qnity spin, recorded as a split, applies"),
+    # ... and is price-only: a count dated before the spin is not multiplied by its ratio after it.
+    ("BBG00DW3SZS1", "DELL", D(2021, 12, 31), 35e9, 55e9, "the VMware spin (1.973) changed the price, not the shares"),
+    ("BBG00BN961G4", "DD", D(2025, 12, 31), 12e9, 25e9, "the Qnity spin (2.39) changed the price, not the shares"),
 ]
 # ADSs once aligned across a real 1000x share issuance (shown at $2.4T): never above $50B.
 GIANT_ADRS = {"BBG000JJBNH6": "LTM"}

@@ -180,6 +180,14 @@ everything else (ETFs, preferreds, OTC stocks).
    BRK.B's 2010 split and Berkshire's Class A equivalents). A class counts as separate only if
    another security on its CIK traded on at least 20 of the same days (Top Ships' temporary
    ticker after a reverse split is not a second class).
+   - Spin-offs that Massive records as splits are price-only. Dell's VMware spin (1.973) and
+     DuPont's Qnity spin (2.39) changed the price, not the shares. A non-round ratio that moves
+     the price by more than 10%, while the SEC count across it moves by less than 15% (and a
+     third of the ratio), is never applied to a count or a per-share value. It is also taken
+     out of the panel's `close` adjustment and `split_factor`. 18 events on 15 securities
+     (GE, 3M, Danaher, Yum, Xerox, XPO, Labcorp, Fortive, ...). Before, a count dated before the
+     spin showed the company k times too large until the next filing (Dell $86B instead of
+     $43B in December 2021).
    - A count dated before a security's first trade is dropped when it is more than 3x off the
      security's first count after it. This covers a security that replaced another on the same
      CIK at a reverse split, such as Aradigm's 2014 listing after a 1-for-40: the new security
@@ -266,10 +274,6 @@ everything else (ETFs, preferreds, OTC stocks).
   date) were tested as a fix and rejected (0004).
 - Multi-class companies without a company-wide SEC count after some date (Berkshire after 2016)
   have no market cap from then on; tracking stocks (Liberty) get none.
-- Spin-offs that Massive records as splits (24 non-round "splits", e.g. Dell's VMware spin in
-  2021, 1.973, and DuPont's Qnity spin in 2025, 2.39) are applied to the share counts like
-  splits. That is right before the spin, but until the first count after it is filed, the
-  company shows the spin's ratio too high (Dell about 2x for four months, DuPont 2.4x for three).
 - Ratios only for USD reporters (no FX conversion).
 - Successors need a ~1:1 exchange: mergers at another ratio (and spin-offs) are not linked, and
   the predecessor's figures are those of the old company (an acquirer's TTM lags the deal, as
