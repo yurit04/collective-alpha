@@ -303,3 +303,35 @@ history (it accumulates only from the first download) and may not be in smaller 
 - **Reversed names.** Scanned all 58,749 month-end names. The only other "1 ADR TO N" name is
   Daqo's "1 ADR TO 25 ORD SHS": right for its time, and Daqo is calibrated anyway.
 - **Checks.** Known values for BIDU 2010, QIHU 2015, VOD 2020, SHPG 2018 and DIDI 2022.
+
+## Addendum (2026-11-05): multi-class needs common trading days
+- **Problem.** Top Ships (TOPS) ranked 22nd in late 2018, at $167B on a $0.87 close (found by
+  the intraday reversal study, decision 0014). Its share counts were divided by only 120 (its
+  reverse splits since 2022), not by the 1.2 million of reverse splits since 2018.
+- **Cause.** Splits are tested against the SEC's counts only for ADRs and multi-class
+  securities, and `multi_class` took any two securities on one CIK whose first-to-last-trade
+  spans overlapped. TOPSD, Top Ships' temporary ticker for four weeks after its 2008 reverse
+  split, sits inside TOPS's own gap, so TOPS counted as one of two classes. The test keeps a
+  split only when the counts move by about its ratio; Top Ships issued shares between its
+  reverse splits, so 9 of its 14 were dropped.
+- **Fix.** Two securities on one CIK count as concurrent classes only if they traded on at least
+  20 of the same days. Of 1,330 securities the span rule flagged, 332 never traded on a common
+  day with their sibling (mostly `...D` tickers after reverse splits: Fonar, Pixelworks,
+  RealNetworks, Heska, Kratos) and 139 on 1-20 days (when-issued lines, rights, temporary
+  ADRs, SPAC units beside their shares). The 20-60 day pairs are real classes cut short by
+  the data start or a class collapse (Jo-Ann Stores A/B, Alberto Culver A, RGA A/B), so they stay.
+- **Effect** (same data, old rule against new): 24 splits on 16 securities now apply; basis
+  ratios unchanged. TOPS drops 20-10,000x (late 2018: $10-17M) and eight other small caps
+  3.5-70x (SAPX, AUVI, VS, THLD, MBOT, APPY, YVR, SNSS), CBIO and HMNY rise 2x and 4x. Dell and
+  DuPont rise about 2x: Massive records their VMware (2021, 1.973) and Qnity (2025, 2.39)
+  spin-offs as splits, and the old test rejected them, which put the split-adjusted price on
+  one basis and the counts on another. Dell 2019 is now $36.5B (was $18.5B), DuPont 2019 $50.9B
+  (was $21.3B). The top 500 changes at 59 of 215 month ends since 2009: TOPS leaves (2018-10 to
+  2019-02), and DuPont, shown at $13-14B instead of about $33B, is back from 2021-06 to 2026-01.
+- **Left.** A spin-off recorded as a split is a price adjustment, not a share change, so a count
+  dated before it is still multiplied by its ratio until the next count is filed: Dell shows
+  about 2x too high from 2021-11-02 for about four months, DuPont 2.4x from 2025-11-03 to
+  2026-02-17. Massive has 24 such non-round events beyond 1.22x on 22 securities, 23 of them applied
+  as before. Treating them as price-only (neither prices nor counts adjusted) would close it.
+- **Checks.** TOPS 2018, DELL 2019 and DD 2019 market caps in `vinculum check`.
+

@@ -53,6 +53,10 @@ RATIO_CAPS = [
     ("BBG000C4R6H6", "VOD", D(2020, 12, 31), 35e9, 70e9, "override: 10 shares per ADS"),
     ("CIK:0000936402:SHPGY", "SHPG", D(2018, 6, 1), 40e9, 75e9, "override: 3 shares per ADS"),
     ("BBG011DJJ3G6", "DIDI", D(2022, 5, 31), 2e9, 15e9, "name: four ADSs per share"),
+    # Single-class stocks once taken for multi-class (a sibling on the CIK without common days):
+    ("CIK:0001296484:TOPT", "TOPS", D(2018, 11, 30), 1e6, 0.1e9, "TOPSD after a reverse split is not a second class"),
+    ("BBG00DW3SZS1", "DELL", D(2019, 6, 28), 25e9, 50e9, "the 2021 VMware spin, recorded as a split, applies"),
+    ("BBG00BN961G4", "DD", D(2019, 8, 30), 35e9, 65e9, "the 2025 Qnity spin, recorded as a split, applies"),
 ]
 # ADSs once aligned across a real 1000x share issuance (shown at $2.4T): never above $50B.
 GIANT_ADRS = {"BBG000JJBNH6": "LTM"}

@@ -741,3 +741,24 @@ def test_giant_adr_with_almost_no_volume_is_withheld():
     assert not got["REAL"]["implausible"]
     # Not an ADR: only the general turnover rule applies (3.5e-6 is inside PLAUSIBLE).
     assert not got["US"]["implausible"]
+
+
+def test_multi_class_needs_common_trading_days():
+    from vinculum._build import MIN_COMMON_DAYS, multi_class
+    # TOPS trades 2008-01-02..05-30 except 03-20..04-17, when it trades as TOPSD (after a reverse
+    # split); TOPSW is a when-issued line beside TOPS for 5 days. CLA/CLB: two real classes.
+    gap = set(weekdays(D(2008, 3, 20), D(2008, 4, 17)))
+    tops = [d for d in weekdays(D(2008, 1, 2), D(2008, 5, 30)) if d not in gap]
+    days = pl.DataFrame(
+        [("TOPS", d) for d in tops] + [("TOPSD", d) for d in sorted(gap)]
+        + [("TOPSW", d) for d in tops[:5]]
+        + [(s, d) for s in ("CLA", "CLB") for d in weekdays(D(2008, 1, 2), D(2008, 2, 28))],
+        schema={"security_id": pl.String, "date": pl.Date}, orient="row")
+    secs = days.group_by("security_id").agg(pl.col("date").min().alias("first_trade"),
+                                            pl.col("date").max().alias("last_trade"))
+    pairs = pl.DataFrame({"security_id": ["TOPS", "TOPSD", "TOPSW", "CLA", "CLB"],
+                          "cik": ["1", "1", "1", "2", "2"]})
+    assert sorted(multi_class(pairs, secs)) == ["CLA", "CLB", "TOPS", "TOPSD", "TOPSW"]   # spans overlap
+    assert len(weekdays(D(2008, 1, 2), D(2008, 2, 28))) >= MIN_COMMON_DAYS
+    assert sorted(multi_class(pairs, secs, days)) == ["CLA", "CLB"]
+

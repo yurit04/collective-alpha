@@ -23,6 +23,7 @@ from ._successors import build_successors, inherited_counts
 log = logging.getLogger("vinculum")
 STALE_DAYS = 400          # an SEC count older than this (period end) is not used
 DV_WINDOW = 60            # trading days of dollar volume used to pick an issuer's primary class
+MIN_COMMON_DAYS = 20      # two securities on one CIK are separate classes only if they traded this many days together
 BASIS_OVERRIDES = Path(__file__).with_name("basis_overrides.csv")
 
 PANEL_SCHEMA = {
@@ -185,13 +186,37 @@ def calibrate(store, counts: pl.DataFrame, cik_map: pl.DataFrame, equity: pl.Dat
     return out
 
 
-def multi_class(pairs: pl.DataFrame, securities: pl.DataFrame) -> list[str]:
-    """Securities sharing their CIK with another equity security that traded at the same time."""
+def multi_class(pairs: pl.DataFrame, securities: pl.DataFrame, days: pl.DataFrame | None = None) -> list[str]:
+    """Securities sharing their CIK with another equity security that traded at the same time.
+
+    days (security_id, date: the days each traded): with it, two securities count only if they
+    traded on at least MIN_COMMON_DAYS of the same days. Overlapping first-to-last-trade spans
+    are not enough: the temporary ticker a stock trades under for a few weeks after a reverse
+    split (TOPSD, Top Ships 2008) sits inside its own security's gap, and when-issued lines,
+    rights and temporary ADRs trade beside it for days. Taken for a second class, a single-class
+    stock gets its splits tested against the SEC's counts, and one that issues shares between
+    reverse splits loses them (Top Ships: 9 of 14, shown at $167B in 2018)."""
     p = pairs.join(securities.select("security_id", "first_trade", "last_trade"), on="security_id")
     j = p.join(p, on="cik", suffix="_o").filter(
         (pl.col("security_id") != pl.col("security_id_o"))
         & (pl.col("first_trade") <= pl.col("last_trade_o")) & (pl.col("first_trade_o") <= pl.col("last_trade")))
-    return j["security_id"].unique().to_list()
+    if days is None:
+        return j["security_id"].unique().to_list()
+    d = days.select("security_id", "date").unique()
+    common = (j.select("security_id", "security_id_o")
+              .join(d, on="security_id")
+              .join(d.rename({"security_id": "security_id_o"}), on=["security_id_o", "date"])
+              .group_by("security_id", "security_id_o").len("common")
+              .filter(pl.col("common") >= MIN_COMMON_DAYS))
+    return common["security_id"].unique().to_list()
+
+
+def trading_days(store, security_ids: list[str]) -> pl.DataFrame:
+    """security_id, date: every day each of these securities has a bar."""
+    if not security_ids:
+        return pl.DataFrame(schema={"security_id": pl.String, "date": pl.Date})
+    return (store.bars(start=date(1990, 1, 1), end=date.today(), adjust=None, lazy=True)
+            .filter(pl.col("security_id").is_in(security_ids)).select("security_id", "date").collect())
 
 
 def liquidity_table(store, first: int, last: int, equity: pl.DataFrame) -> pl.DataFrame:
@@ -444,7 +469,9 @@ def build(store, edgar, layout: Layout, start_year: int = 2003, years: list[int]
     obs = pl.concat([obs, inherited_counts(obs, successors, STALE_DAYS, events)])
     adrs = equity.filter(pl.col("adr"))["security_id"].to_list()
     liquidity = liquidity_table(store, start_year, secs["last_trade"].max().year, equity)
-    multi = multi_class(pairs, secs)
+    candidates = multi_class(pairs, secs)
+    multi = multi_class(pairs, secs, trading_days(store, candidates))
+    log.info("multi-class: %d of %d securities sharing a CIK and a trading span", len(multi), len(candidates))
     counts, attribution = adjust(obs, events, adrs, liquidity, multi,
                                  first_trade=secs.select("security_id", "first_trade", "last_trade"))
     write_atomic(counts, layout.file("share_counts"))

@@ -123,6 +123,12 @@ Invariants:
   warrants, SPAC units, notes and baby bonds (MLP "Common Units" and preferred-share ADRs are
   equity); the wider screen (UNITS, PFD, FUND, SENIOR) applies to untyped securities only.
   When-issued tickers end in a lowercase `w`, `.WD` or `.WI`; never match a bare `WI`.
+- Splits are tested against the SEC's counts only for ADRs and multi-class securities; for
+  everything else they all apply. A security is multi-class (`_build.multi_class`) only if
+  another equity security on its CIK traded on at least MIN_COMMON_DAYS (20) of the same days.
+  Never go back to overlapping first-to-last-trade spans: a stock's temporary ticker after a
+  reverse split (TOPSD) sits inside its gap, and the test drops real splits of a stock that
+  issues shares between reverse splits (Top Ships, $167B in 2018).
 - Tickers given with `by="security"` that no longer trade resolve to their last holder.
 - Float fraction = public float / issuer market cap on the float date (company-wide, every class);
   kept only within FLOAT_RANGE after a 1000^n unit fix; usable from the 10-K's available_from.

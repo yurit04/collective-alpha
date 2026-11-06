@@ -177,7 +177,9 @@ everything else (ETFs, preferreds, OTC stocks).
    alone valued them at one ordinary share per ADS: Youku at $43B instead of $2.4B.
 1. Splits on the security are applied to the SEC's count, except where the count shows they did
    not change it (ADR ratio changes; a class whose count is in another class's units, like
-   BRK.B's 2010 split and Berkshire's Class A equivalents).
+   BRK.B's 2010 split and Berkshire's Class A equivalents). A class counts as separate only if
+   another security on its CIK traded on at least 20 of the same days (Top Ships' temporary
+   ticker after a reverse split is not a second class).
    - A count dated before a security's first trade is dropped when it is more than 3x off the
      security's first count after it. This covers a security that replaced another on the same
      CIK at a reverse split, such as Aradigm's 2014 listing after a 1-for-40: the new security
@@ -264,6 +266,10 @@ everything else (ETFs, preferreds, OTC stocks).
   date) were tested as a fix and rejected (0004).
 - Multi-class companies without a company-wide SEC count after some date (Berkshire after 2016)
   have no market cap from then on; tracking stocks (Liberty) get none.
+- Spin-offs that Massive records as splits (24 non-round "splits", e.g. Dell's VMware spin in
+  2021, 1.973, and DuPont's Qnity spin in 2025, 2.39) are applied to the share counts like
+  splits. That is right before the spin, but until the first count after it is filed, the
+  company shows the spin's ratio too high (Dell about 2x for four months, DuPont 2.4x for three).
 - Ratios only for USD reporters (no FX conversion).
 - Successors need a ~1:1 exchange: mergers at another ratio (and spin-offs) are not linked, and
   the predecessor's figures are those of the old company (an acquirer's TTM lags the deal, as
