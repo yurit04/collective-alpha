@@ -19,6 +19,7 @@ notebooks/
   borg-queen/                the factor risk model and the cost-aware optimizer
   transwarp-conduit/         execution: order sheets, the simulated broker, reconciliation
   nanoprobe-array/           intraday bars on a session clock, empty bars and halts, auction prices, features, daily intraday summaries
+  tactical-cube/             intraday backtests: lagged and auction fills, participation, overnight holds, the look-ahead check
   unicomplex/                `collective status`
 src/subspace_probe/          small shared helpers (chart style, timing, byte formatting)
 ```
@@ -92,6 +93,12 @@ Re-run a notebook to refresh it after its module changes.
 | Notebook | What it shows |
 |---|---|
 | `00_intraday.ipynb` | The session clock and early closes, empty bars and the 2020-03-09 halt on a grid, the closing auction missing from minute bars, features through a day, the top 500 one day at a time, daily summaries: SPY overnight vs intraday and intraday momentum |
+
+## tactical-cube
+
+| Notebook | What it shows |
+|---|---|
+| `00_intraday_backtests.ipynb` | One day fill by fill (lag, VWAP, closing auction), costs by time of entry, partial fills of a thin name at size, overnight holds matching the daily engine through the NVDA split, the look-ahead check catching a cheater, P&L by time of day |
 
 ## unicomplex
 

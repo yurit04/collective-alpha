@@ -79,3 +79,63 @@ for whole-market work). Details: core/nanoprobe-array/CLAUDE.md.
   print (0 / 0 would read as NaN).
 - **`days()` reads only the named securities** (by security, so ids and renamed tickers both
   work) unless a size universe is asked for, which needs the whole day (0.1 s).
+
+## Phase 2: `tactical-cube`
+Depends on nanoprobe-array (bars, features, summaries), unimatrix-zero (CostModel, summary and
+by_year) and vinculum (borrow rates). Details: core/tactical-cube/CLAUDE.md. Defaults agreed
+with the owner: next-bar VWAP fills, fixed capital each day, IB per-share commission with an
+AUM, studies in a new project `assimilation-trials`.
+
+- **A strategy is a function of one day's bars.** `strategy(day, bars)` returns targets
+  (`bar_end`, `security_id`, `weight`, optional `auction`). Each decision time is a whole book;
+  names left out go to 0. A precomputed targets frame works too.
+- **Fills `lag` bars after the decision** (at least 1), at the fill bar's VWAP by default. An
+  order waits through empty bars and keeps working until filled, replaced or the day ends;
+  `unfilled` records why. Closing-auction orders (decided at least 10 minutes before the
+  close) fill at the official close, opening-auction orders at the next official open.
+- **Participation cap only with an AUM** (10% of the bar's share volume). Without an AUM the
+  backtest is per unit of capital and costs do not depend on size.
+- **Positions are shares, capital is fixed each day.** Marks are bar closes, the official
+  auctions and, across nights, `prev_close` on today's basis, so splits are neutral and
+  dividends are paid. Daily returns are on the fixed capital; `nav` compounds them. The daily
+  frame has unimatrix-zero's columns, so `summary` and `by_year` are reused as they are.
+- **Costs per fill**: unimatrix-zero's half-spread times a time-of-day multiplier (3x in the
+  first 5 minutes, 2x to 15, 1.5x to 30), no spread in the auctions, square-root impact on ADV
+  and volatility known before the open (21 and 63 days, shifted a day), IB $0.0035 a share
+  ($0.35 minimum), borrow only on shorts held overnight. Impact and the commission minimum are
+  charged on the whole order (all its fills across bars), not per fill: per-fill square-root
+  impact made an order split by the participation cap look cheaper than the same order sent at
+  once (a $1M ETSY buy: 7.5 bp over bars vs 18.7 bp in the auction; 18.1 bp now). Phase 3
+  replaces the multipliers with measured spreads.
+- **Look-ahead check by default.** On the first two days with targets the strategy is re-run on
+  bars cut at 25/50/75% of the session; a target up to the cut that changes raises
+  `LookaheadError`.
+- **Numpy inside a day.** Each day is a dense security x bar array; polars builds it and
+  collects the output.
+
+### Built (2026-11-04)
+- **Exact against the daily engine.** Buying SPY, AAPL and NVDA in the closing auction every day
+  of 2024 and holding, with no costs, gives the same daily returns as unimatrix-zero
+  `Engine.returns` to 1.4e-16 (NVDA's split on 2024-06-10 included), once the weight actually
+  held (auction price over decision price) is used.
+- **Speed.** `Nanoprobe.days` now reads named securities in 20-day chunks and prepares them in one
+  pass (features unchanged to 1e-13). SPY over 23 years at 5 minutes: 151 s at first, 41 s now.
+  The top 500 runs about 30 s a year.
+- **Summary volume was on today's split basis (fixed).** `daily_prices` undid the split and
+  dividend factors on prices but not on volume, which `Store` divides by the split factor, so
+  summary `volume` and `auction_share` were wrong before any later split: forward splits
+  overstated volume (NVDA 2018: 40x, from its 2021 and 2024 splits), reverse splits
+  understated it (TOPS 2018: 0.47 shares a day instead of ~500,000). ADV came out at $0.47 and square-root impact at 1,400%,
+  which wiped out the top-500 reversal study. Volume is now raw shares; the summaries were
+  rebuilt (25.7 minutes) and the phase 1 notebook re-run.
+- **A size universe can hold names too thin to trade.** vinculum ranked TOPS 22nd in late 2018
+  ($167B on a $0.87 close; fixed in vinculum, decision 0004 addendum 2026-11-05), and a few
+  ADRs that trade mostly at home sit in the top 500 on under $2M a day. The reversal study
+  leaves out names that traded under $1M between the open and its decision.
+
+- **First results** (projects/assimilation-trials, $1M, 2004-2026): SPY intraday momentum
+  +1.7%/yr gross, -3.8% net; SPY overnight +7.9% gross, +3.4% net (t 1.7), intraday +2.6% /
+  -1.7%; opening range breakout on SPY and QQQ -2.0% gross; top-500 first-half-hour reversal
+  (from 2010) +2.1% gross, -14.3% net. Break-even costs are 0.4-1.6 bp per unit traded (none
+  for the breakout); the model charges 0.85-1.2 bp on SPY and 3.5 bp on the top 500, so phase
+  3's measured costs decide whether any of it is tradable.

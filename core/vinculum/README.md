@@ -177,7 +177,17 @@ everything else (ETFs, preferreds, OTC stocks).
    alone valued them at one ordinary share per ADS: Youku at $43B instead of $2.4B.
 1. Splits on the security are applied to the SEC's count, except where the count shows they did
    not change it (ADR ratio changes; a class whose count is in another class's units, like
-   BRK.B's 2010 split and Berkshire's Class A equivalents).
+   BRK.B's 2010 split and Berkshire's Class A equivalents). A class counts as separate only if
+   another security on its CIK traded on at least 20 of the same days (Top Ships' temporary
+   ticker after a reverse split is not a second class).
+   - Spin-offs that Massive records as splits are price-only. Dell's VMware spin (1.973) and
+     DuPont's Qnity spin (2.39) changed the price, not the shares. A non-round ratio that moves
+     the price by more than 10%, while the SEC count across it moves by less than 15% (and a
+     third of the ratio), is never applied to a count or a per-share value. It is also taken
+     out of the panel's `close` adjustment and `split_factor`. 18 events on 15 securities
+     (GE, 3M, Danaher, Yum, Xerox, XPO, Labcorp, Fortive, ...). Before, a count dated before the
+     spin showed the company k times too large until the next filing (Dell $86B instead of
+     $43B in December 2021).
    - A count dated before a security's first trade is dropped when it is more than 3x off the
      security's first count after it. This covers a security that replaced another on the same
      CIK at a reverse split, such as Aradigm's 2014 listing after a 1-for-40: the new security

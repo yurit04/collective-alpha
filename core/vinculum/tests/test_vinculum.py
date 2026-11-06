@@ -741,3 +741,115 @@ def test_giant_adr_with_almost_no_volume_is_withheld():
     assert not got["REAL"]["implausible"]
     # Not an ADR: only the general turnover rule applies (3.5e-6 is inside PLAUSIBLE).
     assert not got["US"]["implausible"]
+
+
+def test_multi_class_needs_common_trading_days():
+    from vinculum._build import MIN_COMMON_DAYS, multi_class
+    # TOPS trades 2008-01-02..05-30 except 03-20..04-17, when it trades as TOPSD (after a reverse
+    # split); TOPSW is a when-issued line beside TOPS for 5 days. CLA/CLB: two real classes.
+    gap = set(weekdays(D(2008, 3, 20), D(2008, 4, 17)))
+    tops = [d for d in weekdays(D(2008, 1, 2), D(2008, 5, 30)) if d not in gap]
+    days = pl.DataFrame(
+        [("TOPS", d) for d in tops] + [("TOPSD", d) for d in sorted(gap)]
+        + [("TOPSW", d) for d in tops[:5]]
+        + [(s, d) for s in ("CLA", "CLB") for d in weekdays(D(2008, 1, 2), D(2008, 2, 28))],
+        schema={"security_id": pl.String, "date": pl.Date}, orient="row")
+    secs = days.group_by("security_id").agg(pl.col("date").min().alias("first_trade"),
+                                            pl.col("date").max().alias("last_trade"))
+    pairs = pl.DataFrame({"security_id": ["TOPS", "TOPSD", "TOPSW", "CLA", "CLB"],
+                          "cik": ["1", "1", "1", "2", "2"]})
+    assert sorted(multi_class(pairs, secs)) == ["CLA", "CLB", "TOPS", "TOPSD", "TOPSW"]   # spans overlap
+    assert len(weekdays(D(2008, 1, 2), D(2008, 2, 28))) >= MIN_COMMON_DAYS
+    assert sorted(multi_class(pairs, secs, days)) == ["CLA", "CLB"]
+
+
+# SPIN: a spin-off that Massive records as a 1000 -> 1973 split on 2021-11-02 (Dell's VMware
+# spin). The price halves, the SEC's count stays 100M: market cap 6B before, 3.04B after, with
+# no window where a count dated before the spin is multiplied by its ratio.
+SPIN_DAY, SPIN_K = D(2021, 11, 2), 1.973
+SPIN = ("S20", "SPIN", "SPIN CORP", "CS", "0000000020", 60.0, 1_000_000)
+
+
+class SpinStore(FakeStore):
+    SECS = [*SECURITIES, SPIN]
+
+    def __init__(self):
+        super().__init__()
+        after = (pl.col("security_id") == "S20") & (pl.col("date") >= SPIN_DAY)
+        self._bars = self._bars.with_columns(pl.when(after).then(pl.col("close") / SPIN_K)
+                                             .otherwise(pl.col("close")).alias("close"))
+        self._splits = pl.concat([self._splits, pl.DataFrame(
+            {"security_id": ["S20"], "ticker": ["SPIN"], "execution_date": [SPIN_DAY],
+             "split_from": [1000.0], "split_to": [1973.0]})])
+
+    def bars(self, tickers=None, start=None, end=None, adjust=None, lazy=False, **_):
+        b = super().bars(tickers, start, end, adjust=None, lazy=False)
+        spun = (pl.col("security_id") == "S20") & (pl.col("date") < SPIN_DAY)
+        b = b.with_columns(pl.when(spun).then(1 / SPIN_K).otherwise(pl.col("split_factor")).alias("split_factor"))
+        if adjust:
+            b = b.with_columns(pl.col("close") * pl.col("split_factor"), pl.col("volume") / pl.col("split_factor"))
+        return b.lazy() if lazy else b
+
+    def ticker_details(self):
+        extra = pl.DataFrame({"as_of": [END], "ticker": ["SPIN"], "weighted_shares_outstanding": [100e6],
+                              "share_class_shares_outstanding": [100e6], "market_cap": [3.04e9]})
+        return pl.concat([super().ticker_details(), extra])
+
+    def resolve(self, tickers, on=None):
+        ids = {t: sid for sid, t, *_ in self.SECS}
+        return pl.DataFrame({"ticker": list(tickers), "security_id": [ids.get(t) for t in tickers]})
+
+
+class SpinEdgar(FakeEdgar):
+    def profiles(self):
+        return pl.concat([super().profiles(), pl.DataFrame(
+            {"cik": ["0000000020"], "tickers": [["SPIN"]], "first_periodic": [D(2010, 1, 1)],
+             "last_periodic": [D(2022, 3, 1)]})])
+
+    def names(self):
+        return pl.concat([super().names(), pl.DataFrame(
+            {"cik": ["0000000020"], "name": ["SPIN CORP"], "valid_from": [None], "valid_to": [None]},
+            schema={"cik": pl.String, "name": pl.String, "valid_from": pl.Date, "valid_to": pl.Date})])
+
+    def shares(self, ciks):
+        extra = pl.DataFrame([count("0000000020", end, 100e6, filed) for end, filed in
+                              [(D(2020, 12, 31), D(2021, 2, 15)), (D(2021, 6, 30), D(2021, 8, 5)),
+                               (D(2021, 9, 30), D(2021, 11, 8)), (D(2021, 12, 31), D(2022, 2, 15))]],
+                             schema={"cik": pl.String, "end": pl.Date, "shares": pl.Float64, "filed": pl.Date,
+                                     "available_from": pl.Date, "tag": pl.String}, orient="row")
+        return pl.concat([super().shares(ciks), extra.filter(pl.col("cik").is_in(list(ciks)))])
+
+
+def test_spin_off_recorded_as_a_split_is_price_only(tmp_path):
+    settings = load_settings(data_root=str(tmp_path / "vinculum"), start_year=2020)
+    v = Vinculum(settings=settings, store=SpinStore(), edgar=SpinEdgar(), finra=FakeFinra())
+    v.build()
+    a = pl.read_parquet(v.layout.file("split_attribution"))
+    spin = a.filter(pl.col("security_id") == "S20").row(0, named=True)
+    assert spin["price_only"] and not spin["applies"]
+    assert not a.filter(pl.col("security_id") == "S1")["price_only"].any()           # ALPH's 2:1 stays a split
+    m = v.market_cap(["SPIN"], start=D(2021, 10, 1), end=D(2022, 3, 31))
+    before, after = m.filter(pl.col("date") < SPIN_DAY), m.filter(pl.col("date") >= SPIN_DAY)
+    assert before["market_cap"].to_list() == pytest.approx([6e9] * before.height)
+    assert after["market_cap"].to_list() == pytest.approx([60 / SPIN_K * 100e6] * after.height)
+    assert m["shares"].to_list() == pytest.approx([100e6] * m.height)              # no share change at the spin
+    assert m["split_factor"].to_list() == pytest.approx([1.0] * m.height)          # real splits only
+    assert m["close"].to_list()[0] == pytest.approx(60.0)                          # raw close as traded
+    # Per-share values are converted with real splits only.
+    assert v._share_events(["S1", "S20"])["security_id"].to_list() == ["S1"]
+
+
+def test_price_only_events_need_flat_counts_and_an_odd_ratio():
+    from vinculum._shares import is_round, price_only_events
+    assert is_round(2.0) and is_round(0.05) and is_round(1.5) and is_round(1 / 12) and not is_round(1.973)
+    def obs(sid, a, b):
+        return [(sid, "1", D(2021, 6, 30), D(2021, 8, 5), a), (sid, "1", D(2021, 12, 31), D(2022, 2, 15), b)]
+    o = pl.DataFrame(obs("SPIN", 100e6, 99e6) + obs("DIV", 100e6, 115e6) + obs("RND", 100e6, 100e6)
+                     + obs("YUM", 100e6, 90.8e6) + [("LONE", "1", D(2021, 6, 30), D(2021, 8, 5), 100e6)],
+                     schema={"security_id": pl.String, "cik": pl.String, "end": pl.Date, "filed": pl.Date,
+                             "shares": pl.Float64}, orient="row")
+    ev = pl.DataFrame({"security_id": ["SPIN", "DIV", "RND", "YUM", "LONE"], "execution_date": [SPIN_DAY] * 5,
+                       "k": [1.973, 1.15, 2.0, 1.391, 1.7]})
+    # SPIN: counts flat. DIV: a 15% stock dividend (counts up 15%). RND: a 2:1 split (round, whatever
+    # the counts say). YUM: counts down 9% (buybacks) across a 1.391 spin. LONE: no count after it.
+    assert sorted(price_only_events(o, ev)["security_id"].to_list()) == ["SPIN", "YUM"]

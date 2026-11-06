@@ -15,7 +15,7 @@ SUMMARY_COLUMNS = ["date", "security_id", "ticker", "open", "close", "prev_close
 
 
 def daily_prices(adjusted: pl.DataFrame | pl.LazyFrame) -> pl.DataFrame:
-    """Daily bars from `Store.bars(..., adjust="all")` -> raw official prices of each day and the
+    """Daily bars from `Store.bars(..., adjust="all")` -> raw official prices and volume of each day and the
     previous trading day's close on that day's share basis (splits and dividends between the two
     days taken out), so `open / prev_close - 1` is the overnight total return.
 
@@ -30,6 +30,7 @@ def daily_prices(adjusted: pl.DataFrame | pl.LazyFrame) -> pl.DataFrame:
         .with_columns(_f=f)
         .with_columns(prev_close=(pl.col("close").shift(1) / pl.col("_f")).over("security_id"),
                       prev_date=pl.col("date").shift(1).over("security_id"),
+                      volume=pl.col("volume") * pl.col("split_factor"),        # Store divides volume by it
                       **{c: pl.col(c) / pl.col("_f") for c in ("open", "high", "low", "close")})
         .select(DAILY_COLUMNS)
         .collect()

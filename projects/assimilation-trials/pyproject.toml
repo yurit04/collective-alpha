@@ -1,0 +1,26 @@
+[project]
+name = "assimilation-trials"
+version = "0.1.0"
+description = "Intraday studies on tactical-cube, net of costs: SPY intraday momentum, overnight vs intraday holding, opening range breakout, top-500 first-half-hour reversal."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "tactical-cube",
+    "nanoprobe-array",
+    "unimatrix-zero",
+    "polars>=1.20",
+    "matplotlib>=3.9",
+    "ipykernel>=6.29",
+]
+
+[tool.uv.sources]
+tactical-cube = { workspace = true }
+nanoprobe-array = { workspace = true }
+unimatrix-zero = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/assimilation_trials"]

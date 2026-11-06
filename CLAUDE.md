@@ -45,10 +45,11 @@ Current core graph:
 | `borg-queen` | Risk model: market, sector and style factors, daily factor returns, EWMA covariance with regime adjustment, specific risk, forecasts, attribution; cost-aware optimizer (cvxpy) and rebalance loop | unimatrix-zero, neural-processor, vinculum, massive-subspace-stream |
 | `transwarp-conduit` | Execution through Interactive Brokers: IB contract mapping, order sheets with limits, paper-first MOC orders, journal, reconciliation | unimatrix-zero, massive-subspace-stream |
 | `nanoprobe-array` | Intraday: regular-session bar clock, minute bars resampled with gap rules, auction prices, per-bar features, daily intraday summaries store | massive-subspace-stream, vinculum |
+| `tactical-cube` | Intraday backtests: decisions at bar ends, lagged VWAP or auction fills, participation caps, flat-by times or overnight holds, intraday costs, look-ahead check; daily output in unimatrix-zero's format | nanoprobe-array, unimatrix-zero, vinculum |
 | `unicomplex` | Orchestration: `collective status`, a read-only freshness report over every store against the nightly schedule (phase 1) | massive-subspace-stream, edgar-cortical-node, finra-sensor-array, vinculum, borg-queen, transwarp-conduit |
 
 Planned (not built):
-`tactical-cube` intraday backtester (decision 0014 phase 2), intraday cost calibration (phase 3),
+intraday cost calibration from quotes and trades (decision 0014 phase 3),
 `unicomplex` phase 2 (scheduled runs with one log and lock), `transwarp-conduit` phases 2-3 (cost calibration, live).
 
 ## Commands

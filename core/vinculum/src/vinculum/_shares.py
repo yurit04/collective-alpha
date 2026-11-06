@@ -27,6 +27,7 @@ with Massive's split adjustment doing the per-day conversion.
 from __future__ import annotations
 
 import math
+from fractions import Fraction
 
 import polars as pl
 
@@ -46,6 +47,8 @@ _MANTISSAS = (1, 1.5, 2, 2.5, 3, 4, 5, 6, 8)
 NICE = sorted({m * 10 ** e for m in _MANTISSAS for e in range(-3, 5)}
               | {1 / (m * 10 ** e) for m in _MANTISSAS for e in range(0, 5)})
 ADR_TYPES = ("ADRC", "GDR", "NYRS")
+PRICE_ONLY_MOVE = 1.1   # a non-round "split" moving the price more than this ...
+PRICE_ONLY_TOL = 1.15   # ... while the SEC count across it moves less than this: price-only (a spin-off)
 
 
 def split_events(splits: pl.DataFrame) -> pl.DataFrame:
@@ -56,6 +59,61 @@ def split_events(splits: pl.DataFrame) -> pl.DataFrame:
             .agg((pl.col("split_to") / pl.col("split_from")).product().alias("k"))
             .filter((pl.col("k") - 1).abs() > 1e-9)
             .sort("security_id", "execution_date"))
+
+
+def is_round(k: float) -> bool:
+    """A split ratio that is a simple fraction (k or 1/k within 0.2% of n/m, m <= 10)."""
+    for x in (k, 1 / k):
+        f = Fraction(x).limit_denominator(10)
+        if abs(float(f) / x - 1) < 2e-3:
+            return True
+    return False
+
+
+def price_only_events(obs: pl.DataFrame, events: pl.DataFrame) -> pl.DataFrame:
+    """Spin-offs (and other distributions) that Massive records as splits: a non-round ratio
+    moving the price by more than PRICE_ONLY_MOVE while the SEC's count across it (last filed
+    before, first dated after, at most 400 days apart) moves by less than PRICE_ONLY_TOL and a
+    third of the ratio. They change the price, not the shares (Dell's VMware spin, 1.973; DuPont's
+    Qnity spin, 2.39). Without counts on both sides an event stays a split.
+    Returns security_id, cik, execution_date, k."""
+    cols = {"security_id": pl.String, "cik": pl.String, "execution_date": pl.Date, "k": pl.Float64}
+    cand = events.filter((pl.col("k").log().abs() > math.log(PRICE_ONLY_MOVE))
+                         & ~pl.col("k").map_elements(is_round, return_dtype=pl.Boolean))
+    if cand.is_empty() or obs.is_empty():
+        return pl.DataFrame(schema=cols)
+    ev = (obs.select("security_id", "cik").unique().join(cand, on="security_id")
+          .with_columns((pl.col("execution_date") - pl.duration(days=1)).alias("__before")).sort("__before"))
+    o = obs.select("security_id", "cik", "end", "filed", "shares")
+    pre = o.sort("filed").rename({"filed": "__pf", "shares": "__pre", "end": "__pend"})
+    post = o.sort("end").rename({"end": "__qend", "shares": "__post", "filed": "__qf"})
+    ev = (ev.join_asof(pre, left_on="__before", right_on="__pf", by=["security_id", "cik"], strategy="backward",
+                       check_sortedness=False)
+          .sort("execution_date")
+          .join_asof(post, left_on="execution_date", right_on="__qend", by=["security_id", "cik"],
+                     strategy="forward", check_sortedness=False))
+    seen = (pl.col("__post") / pl.col("__pre")).log().abs()
+    usable = (pl.col("__pre").is_not_null() & pl.col("__post").is_not_null()
+              & ((pl.col("__qend") - pl.col("__pend")).dt.total_days() <= 400))
+    flat = (seen < math.log(PRICE_ONLY_TOL)) & (seen < pl.col("k").log().abs() / 3)
+    return (ev.filter(usable & flat).select(*cols).unique(["security_id", "cik", "execution_date"])
+            .sort("security_id", "execution_date"))
+
+
+def price_only_factor(df: pl.DataFrame, spins: pl.DataFrame, col: str = "date", name: str = "price_only") -> pl.DataFrame:
+    """Add `name` = product of k over the security's price-only events executed after df[col]:
+    the part of Massive's split adjustment they account for (adjusted close x it = the close
+    adjusted for real splits only)."""
+    sp = spins.select("security_id", "execution_date", "k").unique(["security_id", "execution_date"])
+    if sp.is_empty() or df.is_empty():
+        return df.with_columns(pl.lit(1.0).alias(name))
+    cum = (sp.sort("security_id", "execution_date", descending=[False, True])
+           .with_columns(pl.col("k").cum_prod().over("security_id").alias(name))
+           .select("security_id", (pl.col("execution_date") - pl.duration(days=1)).alias("__eff"), name)
+           .sort("__eff"))
+    out = df.sort(col).join_asof(cum, left_on=col, right_on="__eff", by="security_id", strategy="forward",
+                                 check_sortedness=False)
+    return out.with_columns(pl.col(name).fill_null(1.0)).drop("__eff")
 
 
 def _attribution(obs: pl.DataFrame, events: pl.DataFrame, tested: list[str]) -> pl.DataFrame:

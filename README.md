@@ -19,6 +19,8 @@ DAG; **projects** use core packages and never each other.
 flowchart LR
     massive[massive-subspace-stream] --> vinculum
     vinculum --> nanoprobe[nanoprobe-array]
+    nanoprobe --> tactical[tactical-cube]
+    unimatrix --> tactical
     edgar[edgar-cortical-node] --> vinculum
     finra[finra-sensor-array] --> vinculum
     vinculum --> neural[neural-processor]
@@ -43,6 +45,7 @@ out; `uv run python tools/check_architecture.py --graph` prints the full graph.<
 | [`borg-queen`](core/borg-queen/README.md) | `queen` | Factor risk model (market, sector, style), covariance forecasts, attribution; cost-aware optimizer |
 | [`transwarp-conduit`](core/transwarp-conduit/README.md) | `conduit` | Execution through Interactive Brokers: order sheets with limits, paper-first market-on-close orders, journal, reconciliation |
 | [`nanoprobe-array`](core/nanoprobe-array/README.md) | `nanoprobe` | Intraday: minute bars resampled on a session clock with gap rules, auction prices, per-bar features, daily intraday summaries since 2003 |
+| [`tactical-cube`](core/tactical-cube/README.md) | | Intraday backtests: lagged VWAP and auction fills, participation caps, flat-by times or overnight holds, intraday costs, a look-ahead check |
 | [`unicomplex`](core/unicomplex/README.md) | `collective` | Orchestration: `collective status`, a read-only freshness report over every store |
 
 Projects:
@@ -50,6 +53,9 @@ Projects:
 - [`subspace-probe`](projects/subspace-probe/README.md): demo notebooks, one folder per core
   package, each using only that package and its dependencies. Outputs are committed, so they
   read on GitHub.
+- [`assimilation-trials`](projects/assimilation-trials/README.md): four published intraday
+  effects (SPY momentum, overnight vs intraday, opening range breakout, top-500 reversal) run
+  through tactical-cube, net of costs.
 
 ## Quick start
 

@@ -12,6 +12,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "assimilation-trials",
     "borg-queen",
     "collective-alpha",
     "edgar-cortical-node",
@@ -20,6 +21,7 @@ members = [
     "nanoprobe-array",
     "neural-processor",
     "subspace-probe",
+    "tactical-cube",
     "transwarp-conduit",
     "unicomplex",
     "unimatrix-zero",
@@ -135,6 +137,29 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b9/33/032cdc44182491aa708d06a68b62434140d8c50820a087fac7af37703357/arrow-1.4.0.tar.gz", hash = "sha256:ed0cc050e98001b8779e84d461b0098c4ac597e88704a655582b21d116e526d7", size = 152931, upload-time = "2025-10-18T17:46:46.761Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ed/c9/d7977eaacb9df673210491da99e6a247e93df98c715fc43fd136ce1d3d33/arrow-1.4.0-py3-none-any.whl", hash = "sha256:749f0769958ebdc79c173ff0b0670d59051a535fa26e8eba02953dc19eb43205", size = 68797, upload-time = "2025-10-18T17:46:45.663Z" },
+]
+
+[[package]]
+name = "assimilation-trials"
+version = "0.1.0"
+source = { editable = "projects/assimilation-trials" }
+dependencies = [
+    { name = "ipykernel" },
+    { name = "matplotlib" },
+    { name = "nanoprobe-array" },
+    { name = "polars" },
+    { name = "tactical-cube" },
+    { name = "unimatrix-zero" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ipykernel", specifier = ">=6.29" },
+    { name = "matplotlib", specifier = ">=3.9" },
+    { name = "nanoprobe-array", editable = "core/nanoprobe-array" },
+    { name = "polars", specifier = ">=1.20" },
+    { name = "tactical-cube", editable = "core/tactical-cube" },
+    { name = "unimatrix-zero", editable = "core/unimatrix-zero" },
 ]
 
 [[package]]
@@ -3033,6 +3058,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "nanoprobe-array" },
     { name = "neural-processor" },
+    { name = "tactical-cube" },
     { name = "transwarp-conduit" },
     { name = "unicomplex" },
     { name = "unimatrix-zero" },
@@ -3049,8 +3075,30 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.9" },
     { name = "nanoprobe-array", editable = "core/nanoprobe-array" },
     { name = "neural-processor", editable = "core/neural-processor" },
+    { name = "tactical-cube", editable = "core/tactical-cube" },
     { name = "transwarp-conduit", editable = "core/transwarp-conduit" },
     { name = "unicomplex", editable = "core/unicomplex" },
+    { name = "unimatrix-zero", editable = "core/unimatrix-zero" },
+    { name = "vinculum", editable = "core/vinculum" },
+]
+
+[[package]]
+name = "tactical-cube"
+version = "0.1.0"
+source = { editable = "core/tactical-cube" }
+dependencies = [
+    { name = "nanoprobe-array" },
+    { name = "numpy" },
+    { name = "polars" },
+    { name = "unimatrix-zero" },
+    { name = "vinculum" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "nanoprobe-array", editable = "core/nanoprobe-array" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "polars", specifier = ">=1.20" },
     { name = "unimatrix-zero", editable = "core/unimatrix-zero" },
     { name = "vinculum", editable = "core/vinculum" },
 ]

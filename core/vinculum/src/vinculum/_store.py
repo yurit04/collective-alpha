@@ -86,6 +86,21 @@ class Vinculum:
             x = x.split(",")
         return [t.strip() for t in x if t.strip()]
 
+    def _share_events(self, ids: list[str]) -> pl.DataFrame:
+        """Massive's splits for these securities without the price-only events (spin-offs
+        recorded as splits, which change the price, not the shares): the events per-share
+        values are converted with."""
+        from ._shares import split_events
+
+        ev = split_events(self.store.security_actions("splits", ids))
+        path = self.layout.file("split_attribution")
+        if path.exists():
+            a = pl.read_parquet(path)
+            if "price_only" in a.columns:
+                po = a.filter(pl.col("price_only")).select("security_id", "execution_date").unique()
+                ev = ev.join(po, on=["security_id", "execution_date"], how="anti")
+        return ev
+
     def _table(self, name: str) -> pl.DataFrame:
         path = self.layout.file(name)
         if not path.exists():
@@ -376,14 +391,13 @@ class Vinculum:
         the security and CIK in use have none yet, the predecessor's (in its units at the link,
         then through the successor's own splits)."""
         from ._pershare import cum_splits, factor_at, per_share_ttm
-        from ._shares import split_events
 
         if rows.is_empty():
             return out.with_columns(pl.lit(None, pl.Float64).alias(item))
         levels = sorted(c[4:] for c in out.columns if c.startswith("__ps"))
         pairs = out.select("security_id", "cik").drop_nulls().unique()
         ids = set(pairs["security_id"].to_list()).union(*[out[f"__ps{d}"].drop_nulls().to_list() for d in levels])
-        cum = (cum_splits(split_events(self.store.security_actions("splits", list(ids)))) if ids else
+        cum = (cum_splits(self._share_events(list(ids))) if ids else
                pl.DataFrame(schema={"security_id": pl.String, "execution_date": pl.Date, "c": pl.Float64}))
 
         def ttm(pairs: pl.DataFrame) -> pl.DataFrame:

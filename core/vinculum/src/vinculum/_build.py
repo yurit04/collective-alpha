@@ -17,12 +17,20 @@ import polars as pl
 from ._cikmap import EQUITY_TYPES, GOOD, build_cik_map, cik_on
 from ._layout import Layout, write_atomic
 from ._names import adr_ratio, looks_adr, looks_converted, looks_equity
-from ._shares import ADR_TYPES, adjust, basis_ratios, split_events
+from ._shares import (
+    ADR_TYPES,
+    adjust,
+    basis_ratios,
+    price_only_events,
+    price_only_factor,
+    split_events,
+)
 from ._successors import build_successors, inherited_counts
 
 log = logging.getLogger("vinculum")
 STALE_DAYS = 400          # an SEC count older than this (period end) is not used
 DV_WINDOW = 60            # trading days of dollar volume used to pick an issuer's primary class
+MIN_COMMON_DAYS = 20      # two securities on one CIK are separate classes only if they traded this many days together
 BASIS_OVERRIDES = Path(__file__).with_name("basis_overrides.csv")
 
 PANEL_SCHEMA = {
@@ -185,29 +193,68 @@ def calibrate(store, counts: pl.DataFrame, cik_map: pl.DataFrame, equity: pl.Dat
     return out
 
 
-def multi_class(pairs: pl.DataFrame, securities: pl.DataFrame) -> list[str]:
-    """Securities sharing their CIK with another equity security that traded at the same time."""
+def multi_class(pairs: pl.DataFrame, securities: pl.DataFrame, days: pl.DataFrame | None = None) -> list[str]:
+    """Securities sharing their CIK with another equity security that traded at the same time.
+
+    days (security_id, date: the days each traded): with it, two securities count only if they
+    traded on at least MIN_COMMON_DAYS of the same days. Overlapping first-to-last-trade spans
+    are not enough: the temporary ticker a stock trades under for a few weeks after a reverse
+    split (TOPSD, Top Ships 2008) sits inside its own security's gap, and when-issued lines,
+    rights and temporary ADRs trade beside it for days. Taken for a second class, a single-class
+    stock gets its splits tested against the SEC's counts, and one that issues shares between
+    reverse splits loses them (Top Ships: 9 of 14, shown at $167B in 2018)."""
     p = pairs.join(securities.select("security_id", "first_trade", "last_trade"), on="security_id")
     j = p.join(p, on="cik", suffix="_o").filter(
         (pl.col("security_id") != pl.col("security_id_o"))
         & (pl.col("first_trade") <= pl.col("last_trade_o")) & (pl.col("first_trade_o") <= pl.col("last_trade")))
-    return j["security_id"].unique().to_list()
+    if days is None:
+        return j["security_id"].unique().to_list()
+    d = days.select("security_id", "date").unique()
+    common = (j.select("security_id", "security_id_o")
+              .join(d, on="security_id")
+              .join(d.rename({"security_id": "security_id_o"}), on=["security_id_o", "date"])
+              .group_by("security_id", "security_id_o").len("common")
+              .filter(pl.col("common") >= MIN_COMMON_DAYS))
+    return common["security_id"].unique().to_list()
 
 
-def liquidity_table(store, first: int, last: int, equity: pl.DataFrame) -> pl.DataFrame:
-    """Median daily dollar volume and split-adjusted close per equity security and year."""
-    lf = store.bars(start=date(first, 1, 1), end=date(last, 12, 31), adjust="splits", lazy=True)
-    return (lf.join(equity.lazy().select("security_id"), on="security_id")
-            .group_by("security_id", pl.col("date").dt.year().alias("year"))
-            .agg((pl.col("close") * pl.col("volume")).median().alias("dv_med"), pl.col("close").median().alias("close_med"),
-                 pl.len().alias("days"))
-            .filter(pl.col("days") >= 20).drop("days")
-            .collect())
+def trading_days(store, security_ids: list[str]) -> pl.DataFrame:
+    """security_id, date: every day each of these securities has a bar."""
+    if not security_ids:
+        return pl.DataFrame(schema={"security_id": pl.String, "date": pl.Date})
+    return (store.bars(start=date(1990, 1, 1), end=date.today(), adjust=None, lazy=True)
+            .filter(pl.col("security_id").is_in(security_ids)).select("security_id", "date").collect())
+
+
+def liquidity_table(store, first: int, last: int, equity: pl.DataFrame,
+                    spins: pl.DataFrame | None = None) -> pl.DataFrame:
+    """Median daily dollar volume and split-adjusted close per equity security and year; the
+    close adjusted for real splits only (not for `spins`, price-only events), like the counts."""
+    lf = (store.bars(start=date(first, 1, 1), end=date(last, 12, 31), adjust="splits", lazy=True)
+          .join(equity.lazy().select("security_id"), on="security_id"))
+
+    def agg(x):
+        return (x.group_by("security_id", pl.col("date").dt.year().alias("year"))
+                .agg((pl.col("close") * pl.col("volume")).median().alias("dv_med"),
+                     (pl.col("close") * pl.col("__po")).median().alias("close_med"), pl.len().alias("days"))
+                .filter(pl.col("days") >= 20).drop("days"))
+
+    out = agg(lf.with_columns(pl.lit(1.0).alias("__po"))).collect()
+    if spins is None or spins.is_empty():
+        return out
+    ids = spins["security_id"].unique().to_list()
+    sub = lf.filter(pl.col("security_id").is_in(ids)).select("security_id", "date", "close", "volume").collect()
+    fixed = agg(price_only_factor(sub, spins, "date", "__po"))
+    return pl.concat([out.filter(~pl.col("security_id").is_in(ids)), fixed.select(out.columns)])
 
 
 def daily(store, start: date, end: date, equity: pl.DataFrame, cik_map: pl.DataFrame, counts: pl.DataFrame,
-          basis: pl.DataFrame) -> pl.DataFrame:
-    """Unscreened market cap per equity security and trading day from `start` to `end`."""
+          basis: pl.DataFrame, spins: pl.DataFrame | None = None) -> pl.DataFrame:
+    """Unscreened market cap per equity security and trading day from `start` to `end`.
+
+    `spins` (price-only events, `price_only_events`) are taken out of Massive's adjustment:
+    `close` and `split_factor` are adjusted for real splits only, the units `shares_now` is in.
+    Raw close, raw volume and dollar volume do not depend on it."""
     lf = store.bars(start=start, end=end, adjust="splits", lazy=True)
     df = (lf.select("date", "ticker", "security_id", "close", "volume", "split_factor")
           .join(equity.lazy().select("security_id", "type", *(["adr"] if "adr" in equity.columns else [])),
@@ -216,6 +263,12 @@ def daily(store, start: date, end: date, equity: pl.DataFrame, cik_map: pl.DataF
         df = df.with_columns(pl.col("type").is_in(ADR_TYPES).alias("adr"))
     if df.is_empty():
         return df
+    df = df.with_columns((pl.col("close") / pl.col("split_factor")).alias("raw_close"),
+                         (pl.col("volume") * pl.col("split_factor")).alias("raw_volume"),
+                         (pl.col("close") * pl.col("volume")).alias("dollar_volume"))
+    if spins is not None and spins.height:
+        df = price_only_factor(df, spins, "date", "__po").with_columns(
+            pl.col("close") * pl.col("__po"), pl.col("split_factor") * pl.col("__po")).drop("__po")
     df = cik_on(df, cik_map)
     sc = (counts.select("security_id", "cik", "available_from", "end", "filed", "shares_now", "tag", "jump")
           .sort("available_from"))
@@ -228,10 +281,7 @@ def daily(store, start: date, end: date, equity: pl.DataFrame, cik_map: pl.DataF
                  how="left")
     df = df.with_columns(
         (pl.col("close") * pl.col("shares_now") * pl.col("basis_ratio")).alias("market_cap"),
-        (pl.col("shares_now") * pl.col("split_factor") * pl.col("basis_ratio")).alias("shares"),
-        (pl.col("close") / pl.col("split_factor")).alias("raw_close"),
-        (pl.col("volume") * pl.col("split_factor")).alias("raw_volume"),
-        (pl.col("close") * pl.col("volume")).alias("dollar_volume"))
+        (pl.col("shares_now") * pl.col("split_factor") * pl.col("basis_ratio")).alias("shares"))
     return df.sort("security_id", "date").with_columns(
         pl.col("dollar_volume").rolling_median(DV_WINDOW, min_samples=1).over("security_id").alias("dv60"))
 
@@ -250,7 +300,7 @@ def _thin_penny() -> pl.Expr:
 
 
 def penny_basis(store, first: int, last: int, equity: pl.DataFrame, cik_map: pl.DataFrame,
-                counts: pl.DataFrame, basis: pl.DataFrame) -> pl.DataFrame:
+                counts: pl.DataFrame, basis: pl.DataFrame, spins: pl.DataFrame | None = None) -> pl.DataFrame:
     """The basis table with, per ADR over every year: penny_days (days under ADR_PENNY[0] with a
     market cap), penny_turnover and penny_market_cap (their medians) and thin_days (_thin_penny
     days). The basis becomes "implausible" when either is damning: at least PENNY_MIN_DAYS penny
@@ -261,7 +311,7 @@ def penny_basis(store, first: int, last: int, equity: pl.DataFrame, cik_map: pl.
     stats = {"security_id": pl.String, "penny_days": pl.UInt32, "penny_turnover": pl.Float64,
              "penny_market_cap": pl.Float64, "thin_days": pl.UInt32}
     adrs = equity.filter(pl.col("adr") if "adr" in equity.columns else pl.col("type").is_in(ADR_TYPES))
-    df = daily(store, date(first, 1, 1), date(last, 12, 31), adrs, cik_map, counts, basis)
+    df = daily(store, date(first, 1, 1), date(last, 12, 31), adrs, cik_map, counts, basis, spins)
     if df.is_empty():
         st = pl.DataFrame(schema=stats)
     else:
@@ -307,11 +357,12 @@ def screen(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def year_panel(store, year: int, equity: pl.DataFrame, cik_map: pl.DataFrame, counts: pl.DataFrame,
-               basis: pl.DataFrame, stats: dict[str, int] | None = None) -> pl.DataFrame:
+               basis: pl.DataFrame, stats: dict[str, int] | None = None,
+               spins: pl.DataFrame | None = None) -> pl.DataFrame:
     """One row per equity security and trading day of `year`. `stats` (optional) collects
     penny_adr_days: security-days whose market cap only the ADR penny rule withheld."""
     start, end = date(year, 1, 1), date(year, 12, 31)
-    df = daily(store, start - timedelta(days=130), end, equity, cik_map, counts, basis)
+    df = daily(store, start - timedelta(days=130), end, equity, cik_map, counts, basis, spins)
     if df.is_empty():
         return pl.DataFrame(schema=PANEL_SCHEMA)
     df = screen(df)
@@ -439,20 +490,32 @@ def build(store, edgar, layout: Layout, start_year: int = 2003, years: list[int]
     log.info("share counts: %d security/CIK pairs", pairs.height)
     sec = edgar.shares(pairs["cik"].unique().to_list())
     obs = pairs.join(sec, on="cik")
+    # Spin-offs recorded as splits change the price, not the shares: kept out of the counts,
+    # the inherited counts and the price adjustment of the liquidity table and the panels.
+    all_events = split_events(store.security_actions("splits"))
+    spins = price_only_events(obs, all_events)
+    events = all_events.join(spins.select("security_id", "execution_date").unique(),
+                             on=["security_id", "execution_date"], how="anti")
+    log.info("price-only events (spin-offs recorded as splits): %d on %d securities", spins.height,
+             spins["security_id"].n_unique())
     # Until a successor files its own count, the predecessor's last counts carry its market cap.
-    events = split_events(store.security_actions("splits"))
     obs = pl.concat([obs, inherited_counts(obs, successors, STALE_DAYS, events)])
     adrs = equity.filter(pl.col("adr"))["security_id"].to_list()
-    liquidity = liquidity_table(store, start_year, secs["last_trade"].max().year, equity)
-    multi = multi_class(pairs, secs)
+    liquidity = liquidity_table(store, start_year, secs["last_trade"].max().year, equity, spins)
+    candidates = multi_class(pairs, secs)
+    multi = multi_class(pairs, secs, trading_days(store, candidates))
+    log.info("multi-class: %d of %d securities sharing a CIK and a trading span", len(multi), len(candidates))
     counts, attribution = adjust(obs, events, adrs, liquidity, multi,
                                  first_trade=secs.select("security_id", "first_trade", "last_trade"))
+    attribution = pl.concat([attribution.with_columns(pl.lit(False).alias("price_only")),
+                             spins.with_columns(pl.lit(False).alias("applies"), pl.lit(True).alias("price_only"))
+                             .select(*attribution.columns, "price_only")]).sort("security_id", "execution_date")
     write_atomic(counts, layout.file("share_counts"))
     write_atomic(attribution, layout.file("split_attribution"))
 
     last = secs["last_trade"].max()
     basis = calibrate(store, counts, cik_map, equity, adr_name_ratios(attrs, adrs))
-    basis = penny_basis(store, start_year, last.year, equity, cik_map, counts, basis)
+    basis = penny_basis(store, start_year, last.year, equity, cik_map, counts, basis, spins)
     write_atomic(basis, layout.file("basis"))
     log.info("penny ADRs: %d with an implausible basis", int((basis["basis"] == "implausible").sum()))
 
@@ -460,7 +523,7 @@ def build(store, edgar, layout: Layout, start_year: int = 2003, years: list[int]
     rows = implausible = 0
     stats: dict[str, int] = {}
     for y in todo:
-        panel = year_panel(store, y, equity, cik_map, counts, basis, stats)
+        panel = year_panel(store, y, equity, cik_map, counts, basis, stats, spins)
         write_atomic(panel, layout.market_cap_file(y))
         rows += panel.height
         implausible += panel.filter(pl.col("implausible")).select("security_id", "shares_end").n_unique()
@@ -489,7 +552,8 @@ def build(store, edgar, layout: Layout, start_year: int = 2003, years: list[int]
         "unit_fixed": int(counts["unit_fixed"].sum()),
         "implausible_counts": implausible,
         "penny_adr_days": stats.get("penny_adr_days", 0),
-        "splits_not_applied": int((~attribution["applies"]).sum()) if attribution.height else 0,
+        "splits_not_applied": int((~attribution["applies"] & ~attribution["price_only"]).sum()) if attribution.height else 0,
+        "price_only_events": spins.height,
         "public_float": dict(floats.group_by("status").len().iter_rows()),
         "successors": dict(successors.group_by("kind").len().iter_rows()),
         "inherited_counts": int(obs["tag"].str.starts_with("successor:").sum()),

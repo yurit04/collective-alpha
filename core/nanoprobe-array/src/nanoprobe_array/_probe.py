@@ -24,6 +24,7 @@ log = logging.getLogger("nanoprobe_array")
 
 ENV_ROOT = "NANOPROBE_DATA_ROOT"
 WHOLE_MARKET_MAX_DAYS = 5   # bars() for every security at once; longer spans go through days()
+CHUNK_DAYS = 20             # days() with named securities reads this many days of minutes at once
 
 
 def default_root() -> Path:
@@ -183,12 +184,18 @@ class Nanoprobe:
         cal = self.store.trading_days(start - timedelta(days=int(warm * 1.6) + 7), end)
         first = cal.index(next(d for d in cal if d >= start)) if any(d >= start for d in cal) else len(cal)
         cal = cal[max(0, first - warm):]
+        only_ids = ids if not (top or size) else None     # read just these (tickers that day or ids)
+        if not cal:
+            return
+        sessions = self.store.sessions(cal[0], cal[-1])
+        if only_ids:
+            yield from self._days_named(only_ids, cal, start, end, sessions, n, fill, need_prev, names,
+                                        or_minutes, lookback, warm, include_live)
+            return
         history: list[pl.DataFrame] = []
         daily = None
-        only_ids = ids if not (top or size) else None     # read just these (tickers that day or ids)
         for d in cal:
-            raw = self.store.bars(only_ids, start=d, end=d, freq="1min", session="regular",
-                                  by="security" if only_ids else "ticker", include_live=include_live)
+            raw = self.store.bars(None, start=d, end=d, freq="1min", session="regular", include_live=include_live)
             if top or size:
                 keep = set(self.universe(d, top=top, size=size)["security_id"].to_list())
                 if ids:
@@ -197,12 +204,11 @@ class Nanoprobe:
                 raw = raw.filter(pl.col("security_id").is_in(list(keep)))
             if need_prev:
                 if daily is None or daily.height == 0 or d > daily["date"].max():
-                    daily = self._daily(only_ids, d, min(end, d + timedelta(days=90)),
-                                        "security" if only_ids else "ticker")
+                    daily = self._daily(None, d, min(end, d + timedelta(days=90)), "ticker")
                 day_daily = daily.filter(pl.col("date") == d)
             else:
                 day_daily = None
-            b = self._prepare(raw, self.store.sessions(d, d), n, fill, day_daily)
+            b = self._prepare(raw, sessions.filter(pl.col("date") == d), n, fill, day_daily)
             if names:
                 hist = pl.concat(history) if history else None
                 b = self._features(b, names, or_minutes, lookback, hist)
@@ -211,6 +217,35 @@ class Nanoprobe:
                     history = history[-lookback:]
             if d >= start:
                 yield d, b
+
+    def _days_named(self, ids, cal, start, end, sessions, n, fill, need_prev, names, or_minutes, lookback,
+                    warm, include_live) -> Iterator[tuple[date, pl.DataFrame]]:
+        """days() for a few named securities: CHUNK_DAYS days are read and prepared in one pass
+        (every step works per security and day, so the result is the same as day by day)."""
+        history: pl.DataFrame | None = None
+        daily = None
+        for i in range(0, len(cal), CHUNK_DAYS):
+            days_c = cal[i:i + CHUNK_DAYS]
+            raw = self.store.bars(ids, start=days_c[0], end=days_c[-1], freq="1min", session="regular",
+                                  by="security", include_live=include_live)
+            day_daily = None
+            if need_prev:
+                if daily is None or daily.height == 0 or days_c[-1] > daily["date"].max():
+                    daily = self._daily(ids, days_c[0], min(end, days_c[0] + timedelta(days=365)), "security")
+                day_daily = daily.filter(pl.col("date").is_between(days_c[0], days_c[-1]))
+            b = self._prepare(raw, sessions.filter(pl.col("date").is_between(days_c[0], days_c[-1])), n, fill,
+                              day_daily)
+            if names:
+                b = self._features(b, names, or_minutes, lookback, history)
+                if warm:
+                    h = b.select("security_id", "date", "bar", "volume")
+                    history = h if history is None else pl.concat([history, h])
+                    keep = sorted(history["date"].unique().to_list())[-lookback:]
+                    history = history.filter(pl.col("date").is_in(keep))
+            parts = {k[0]: g for k, g in b.partition_by("date", as_dict=True).items()}
+            for d in days_c:
+                if d >= start:
+                    yield d, parts.get(d, b.clear())
 
     # ------------------------------------------------------------------ summaries store
     def _summary_files(self) -> list[Path]:
