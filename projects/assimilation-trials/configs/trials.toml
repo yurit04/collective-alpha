@@ -1,0 +1,25 @@
+# Parameters of the studies in notebooks/00_trials.ipynb.
+[common]
+start = "2004-01-02"
+end = "2026-10-30"
+freq = "5min"
+aum = 1_000_000          # capital in dollars: impact, per-share commission, 10% participation cap
+
+[momentum]               # Gao, Han, Li and Zhou (2018)
+ticker = "SPY"
+enter_minutes_to_close = 30
+
+[overnight]
+ticker = "SPY"
+decide_minutes_to_close = 15
+
+[breakout]
+tickers = ["SPY", "QQQ"]
+or_minutes = 30
+
+[reversal]
+start = "2010-01-04"
+top = 500
+at_minutes = 30
+fraction = 0.1
+min_dollar_volume = 1_000_000   # traded since the open, by the decision

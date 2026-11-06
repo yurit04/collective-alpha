@@ -54,7 +54,7 @@ MINUTES = make_minutes()
 
 
 def make_daily() -> pl.DataFrame:
-    """Adjusted daily bars as Store.bars(adjust='all') returns them (adj = raw * factors)."""
+    """Adjusted daily bars as Store.bars(adjust='all') returns them (prices x factors, volume / split)."""
     reg = MINUTES.join(SESSIONS, on="date").filter(pl.col("timestamp") >= pl.col("market_open")).sort("timestamp")
     d = reg.group_by("ticker", "security_id", "date").agg(
         pl.col("open").first(), pl.col("high").max(), pl.col("low").min(),
@@ -63,7 +63,8 @@ def make_daily() -> pl.DataFrame:
     div = pl.when((pl.col("security_id") == "A") & (pl.col("date") < D(2024, 11, 29))).then(0.99).otherwise(1.0)
     d = d.with_columns(split_factor=split, div_factor=div)
     f = pl.col("split_factor") * pl.col("div_factor")
-    return d.with_columns([(pl.col(c) * f).alias(c) for c in ("open", "high", "low", "close")]).sort("security_id", "date")
+    return (d.with_columns([(pl.col(c) * f).alias(c) for c in ("open", "high", "low", "close")])
+            .with_columns(volume=pl.col("volume") / pl.col("split_factor")).sort("security_id", "date"))
 
 
 DAILY = make_daily()
@@ -214,6 +215,8 @@ def test_daily_prices_put_prev_close_on_todays_basis():
     a_raw_close1 = DAILY.filter(pl.col("security_id") == "A").sort("date")["close"][1] / 0.99
     assert a["prev_close"][2] == pytest.approx(a_raw_close1 * 0.99)  # dividend taken out
     assert a["prev_close"][0] is None
+    raw_volume = MINUTES.filter(pl.col("security_id") == "B").group_by("date").agg(pl.col("volume").sum() * 1.25).sort("date")
+    assert b["volume"].to_list() == pytest.approx(raw_volume["volume"].to_list())   # raw shares, before the split too
 
 
 def test_summarize():
@@ -227,6 +230,8 @@ def test_summarize():
     assert s["ret_first30"] == pytest.approx((100.0 + 0.01 * 29 + 0.01) / 100.0 - 1)
     assert s["ret_last30"] == pytest.approx(s["close"] / (100.0 + 0.01 * 359 + 0.01) - 1)
     assert s["bars_5min"] == 78 and s["rv_5min"] > 0 and s["ret_overnight"] is None
+    b = summarize(MINUTES, SESSIONS, daily_prices(DAILY)).filter(pl.col("security_id") == "B")
+    assert b["auction_share"].to_list() == pytest.approx([1 - 1 / 1.25] * b.height)   # split days included
 
 
 # ---------------------------------------------------------------------------- Nanoprobe

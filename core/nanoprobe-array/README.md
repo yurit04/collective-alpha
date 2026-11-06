@@ -3,7 +3,7 @@
 Intraday bars and features from the stored Massive minute bars: a regular-session clock, bars
 of any size with an explicit rule for empty bars, official auction prices, per-bar features,
 and a store of daily intraday summaries for every security since 2003. It is the data layer for
-intraday research; the intraday backtester (`tactical-cube`) comes next. Design:
+intraday research; backtests run on it in [`tactical-cube`](../tactical-cube/README.md). Design:
 [docs/decisions/0014-intraday.md](../../docs/decisions/0014-intraday.md).
 
 ```python
