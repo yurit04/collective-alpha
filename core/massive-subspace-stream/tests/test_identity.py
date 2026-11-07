@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime, timedelta
 import polars as pl
 import pytest
 from massive_subspace_stream._catalog import Catalog
-from massive_subspace_stream._identity.build import TEST_SYMBOL, compare
+from massive_subspace_stream._identity.build import MAX_BLANK_LOOKUPS, TEST_SYMBOL, compare
 from massive_subspace_stream._identity.checks import resolve, run_checks
 from massive_subspace_stream._identity.run import OVERRIDES_SCHEMA, build_identity, load_overrides
 from massive_subspace_stream._layout import Layout
@@ -282,3 +282,32 @@ def test_malformed_stock_dividends_are_read_as_small_dividends():
                       "adjustment_type": ["stock_dividend", "stock_dividend", "forward_split"]})
     out = fix_stock_dividends(s)
     assert out["split_from"].to_list() == [90.625, 1.0, 1.0]   # 1 -> 91.6 is a 1.1% dividend; 2:1 and splits kept
+
+
+class NoFigiLookups(FakeRefClient):
+    """Snapshots carry FIGIs; dated lookups answer without them (Massive does this for some
+    leveraged ETFs across a reverse split)."""
+
+    def get(self, path, params=None):
+        res = super().get(path, params)
+        return {"results": {**res["results"], "composite_figi": None}}
+
+
+def test_search_gives_up_on_answers_without_the_id(settings):
+    truth = [Life("LEV", D(2020, 1, 2), D(2020, 7, 13), 10.0, figi="F20", cik="C20", type="ETF"),
+             Life("LEV", D(2020, 7, 14), D(2020, 12, 31), 40.0, figi="F21", cik="C20", type="ETF")]  # 1:4 reverse split
+    layout = Layout(settings.data_root)
+    layout.ensure()
+    catalog = Catalog(layout.catalog_path)
+    write_parquet(make_bars(truth), layout.bars_day_file(2020))
+    client = NoFigiLookups(truth)
+    summary = build_identity(layout, catalog, client, overrides=OVERRIDES.clear())
+    asked = [d for t, d in client.lookups if t == "LEV"]
+    assert len(asked) <= MAX_BLANK_LOOKUPS            # was one per round until max_rounds
+    assert summary["lookups_needed_left"] == 0
+    master = pl.read_parquet(layout.identity_file("security_master"))
+    assert resolve(master, "LEV", D(2020, 7, 13)) == "F20"
+    assert resolve(master, "LEV", D(2020, 7, 14)) == "F21"   # placed at the price jump
+    client.lookups.clear()
+    build_identity(layout, catalog, client, overrides=OVERRIDES.clear())
+    assert client.lookups == []                         # and never asked again

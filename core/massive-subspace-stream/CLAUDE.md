@@ -72,6 +72,9 @@ Invariants:
   `CIK:<cik>:<ticker>`, else `SYM:<ticker>:<first date>`) is; ids must stay stable across
   rebuilds. Rebuilt nightly by `sync` once `subspace identity build` has run. Design:
   docs/decisions/0002-security-master.md.
+- Identity changes are located by binary search with dated lookups; a search gives up (and takes
+  the largest price jump) after MAX_BLANK_LOOKUPS (8) answers inside it lacking the id it is
+  looking for, so unresolvable boundaries are not re-asked every night. Never drop that limit.
 - Corporate actions are filed by Massive under the company's current ticker; the master maps
   them to securities, and adjustment uses those (never ticker-keyed factors when a master exists).
   Mapped splits the security's own price contradicts are dropped; stock dividends recorded as

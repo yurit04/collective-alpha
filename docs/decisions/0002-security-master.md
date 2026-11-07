@@ -76,3 +76,18 @@ in the security's own price (actions filed under the wrong company, or wrong); t
 dropped, and kept only when the close moves by about the split ratio or cannot be tested.
 Massive records some stock dividends as 1 -> N (TotalEnergies 1 -> 91.6); with N > 10 they are
 read as (N-1) -> N. Both change `adjust=` results for the securities concerned.
+
+## Addendum 2026-11-07: searches that cannot narrow
+For 23 tickers (mostly leveraged ETFs whose FIGI changed at a reverse split: SQQQ, SOXS, GUSH,
+DRIP, SRTY, ...; also CEI, LBTYA, AHT) Massive's dated lookups between the two snapshots answer
+without a FIGI. Such an answer cannot narrow a FIGI search, so the binary search asked another
+untried day every round until `max_rounds` (12), fell back to the largest price jump, and did the
+same again the next night: about 260 lookups and 40 seconds a night, for years in long windows
+(CEI: 148 lookups so far over 2003-2024).
+
+A search now stops after `MAX_BLANK_LOOKUPS` = 8 answers inside it that lack the id it is
+looking for (or were not found) and takes the price jump at once. Checked by replaying the whole
+search from snapshots with the cached answers standing in for the API: the security master is
+identical (48,843 segments) with 8, and with 5; stopping at the first such answer moved 18
+boundaries and at 3 still moved 2, because answers have occasional holes and a later one can
+carry the id. Tonight's repeated lookups go from 24 to 0.
