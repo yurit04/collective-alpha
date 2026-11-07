@@ -1,7 +1,7 @@
 [project]
 name = "unicomplex"
 version = "0.1.0"
-description = "Orchestration for the collective. Phase 1: one read-only status of every store's freshness."
+description = "Orchestration for the collective: one nightly runner and a freshness status of every store."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,6 +9,7 @@ dependencies = [
     "edgar-cortical-node",
     "finra-sensor-array",
     "vinculum",
+    "nanoprobe-array",
     "borg-queen",
     "transwarp-conduit",
     "polars>=1.0",
@@ -23,6 +24,7 @@ massive-subspace-stream = { workspace = true }
 edgar-cortical-node = { workspace = true }
 finra-sensor-array = { workspace = true }
 vinculum = { workspace = true }
+nanoprobe-array = { workspace = true }
 borg-queen = { workspace = true }
 transwarp-conduit = { workspace = true }
 

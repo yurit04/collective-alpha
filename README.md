@@ -76,8 +76,10 @@ uv run sensor backfill short-volume  # ~13,000 files, ~3 GB
 uv run vinculum build                # the join, ~30 s
 ```
 
-After that, `tools/nightly_sync.sh` (or each package's `service install`) keeps the stores
-current, and one command says whether they are:
+After that, one nightly run keeps the stores current: `uv run collective service install
+--replace` on macOS (one launchd job, Tue-Sat 06:30, replacing the per-package schedules), or
+`tools/nightly_sync.sh` on Linux. Both run `collective run`: every sync, then the vinculum,
+intraday and risk-model builds, one after another. One command says whether it all worked:
 
 ```bash
 uv run collective status
