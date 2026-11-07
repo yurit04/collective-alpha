@@ -108,7 +108,8 @@ c.submit(sheet.sheet_id)                           # paper; on the execution day
 ## Limits
 
 - One account, US common stocks and ADRs in USD, whole shares.
-- MOC only in practice (MKT works; LOC and algos are phase 3).
+- `order_type` is `MOC` (default) or `MKT`; anything else is refused when settings load (LOC and
+  algos are phase 3).
 - Borrow availability is a snapshot when the sheet is planned; IB can still reject a short it
   cannot locate at the close.
 - Prices are the last close in the local data: run the nightly sync before planning.

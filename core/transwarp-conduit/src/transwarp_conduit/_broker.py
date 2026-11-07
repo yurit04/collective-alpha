@@ -32,7 +32,7 @@ class OrderRequest:
     primary_exchange: str | None
     action: str                 # BUY / SELL
     quantity: float             # positive whole shares
-    order_type: str             # MOC (or MKT, LOC with limit_price)
+    order_type: str             # MOC or MKT (ORDER_TYPES)
     order_ref: str              # the order sheet id: links orders and fills to it
     limit_price: float | None = None
 

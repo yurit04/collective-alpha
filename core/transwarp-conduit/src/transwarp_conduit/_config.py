@@ -15,6 +15,7 @@ ENV_ROOT = "TRANSWARP_DATA_ROOT"
 ENV_PREFIX = "TRANSWARP_"
 PAPER_PORTS = (4002, 7497)      # IB Gateway / TWS paper defaults
 LIVE_PORTS = (4001, 7496)
+ORDER_TYPES = ("MOC", "MKT")    # LOC needs a limit price per order, which sheets do not carry
 
 
 class ConduitError(RuntimeError):
@@ -49,6 +50,12 @@ class ConduitSettings:
     timeout: float = 10.0
     root: str | None = None
     limits: Limits = Limits()
+
+    def __post_init__(self):
+        kind = str(self.order_type).strip().upper()
+        if kind not in ORDER_TYPES:
+            raise ConduitError(f"order_type {self.order_type!r} is not supported; use one of {', '.join(ORDER_TYPES)}")
+        object.__setattr__(self, "order_type", kind)
 
     def data_root(self) -> Path:
         return Path(self.root or os.environ.get(ENV_ROOT) or "~/market_data/transwarp_conduit").expanduser()

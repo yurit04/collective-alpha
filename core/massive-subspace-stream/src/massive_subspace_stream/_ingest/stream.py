@@ -17,7 +17,7 @@ import signal
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -137,6 +137,7 @@ class LiveWriter:
     def __init__(self, layout: Layout):
         self.layout = layout
         self.buffers: dict[str, list[dict]] = defaultdict(list)
+        self.unwritten: list[tuple[str, date, pl.DataFrame]] = []   # (kind, day, rows) a failed write left
         self._seq = 0
 
     def add(self, event: dict[str, Any]) -> bool:
@@ -147,21 +148,36 @@ class LiveWriter:
         return False
 
     def flush(self, now: datetime | None = None) -> dict[str, int]:
+        """Write buffered rows as part files, one per kind and day. Rows whose write fails (a
+        full disk) are kept and written by the next flush, stamped with its time; the first
+        such error is raised after every other part was written."""
         now = now or datetime.now(UTC)
-        written: dict[str, int] = {}
+        stamp = pl.lit(now).cast(pl.Datetime("ns", "UTC")).alias("received_at")
+        parts = [(kind, day, df.with_columns(stamp)) for kind, day, df in self.unwritten]
+        self.unwritten = []
         for ev, rows in list(self.buffers.items()):
             if not rows:
                 continue
             self.buffers[ev] = []
-            df = normalize(ev, rows, received_at=now)
             kind = CHANNELS[ev][0]
-            for (day,), part in df.partition_by("date", as_dict=True).items():
-                if day is None:
-                    continue
-                self._seq += 1
-                name = f"part-{now:%Y%m%d%H}-{int(now.timestamp() * 1000)}-{self._seq:06d}.parquet"
+            df = normalize(ev, rows, received_at=now)
+            parts += [(kind, day, part) for (day,), part in df.partition_by("date", as_dict=True).items()
+                      if day is not None]
+        written: dict[str, int] = {}
+        error: Exception | None = None
+        for kind, day, part in parts:
+            self._seq += 1
+            name = f"part-{now:%Y%m%d%H}-{int(now.timestamp() * 1000)}-{self._seq:06d}.parquet"
+            try:
                 write_parquet(part, self.layout.live_dir(kind, day) / name)
-            written[kind] = written.get(kind, 0) + df.height
+            except Exception as exc:  # keep the rows for the next flush
+                self.unwritten.append((kind, day, part))
+                error = error or exc
+                continue
+            written[kind] = written.get(kind, 0) + part.height
+        if error is not None:
+            kept = sum(p.height for _, _, p in self.unwritten)
+            raise OSError(f"live write failed, {kept:,} rows kept for the next flush: {error}") from error
         self.compact(now)
         return written
 

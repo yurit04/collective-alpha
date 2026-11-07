@@ -219,10 +219,11 @@ def simulate_day(day: date, bars: pl.DataFrame, targets: pl.DataFrame, aux: pl.D
     bar_events = [e for e in events if e["kind"] == "bar"]
     if flat_by not in (None, "close"):
         fb = _flat_bar(bar_ends, flat_by)
-        late = [e for e in bar_events if e["k"] >= fb]
+        # A rebalance may trade only in bars that end by flat_by: it starts `lag` bars after its decision.
+        late = [e for e in bar_events if e["k"] + lag > fb]
         if late:
-            warn.append(f"{len(late)} rebalance(s) at or after flat_by {flat_by} ignored")
-        bar_events = [e for e in bar_events if e["k"] < fb]
+            warn.append(f"{len(late)} rebalance(s) that would trade after flat_by {flat_by} (lag {lag}) ignored")
+        bar_events = [e for e in bar_events if e["k"] + lag <= fb]
         if fb < B:
             bar_events.append({"kind": "bar", "k": fb, "time": bar_ends[fb], "book": {}, "flat": True})
     activate: dict[int, list[dict]] = {}

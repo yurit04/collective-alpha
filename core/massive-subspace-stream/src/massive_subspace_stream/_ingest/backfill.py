@@ -35,6 +35,7 @@ log = logging.getLogger("massive_subspace_stream")
 REST_FLUSH_ROWS = 250_000   # convert raw API rows to a DataFrame this often
 REST_WRITE_ROWS = 3_000_000  # merge into year files this often (each merge rewrites them)
 SNAPSHOT_SHRINK_TOLERANCE = 0.02  # a snapshot answer this much shorter than stored is suspect
+SYNC_LOOKBACK_DAYS = 30  # sync re-fetches days missing this far back from the last stored day
 # Parquet output relative to the downloaded .csv.gz size (measured; used for disk checks).
 OUTPUT_RATIO = {"bars": 1.0, "ticks": 1.3}
 REFERENCE_FIRST = ("tickers", "ticker_types", "exchanges", "conditions", "market_holidays", "splits", "dividends", "ipos")
@@ -468,14 +469,17 @@ class Ingestor:
         return results
 
     def sync(self) -> list[JobResult]:
-        """Daily catch-up: new flat-file days since the last one stored, plus incremental REST refreshes."""
+        """Daily catch-up: new flat-file days since the last one stored, plus incremental REST
+        refreshes. Days of the last SYNC_LOOKBACK_DAYS the bucket has but the store lacks (a
+        download that failed on an earlier night) are fetched again; stored days are skipped."""
         results = []
         for dataset in ("bars_day", "bars_minute"):
             keys = self.catalog.partition_keys(dataset)
             if not keys:
                 results.append(JobResult(dataset, note="skipped: never backfilled (run `subspace backfill initial`)"))
                 continue
-            start = date.fromisoformat(keys[-1]) + timedelta(days=1)
+            first, last = date.fromisoformat(keys[0]), date.fromisoformat(keys[-1])
+            start = max(first, last - timedelta(days=SYNC_LOOKBACK_DAYS))   # never before the backfill
             results.append(self.flat(dataset, start=start, end=today_et()))
         results += self.rest()
         removed = prune_live(self.layout, self.catalog, self.settings.keep_live_days)

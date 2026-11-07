@@ -146,16 +146,21 @@ def test_market_needed_for_volume_spreads(setup):
 
 
 def test_drift_matches_hand_calculation():
-    rets = pl.DataFrame({"security_id": ["A", "A", "B", "B", "C"],
-                         "date": [date(2020, 1, 2), date(2020, 1, 3)] * 2 + [date(2020, 1, 2)],
-                         "ret": [0.10, 0.0, -0.10, 0.0, 0.5]})
-    held = pl.DataFrame({"security_id": ["A", "B", "C"], "weight": [0.5, -0.5, 0.1]})
-    out, growth = Portfolio._drift(held, rets, date(2020, 1, 1), date(2020, 1, 3))
-    pnl = 0.5 * 0.1 + (-0.5) * (-0.1) + 0.1 * 0.5
+    """As in the engine: a delisting row makes the name cash; a halt (no bar on the execution
+    date, trading again later) keeps it held."""
+    d1, d2 = date(2020, 1, 2), date(2020, 1, 3)
+    rets = pl.DataFrame({"security_id": ["A", "A", "B", "B", "C", "D"],
+                         "date": [d1, d2, d1, d2, d1, d1],
+                         "ret": [0.10, 0.0, -0.10, 0.0, 0.5, 0.2],
+                         "delisted": [False, False, False, False, True, False]})
+    held = pl.DataFrame({"security_id": ["A", "B", "C", "D"], "weight": [0.5, -0.5, 0.1, 0.1]})
+    out, growth = Portfolio._drift(held, rets, date(2020, 1, 1), d2)
+    pnl = 0.5 * 0.1 + (-0.5) * (-0.1) + 0.1 * 0.5 + 0.1 * 0.2
     assert growth == pytest.approx(1 + pnl)
     got = dict(out.iter_rows())
     assert got["A"] == pytest.approx(0.55 / growth) and got["B"] == pytest.approx(-0.45 / growth)
-    assert "C" not in got                                       # stopped trading: cash
+    assert "C" not in got                                       # delisted: cash
+    assert got["D"] == pytest.approx(0.12 / growth)             # halted on d2: still held
 
 
 def test_portfolio_build(setup):
