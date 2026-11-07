@@ -28,6 +28,7 @@ import polars as pl
 GAP_DAYS = 30          # calendar days without a bar that start a new episode
 HANDOFF_DAYS = 7       # max calendar days between a ticker's last bar and its successor's first
 MAX_JUMP = math.log(1.5)  # larger unexplained open/close jumps mean a different security
+MAX_BLANK_LOOKUPS = 8     # answers without the deciding id inside a search before it gives up
 ID_FIELDS = ("composite_figi", "share_class_figi", "cik")
 FUND_TYPES = {"ETF", "ETN", "ETV", "ETS", "ETD", "FUND", "UNIT"}  # never linked by CIK hand-off
 ATTR_FIELDS = ("name", "type", "primary_exchange", "cik", "composite_figi", "share_class_figi")
@@ -149,11 +150,16 @@ def segment_all(bars_index: BarIndex, eps: pl.DataFrame, anc: pl.DataFrame,
     forced_breaks = forced_breaks or {}
     looked: dict[str, set[int]] = defaultdict(set)      # days already asked (found or not)
     not_found: set[tuple[str, int]] = set()
+    blank: dict[tuple[str, str], set[int]] = defaultdict(set)  # (ticker, id field) -> days answered without it
     if lookups.height:
-        for t, d, found in lookups.select("ticker", "as_of", "found").iter_rows():
-            looked[t].add(to_day(d))
-            if not found:
-                not_found.add((t, to_day(d)))
+        for row in lookups.select("ticker", "as_of", "found", *ID_FIELDS).iter_rows(named=True):
+            t, d = row["ticker"], to_day(row["as_of"])
+            looked[t].add(d)
+            if not row["found"]:
+                not_found.add((t, d))
+            for f in ID_FIELDS:
+                if not row["found"] or not row[f]:
+                    blank[(t, f)].add(d)
     ep_count = eps.group_by("ticker").len()
     multi = set(ep_count.filter(pl.col("len") > 1)["ticker"].to_list())
 
@@ -182,7 +188,8 @@ def segment_all(bars_index: BarIndex, eps: pl.DataFrame, anc: pl.DataFrame,
             elif (t, d0) in not_found and d1 not in looked[t]:
                 needed.add((t, from_day(d1)))
 
-        def locate(lo_day: int, hi_day: int, t=t, days=days, i0=i0, i1=i1) -> tuple[str, int]:
+        def locate(lo_day: int, hi_day: int, fld: str | None = None, t=t, days=days, i0=i0,
+                   i1=i1) -> tuple[str, int]:
             lo = i0 + max(bisect_right(days, lo_day) - 1, 0)
             hi = i0 + min(bisect_left(days, hi_day), len(days) - 1)
             if hi <= lo:
@@ -190,7 +197,12 @@ def segment_all(bars_index: BarIndex, eps: pl.DataFrame, anc: pl.DataFrame,
             if hi - lo <= 1:
                 return "at", hi
             cands = [i for i in range(lo + 1, hi) if int(days_all[i]) not in looked[t]]
-            if cands and not final:
+            # Massive's dated answers can lack the id being searched for (leveraged ETFs across a
+            # reverse split carry no FIGI for months); they cannot narrow the search, so after
+            # MAX_BLANK_LOOKUPS of them inside it, stop asking and take the price jump below.
+            blanks = blank[(t, fld)] if fld else set()
+            hopeless = sum(int(days_all[i]) in blanks for i in range(lo + 1, hi)) >= MAX_BLANK_LOOKUPS
+            if cands and not final and not hopeless:
                 return "need", int(days_all[cands[len(cands) // 2]])
             # No lookup can narrow it further: take the largest price jump.
             best, best_i = -1.0, hi
@@ -216,7 +228,7 @@ def segment_all(bars_index: BarIndex, eps: pl.DataFrame, anc: pl.DataFrame,
                         cur[f] = rec[f]
                         evidence[f] = day
                 continue
-            how, at = locate(evidence.get(fld, int(days_all[seg_start])), day)
+            how, at = locate(evidence.get(fld, int(days_all[seg_start])), day, fld)
             if how == "need":
                 needed.add((t, from_day(at)))
                 at = i0 + min(bisect_left(days, day), len(days) - 1)  # provisional
