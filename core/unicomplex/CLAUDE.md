@@ -46,6 +46,8 @@ Invariants:
   `transwarp_conduit.Journal/OrderSheet/load_settings`, each package's `load_settings` /
   `ENV_ROOT` for the plist): a status field another package adds or renames is picked up here.
 - The plist never carries credentials; it never touches the Massive stream service.
+- The launchd job runs under `caffeinate -i -s` (no sleep until the run exits); keep it: a
+  sleeping Mac otherwise runs the steps in 45-second Power Nap bursts.
 - One failing store reports `missing` with its error; the other checks still run.
 - Expectations follow the schedules documented in each package (sync times, publication lags);
   change them here when a schedule changes there.

@@ -306,7 +306,7 @@ def test_plist(tmp_path, monkeypatch):
     plist = _services.build_plist(Settings(data_root=tmp_path / "uc", config_file=cfg),
                                   roots={"SUBSPACE_DATA_ROOT": "/data/massive"})
     assert plist["Label"] == "com.collective-alpha.unicomplex.nightly"
-    assert plist["ProgramArguments"] == ["/venv/bin/collective", "run", "--quiet"]
+    assert plist["ProgramArguments"] == ["/usr/bin/caffeinate", "-i", "-s", "/venv/bin/collective", "run", "--quiet"]
     env = plist["EnvironmentVariables"]
     assert env["SUBSPACE_DATA_ROOT"] == "/data/massive" and env["UNICOMPLEX_DATA_ROOT"].endswith("uc")
     assert env["COLLECTIVE_CONFIG"] == str(cfg.resolve())

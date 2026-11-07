@@ -73,3 +73,11 @@ sync`, `sensor sync`, `vinculum build`, `nanoprobe build`, `queen build`.
 Massive sync dominates; sequence is simpler and as fast in practice. Calling the packages'
 Python APIs in-process: one package's memory or a hung thread would affect the rest, and
 the CLIs already handle their own settings, logging and exit codes.
+
+**Correction 2026-11-07 (sleep, not slowness).** The 70-minute Massive sync on 2026-11-06 was
+the Mac asleep with the lid closed: it woke for about 45 seconds every 15 minutes (Power Nap),
+and the sync ran only during those wakes (`pmset -g log` matches each burst in the sync log).
+Awake, the whole sequence takes about 12 minutes (Massive 3, EDGAR about 4, FINRA seconds,
+vinculum 3.5, nanoprobe 1, queen 0.3). The launchd job now runs under `caffeinate -i -s`, which
+keeps the Mac awake until the run exits. Starting it at its next wake after 06:30, rather than
+waking the Mac at 06:30, is left to the user's power settings (`pmset repeat`).
