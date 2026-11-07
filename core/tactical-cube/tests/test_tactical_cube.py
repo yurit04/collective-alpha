@@ -107,6 +107,12 @@ def test_rebalance_replaces_the_book_and_flat_by_time():
     assert f.filter(pl.col("kind") == "close_auction").is_empty()
     late = simulate_day(D1, make_bars(D1, PRICES), tgt(D1, [(4, "A", 1.0)]), AUX, flat_by="09:50")
     assert late.fills.is_empty() and late.warnings
+    # With lag 2 a decision at bar 2 would start trading in bar 4, after flat_by: ignored.
+    slow = simulate_day(D1, make_bars(D1, PRICES), t, AUX, flat_by="09:50", lag=2)
+    f = slow.fills.sort("fill_bar", "security_id")
+    assert [(x["security_id"], x["fill_bar"], x["units"] > 0) for x in f.iter_rows(named=True)] == \
+        [("A", 2, True), ("A", 5, False)]
+    assert any("after flat_by" in w for w in slow.warnings)
 
 
 def test_errors_and_rejections():

@@ -40,12 +40,14 @@ class FakeStore:
                              "composite_figi": [s[0] for s in SECURITIES]},
                             schema_overrides={"valid_to": pl.Date})
 
-    def sessions(self, start, end):
-        if start.weekday() >= 5:
-            return pl.DataFrame(schema={"date": pl.Date, "market_open": pl.Datetime("ns", "UTC"),
-                                        "market_close": pl.Datetime("ns", "UTC")})
-        return pl.DataFrame({"date": [start], "market_open": [datetime(start.year, start.month, start.day, 14, 30, tzinfo=UTC)],
-                             "market_close": [datetime(start.year, start.month, start.day, 21, 0, tzinfo=UTC)]})
+    def sessions(self, start, end):   # weekdays, 9:30-16:00 New York (EST)
+        days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+        days = [d for d in days if d.weekday() < 5]
+        return pl.DataFrame({"date": days,
+                             "market_open": [datetime(d.year, d.month, d.day, 14, 30, tzinfo=UTC) for d in days],
+                             "market_close": [datetime(d.year, d.month, d.day, 21, 0, tzinfo=UTC) for d in days]},
+                            schema={"date": pl.Date, "market_open": pl.Datetime("us", "UTC"),
+                                    "market_close": pl.Datetime("us", "UTC")})
 
 
 class FakeEngine:
@@ -123,6 +125,18 @@ def test_load_settings(tmp_path, monkeypatch):
     assert (s.port, s.capital, s.client_id, s.account, s.limits.max_weight) == (4001, 50000.0, 23, "DU1", 0.05)
     with pytest.raises(ConduitError):
         load_settings(cfg, password="x")
+
+
+def test_order_type_is_checked(tmp_path):
+    """Only order types the sheets can express: a typo or LOC (needs a limit price) is refused,
+    and the MOC cutoff check sees the type whatever its case."""
+    cfg = tmp_path / "collective.toml"
+    cfg.write_text('[transwarp_conduit]\norder_type = "moc"\n')
+    assert load_settings(cfg).order_type == "MOC"
+    assert ConduitSettings(order_type="mkt").order_type == "MKT"
+    for bad in ("MOCC", "LOC", ""):
+        with pytest.raises(ConduitError, match="order_type"):
+            ConduitSettings(order_type=bad)
 
 
 # ---------------------------------------------------------------------------- contracts
@@ -214,6 +228,16 @@ def test_sheet_limits(tmp_path):
                                Limits(max_turnover=0.01))
     assert any("turnover" in i for i in issues)
 
+
+
+def test_plan_warns_when_every_price_is_old(tmp_path):
+    """Prices all from one close, but not the last session before the plan date (the nightly
+    update did not run): the sheet says so."""
+    c = conduit(tmp_path, sim())
+    fresh = c.plan(targets(AAPL=0.02), on=DAY)                   # prices from DAY - 1: the last session
+    assert not any("up to date" in w for w in fresh.warnings)
+    old = c.plan(targets(AAPL=0.02), on=DAY + timedelta(days=2))   # Friday; Thursday's close missing
+    assert any("up to date" in w and str(DAY + timedelta(days=1)) in w for w in old.warnings)
 
 # ---------------------------------------------------------------------------- workflow
 def test_plan_submit_fill_reconcile(tmp_path):

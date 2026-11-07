@@ -261,7 +261,7 @@ class Portfolio:
         r = self.engine.returns(ids, dates[0] - timedelta(days=10), e)   # a non-trading first date
         cal = sorted(r["date"].unique().to_list())
         exec_map = Engine.execution_dates(dates, cal, lag)           # the engine's rule, same lag
-        rets = r.select("security_id", "date", "ret").sort("date")
+        rets = r.select("security_id", "date", "ret", "delisted").sort("date")
         aux = r.select("security_id", "date", "adv", "vol").sort("date")
         held = pl.DataFrame(schema={"security_id": pl.String, "weight": pl.Float64})
         nav, prev_exec = 1.0, None
@@ -290,14 +290,15 @@ class Portfolio:
 
     @staticmethod
     def _drift(held: pl.DataFrame, rets: pl.DataFrame, a: date, b: date) -> tuple[pl.DataFrame, float]:
-        """Holdings after the returns of the days in (a, b]; a name with no return on b (it
-        stopped trading) is cash. Returns (drifted weights as fractions of the new capital,
-        capital growth)."""
+        """Holdings after the returns of the days in (a, b], as the engine holds them: a name
+        whose delisting row falls in the period is cash; a name without a bar on b (halted) is
+        still held. Returns (drifted weights as fractions of the new capital, capital growth)."""
         g = (rets.filter((pl.col("date") > a) & (pl.col("date") <= b))
              .group_by("security_id").agg((1 + pl.col("ret").fill_null(0)).product().alias("G"),
-                                          pl.col("date").max().alias("last")))
-        h = held.join(g, on="security_id", how="left").with_columns(pl.col("G").fill_null(1.0))
+                                          pl.col("delisted").fill_null(False).any().alias("gone")))
+        h = held.join(g, on="security_id", how="left").with_columns(pl.col("G").fill_null(1.0),
+                                                                     pl.col("gone").fill_null(False))
         pnl = float((h["weight"] * (h["G"] - 1)).sum())
         growth = 1 + pnl
-        live = h.filter(pl.col("last") == b)
+        live = h.filter(~pl.col("gone"))
         return live.select("security_id", (pl.col("weight") * pl.col("G") / growth).alias("weight")), growth

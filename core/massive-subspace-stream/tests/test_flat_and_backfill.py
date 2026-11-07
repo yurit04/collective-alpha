@@ -112,3 +112,36 @@ def test_sync_skips_datasets_never_backfilled(settings):
     ing._rest = type("R", (), {"paginate": lambda self, *a, **k: iter([])})()
     results = {r.dataset: r for r in ing.sync()}
     assert "never backfilled" in results["bars_minute"].note
+
+
+def test_sync_retries_a_day_that_failed_on_an_earlier_night(settings, monkeypatch):
+    """A day whose download failed while later days were stored is fetched again by the next
+    sync (not skipped forever because sync starts after the newest stored day); days before
+    the first stored day are never fetched."""
+    import massive_subspace_stream._ingest.backfill as bf
+
+    days = [date(2024, 1, d) for d in (2, 3, 4, 5)]
+
+    class Flaky(FakeFlatClient):
+        failed = False
+
+        def download(self, key, dest):
+            if "minute_aggs_v1" in key and key.endswith("2024-01-03.csv.gz") and not self.failed:
+                self.failed = True
+                raise ConnectionError("simulated network error")
+            return super().download(key, dest)
+
+    flat = Flaky()
+    flat.add("minute_aggs_v1", date(2023, 12, 29), bars_csv(minute_rows(date(2023, 12, 29))))  # before the backfill
+    for d in days[:3]:
+        flat.add("minute_aggs_v1", d, bars_csv(minute_rows(d)))
+    ing = Ingestor(settings, flat_client=flat)
+    ing._rest = type("R", (), {"paginate": lambda self, *a, **k: iter([])})()
+    first = ing.flat("bars_minute", days[0], days[2])
+    assert list(first.failed) == ["2024-01-03"]
+    flat.add("minute_aggs_v1", days[3], bars_csv(minute_rows(days[3])))
+    monkeypatch.setattr(bf, "today_et", lambda: days[3])
+    results = {r.dataset: r for r in ing.sync()}
+    assert results["bars_minute"].done == 2 and results["bars_minute"].ok      # the failed day and the new one
+    assert ing.catalog.partition_keys("bars_minute") == [d.isoformat() for d in days]
+    assert not any("2023-12-29" in k for k in flat.downloads)

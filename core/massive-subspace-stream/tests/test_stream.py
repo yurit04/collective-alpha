@@ -44,6 +44,35 @@ def test_flush_and_hourly_compaction(settings):
     assert pl.read_parquet(live_files(day_dir)).height == 3
 
 
+def test_flush_keeps_rows_when_a_write_fails(settings, monkeypatch):
+    import pytest
+    from massive_subspace_stream._ingest import stream as st
+
+    layout = Layout(settings.data_root)
+    writer = LiveWriter(layout)
+    real = st.write_parquet
+    calls = {"n": 0}
+
+    def flaky(df, path):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("No space left on device")
+        return real(df, path)
+
+    monkeypatch.setattr(st, "write_parquet", flaky)
+    for i in range(2):
+        writer.add({"ev": "A", "sym": "SPY", "s": T0 + i * 1000, "o": 1, "h": 1, "l": 1, "c": 1, "v": 1})
+    with pytest.raises(OSError, match="2 rows kept"):
+        writer.flush(now=datetime(2024, 12, 2, 14, 31, tzinfo=UTC))
+    writer.add({"ev": "A", "sym": "SPY", "s": T0 + 2000, "o": 1, "h": 1, "l": 1, "c": 1, "v": 1})
+    later = datetime(2024, 12, 2, 14, 32, tzinfo=UTC)
+    assert writer.flush(now=later) == {"bars_1s": 3}
+    stored = pl.read_parquet(live_files(layout.live_dir("bars_1s", date(2024, 12, 2))))
+    assert stored.height == 3
+    assert stored["received_at"].unique().to_list() == [later]   # retried rows carry the flush that wrote them
+    assert writer.unwritten == []
+
+
 def test_live_files_tolerates_other_file_names(tmp_path):
     for name in ("hour-2024120214.parquet", "part-2024120214-1-000001.parquet", "notes.parquet"):
         (tmp_path / name).touch()

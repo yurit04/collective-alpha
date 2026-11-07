@@ -40,7 +40,7 @@ bt.round_trips()      # per security and day: gross, costs, net, minutes held
 - **Auctions.** `auction="close"` trades at the official close (decided at least `moc_cutoff`
   minutes before), `auction="open"` at the next session's official open.
 - **Flat by.** `flat_by="close"` (default) exits in the closing auction, `"15:30"` from that bar
-  (New York time), `None` holds overnight: positions roll at `prev_close`, so splits are neutral
+  (New York time; a rebalance that would only start trading after it is ignored), `None` holds overnight: positions roll at `prev_close`, so splits are neutral
   and dividends are paid, and shorts held overnight pay borrow at vinculum's short-interest rate.
 - **Look-ahead check.** On the first `check_lookahead` days with targets (default 2) the strategy
   is re-run on the day's bars cut at 25, 50 and 75% of the session; if any target up to the

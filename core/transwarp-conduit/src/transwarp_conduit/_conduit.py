@@ -159,6 +159,11 @@ class Conduit:
         stale = mkt.filter(pl.col("price_date") < mkt["price_date"].max())
         if stale.height:
             warnings.append(f"{stale.height} name(s) priced from an older close than {mkt['price_date'].max()}")
+        # All prices can be equally old (the nightly update did not run): compare with the calendar.
+        prior = self.store.sessions(on - timedelta(days=MARKET_LOOKBACK_DAYS), on - timedelta(days=1))
+        if mkt.height and prior.height and mkt["price_date"].max() < prior["date"].max():
+            warnings.append(f"newest price is from {mkt['price_date'].max()}, before the last session "
+                            f"{prior['date'].max()} ahead of {on}: is the market data up to date?")
         if unmanaged.height:
             warnings.append(f"{unmanaged.height} position(s) not managed by this package are left alone")
         price_date = mkt["price_date"].max() if mkt.height else on
@@ -202,7 +207,7 @@ class Conduit:
         cut = self.cutoff(today)
         if cut is None:
             raise ConduitError(f"{today} is not a trading day")
-        if self.s.order_type in ("MOC", "LOC") and self.now() >= cut:
+        if self.s.order_type == "MOC" and self.now() >= cut:
             raise ConduitError(f"too late for market-on-close orders today (cutoff {cut.astimezone(NY):%H:%M} ET)")
         send = sheet.to_send
         if send.is_empty():
