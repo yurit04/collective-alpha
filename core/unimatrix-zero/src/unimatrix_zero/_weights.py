@@ -42,17 +42,22 @@ def cap_weights(w: pl.DataFrame, max_weight: float | None, by: Iterable[str] = (
     if not max_weight:
         return w
     by = list(by)
+    # A leg with fewer than |total| / max_weight names cannot respect the cap: equal weights are
+    # the closest it gets, and the leg keeps its total.
+    n, total = pl.len().over(by), pl.col("weight").sum().over(by)
+    w = w.with_columns((n * max_weight < total.abs() * (1 - 1e-9)).alias("__inf"))
+    w = w.with_columns(pl.when("__inf").then(total / n).otherwise(pl.col("weight")).alias("weight"))
     for _ in range(20):
-        total = pl.col("weight").sum().over(by)
         capped = pl.col("weight").abs() >= max_weight * 0.999999
         excess = (pl.col("weight").abs() - max_weight).clip(lower_bound=0).sum().over(by)
         free = pl.when(~capped).then(pl.col("weight").abs()).otherwise(0.0).sum().over(by)
-        w = w.with_columns(pl.when(capped).then(pl.col("weight").sign() * max_weight)
+        w = w.with_columns(pl.when("__inf").then(pl.col("weight"))
+                           .when(capped).then(pl.col("weight").sign() * max_weight)
                            .otherwise(pl.col("weight") * (1 + pl.when(free > 0).then(excess / free).otherwise(0.0)))
-                           .alias("weight"), total.alias("__t"))
-        if w.select((pl.col("weight").abs() > max_weight * 1.0001).any()).item() is False:
+                           .alias("weight"))
+        if w.select((~pl.col("__inf") & (pl.col("weight").abs() > max_weight * 1.0001)).any()).item() is False:
             break
-    return w.drop("__t")
+    return w.drop("__inf")
 
 
 def _finish(w: pl.DataFrame, max_weight: float | None, panel_cols: list[str]) -> pl.DataFrame:

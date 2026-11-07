@@ -62,5 +62,7 @@ Invariants:
   its own power cone; in plain fractions Clarabel reports "optimal_inaccurate". Keep both.
 - Optimizer costs come only from CostModel's public methods (spread_cost, impact_cost,
   borrow_bps), so a cost change in unimatrix-zero reaches optimizer and backtest together.
+- Names are matched to model rows by position (`np.searchsorted` on security_id): sort by
+  security_id after the last join, never before it (polars joins keep no row order).
 - An infeasible rebalance relaxes (participation, exposures x3, exposures off) and finally holds
   the current book; never return an empty book silently.

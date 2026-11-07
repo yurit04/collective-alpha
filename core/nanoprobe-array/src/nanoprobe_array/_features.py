@@ -65,7 +65,9 @@ def features(bars: pl.DataFrame, names: Iterable[str] | str | None = None, or_mi
     df = bars.sort("security_id", "date", "bar")
     prev = pl.col("close").shift(1).over(g)
     ret = (pl.col("close") / pl.coalesce(prev, pl.col("open")) - 1)
-    first_open = pl.col("open").drop_nulls().first().over(g)
+    # The day's first open is known only from the bar that printed it (null before).
+    seen = pl.col("open").is_not_null().cum_sum().over(g) > 0
+    first_open = pl.when(seen).then(pl.col("open").drop_nulls().first().over(g))
     exprs: dict[str, pl.Expr] = {
         "ret_bar": ret,
         "ret_open": pl.col("close") / first_open - 1,

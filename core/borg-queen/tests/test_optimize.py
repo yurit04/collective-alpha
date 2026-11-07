@@ -167,3 +167,25 @@ def test_portfolio_build(setup):
     assert diag["turnover"][1:].mean() < diag["turnover"][0]     # later rebalances start from holdings
     assert (diag["nav"] > 0).all() and diag["nav"][0] == 1.0
     assert set(SECTORS) >= set(w["sector"].drop_nulls())
+
+
+def test_row_order_of_joins_and_tables_does_not_matter(setup, monkeypatch):
+    """Names are found by position (searchsorted) after joins, which keep no row order: the
+    model and optimizer must sort after joining. Joins here return their rows reversed, as a
+    polars release may, and the stored tables are shuffled; the answers must not change."""
+    rm, alpha, market, _ = setup
+    expected = rm.predict(rm.exposures(M).sort("security_id").head(20)
+                          .select("security_id", pl.lit(0.05).alias("weight")), on=M).row(0)
+    join = pl.DataFrame.join
+    monkeypatch.setattr(pl.DataFrame, "join", lambda self, *a, **k: join(self, *a, **k).reverse())
+    shuffled = RiskModel(rm.root, processor=rm.processor, engine=rm.engine)
+    for name in ("exposures", "specific"):
+        shuffled._tables[name] = rm._table(name).sample(fraction=1.0, shuffle=True, seed=5)
+    w = rm.exposures(M).sort("security_id").head(20).select("security_id", pl.lit(0.05).alias("weight"))
+    assert shuffled.predict(w, on=M).row(0) == pytest.approx(expected)
+    ids = Optimizer(shuffled, CostModel())._inputs(M, _at(alpha), market, 1.0)[1]["security_id"]
+    assert ids.is_sorted()
+    c = Constraints.long_only(max_weight=0.001)                 # infeasible: holds w0 as given
+    w0 = pl.DataFrame({"security_id": ["S077", "S003"], "weight": [0.6, 0.4]})
+    sol = Optimizer(shuffled, CostModel(), c).solve(_at(alpha), M, w0, market)
+    assert dict(sol.weights.iter_rows()) == pytest.approx({"S077": 0.6, "S003": 0.4})
