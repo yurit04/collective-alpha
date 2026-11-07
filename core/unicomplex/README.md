@@ -5,7 +5,7 @@ status of how fresh every store is.
 
 ```bash
 uv run collective run --dry-run   # the steps and the commands they run; runs nothing
-uv run collective run             # run them now, one after another (an hour or more)
+uv run collective run             # run them now, one after another (about 15 minutes)
 uv run collective runs            # recent runs: status and minutes per step
 uv run collective status          # how fresh every store is against the nightly schedule
 uv run collective status --json   # the same as JSON (one object per check)
@@ -45,6 +45,13 @@ uv run collective service install --replace   # removes the four per-package sch
 uv run collective service status
 uv run collective service remove
 ```
+
+The job runs under `caffeinate`, so the Mac stays awake until the run ends. A Mac asleep at
+06:30 starts it at its next Power Nap wake (within about 15 minutes). Without that, it would
+sleep again after ~45 seconds and the steps would crawl along in short bursts: three minutes of
+work took 70 on 2026-11-06. With the lid closed and no external display macOS may still sleep;
+`pmset -g log` shows it. To wake the Mac at 06:29 itself (a system setting, needs sudo):
+`sudo pmset repeat wakeorpoweron TWRFS 06:29:00`.
 
 Without `--replace`, installing refuses while the old Massive sync, EDGAR sync, FINRA sync or
 vinculum build schedules exist, since they would run next to it. The Massive stream service is

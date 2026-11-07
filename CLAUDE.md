@@ -91,7 +91,7 @@ uv run collective run --dry-run        # the nightly steps in order (`run` runs 
   `trades`/`quotes` download without `--symbols` (3–9 GB per day), `cortical backfill` /
   `cortical profiles` (1.4 / 1.6 GB), `sensor backfill short-volume` (~13,000 files, ~3 GB),
   `service install` (any package, including `collective service install`) or `collective run`
-  (the whole nightly sequence, an hour or more).
+  (the whole nightly sequence, about 15 minutes).
 - Only one websocket connection per API key: use the stream service, don't open another.
 - Orders (transwarp-conduit): `conduit status`, `contracts`, `plan`, `show`, `orders`, `fills` and
   `reconcile` only read. Never run `submit`, `cancel` or `cancel-all` (or the same `Conduit`

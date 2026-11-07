@@ -5,6 +5,12 @@ build), which started at fixed times and could overlap. Installing refuses while
 is installed; `replace=True` removes them first through each package's own `service remove`
 command. The Massive stream service is never touched.
 
+The run is wrapped in `caffeinate -i -s`: a Mac asleep at the scheduled time starts the job
+at its next Power Nap wake, and without the assertion it would sleep again ~45 s later and run
+the steps in bursts, 15 minutes apart (on 2026-11-06 three minutes of sync took 70). The
+assertion lasts only as long as the run; `-s` holds only on AC power. With the lid closed and
+no external display macOS may still sleep; `pmset -g log` shows whether it did.
+
 The plist carries each package's data root, resolved now through that package's public
 settings, so the run sees the same stores the CLIs do. Credentials are not written into it:
 the packages read their env files as usual.
@@ -24,6 +30,7 @@ from ._runner import executable
 LABEL = "com.collective-alpha.unicomplex.nightly"
 AGENTS_DIR = Path("~/Library/LaunchAgents").expanduser()
 PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+CAFFEINATE = ("/usr/bin/caffeinate", "-i", "-s")   # no idle or system sleep until the run exits
 
 # The schedules this one replaces, and how each package removes its own.
 OLD_SERVICES: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -76,7 +83,7 @@ def build_plist(settings: Settings, roots: dict[str, str] | None = None) -> dict
     log = str(root / "_logs" / "nightly.launchd.log")
     return {
         "Label": LABEL,
-        "ProgramArguments": [collective, "run", "--quiet"],
+        "ProgramArguments": [*CAFFEINATE, collective, "run", "--quiet"],
         "EnvironmentVariables": env,
         "WorkingDirectory": str(root),
         "StandardOutPath": log,
