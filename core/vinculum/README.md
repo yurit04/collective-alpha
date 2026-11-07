@@ -43,6 +43,7 @@ v.public_float("WMT")                                     # every 10-K's public 
 v.short_interest("GME", start="2020-12-01")               # by publication date, % of market cap and float
 v.short_volume("AAPL", start="2024-01-01")                # daily off-exchange short sale volume
 v.ranks("2020-12-31")                                     # every company, ranked by market cap
+v.ranks(["2020-11-30", "2020-12-31"])                     # several days in one read (ranks per date)
 v.fundamentals(["revenue", "net_income", "equity"], start="2015-01-01", freq="1m")
 v.fundamentals(["eps_diluted"], tickers="NVDA")           # TTM EPS in each day's share units
 v.successors()                                            # holding-company reorganizations, CIK changes
@@ -275,6 +276,11 @@ everything else (ETFs, preferreds, OTC stocks).
 - Multi-class companies without a company-wide SEC count after some date (Berkshire after 2016)
   have no market cap from then on; tracking stocks (Liberty) get none.
 - Ratios only for USD reporters (no FX conversion).
+- The safety net that withholds implausible market caps uses later data: the median turnover
+  over a share count's whole period of use, and, for penny ADRs, the whole history and
+  Massive's current market cap. Measured: about 0.1 changes per month end to the top 3000,
+  all of them errors kept out (decision 0004, 2026-11-06). A rebuild can withhold days a
+  past universe showed.
 - Successors need a ~1:1 exchange: mergers at another ratio (and spin-offs) are not linked, and
   the predecessor's figures are those of the old company (an acquirer's TTM lags the deal, as
   for any acquisition). `market_cap()` by ticker shows the placeholder security on a switch day.

@@ -49,7 +49,8 @@ A panel has one row per security (primary class) and month end (`freq="1m"`) or 
 - **Successors:** a company that moved to a new security (ExxonMobil in July 2026) keeps its
   price and growth history. The predecessor's bars and rows before the link count as the
   successor's, and the return across the link comes from raw closes.
-- **Universe:** `top` and `size` use `vinculum.ranks()` on each date (survivorship free);
+- **Universe:** `top` and `size` use `vinculum.ranks()` on each date (survivorship free), or on
+  the previous month end with `rebalance="monthly"` (as `Vinculum.universe` does);
   `rank_by="float_market_cap"` ranks on float. Or pass `universe` (date, security_id).
 - **Price signals:**
   - a daily return above +300% counts as 0 (data breaks such as bankruptcy emergences);
@@ -57,7 +58,7 @@ A panel has one row per security (primary class) and month end (`freq="1m"`) or 
   - reversal: the last month's return;
   - 52-week high: on split-adjusted prices;
   - volatility, turnover and Amihud illiquidity: over 63 trading days;
-  - beta: daily, 252 days, against the cap-weighted return of the panel's securities.
+  - beta: daily, 252 days, against SPY's total return (the same for any set of securities).
 
 ## Transforms (per date, never across dates)
 

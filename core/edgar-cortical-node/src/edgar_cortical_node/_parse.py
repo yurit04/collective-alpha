@@ -118,7 +118,7 @@ PROFILE_SCHEMA = {
 NAME_SCHEMA = {"cik": pl.String, "name": pl.String, "valid_from": pl.Date, "valid_to": pl.Date}
 
 
-def _day(s: Any) -> str | None:
+def _iso_day(s: Any) -> str | None:
     return str(s)[:10] if s else None
 
 
@@ -140,7 +140,7 @@ def parse_submission(doc: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str
         "tickers": tickers, "exchanges": [e for e in (doc.get("exchanges") or []) if e],
         "first_periodic": periodic[0] if periodic else None, "last_periodic": periodic[-1] if periodic else None,
     }
-    names = [{"cik": cik, "name": f.get("name"), "valid_from": _day(f.get("from")), "valid_to": _day(f.get("to"))}
+    names = [{"cik": cik, "name": f.get("name"), "valid_from": _iso_day(f.get("from")), "valid_to": _iso_day(f.get("to"))}
              for f in (doc.get("formerNames") or []) if f.get("name")]
     since = max((n["valid_to"] for n in names if n["valid_to"]), default=None)
     names.append({"cik": cik, "name": doc.get("name"), "valid_from": since, "valid_to": None})

@@ -23,7 +23,7 @@ User docs: README.md in this folder. Design: docs/decisions/0004-vinculum.md.
   float_fraction, float_date, float_market_cap, issuer_float_market_cap (public float from the
   latest 10-K, usable the day after filing, for 400 days)
 - `ranks(on, types=("CS","ADRC"), by="market_cap"|"float_market_cap")`: one row per company
-  (primary class), rank, size, issuer_market_cap, issuer_float_market_cap; a null `type`
+  (primary class) and date (`on` a day or a list of days; ties to the lower security_id), date, rank, size, issuer_market_cap, issuer_float_market_cap; a null `type`
   (delisted before Massive carried types) always passes the `types` filter
 - `universe(on, top=None, size=None, types=..., rebalance="monthly"|"daily", by=...)`: ranked on
   the previous month end (monthly) or `on`; rows of `on` for the chosen companies
@@ -89,6 +89,9 @@ Invariants:
     >= PENNY_MIN_DAYS days under $2 whose median turnover is under 10^-4.5 and median market cap
     above 10x Massive's current one, gets basis `implausible` and is withheld on every day: the
     ratio is one number per security.
+  These rules use later data (whole count period, whole history, Massive's current cap) on
+  purpose: they judge whether a figure is believable, never a price; a point-in-time version
+  admits trillion-dollar errors (0004, 2026-11-06). Keep them out of anything that is a signal.
   Real penny ADRs above $5B (LYG, ABEV, SAN) trade tens of millions a day and pass; real ADRs
   that trade mostly at home (ENIC, TUYA) dip under $2 on thin US volume but stay near today's
   value, so the anchor keeps them. Never drop the anchor; never tighten the turnover floor for

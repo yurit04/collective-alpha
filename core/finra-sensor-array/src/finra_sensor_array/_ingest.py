@@ -14,7 +14,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import polars as pl
@@ -199,7 +199,13 @@ class Ingestor:
         return out
 
 
-def _day(value: Any) -> date | None:
-    if value is None or isinstance(value, date):
-        return value
-    return date.fromisoformat(str(value)[:10])
+def _day(d: Any) -> date | None:
+    """None, a date, a datetime (its date) or an ISO string -> date. Every package has this same
+    copy (tests/test_shared_helpers.py checks they agree)."""
+    if d is None:
+        return None
+    if isinstance(d, datetime):
+        return d.date()
+    if isinstance(d, date):
+        return d
+    return date.fromisoformat(str(d)[:10])

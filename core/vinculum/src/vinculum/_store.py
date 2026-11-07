@@ -23,14 +23,14 @@ RATIOS = {"earnings_yield": "net_income", "book_to_market": "equity", "sales_to_
 
 
 def _day(d: Any) -> date | None:
+    """None, a date, a datetime (its date) or an ISO string -> date. Every package has this same
+    copy (tests/test_shared_helpers.py checks they agree)."""
     if d is None:
         return None
     if isinstance(d, datetime):
         return d.date()
     if isinstance(d, date):
         return d
-    if hasattr(d, "date"):  # pandas Timestamp
-        return d.date()
     return date.fromisoformat(str(d)[:10])
 
 
@@ -228,9 +228,10 @@ class Vinculum:
 
     def ranks(self, on: Any, types: Iterable[str] | None = ("CS", "ADRC"), by: SizeBy = "market_cap",
               backend: Backend = "polars"):
-        """Companies ranked by size on a day (one row per company: its primary class).
-        Columns: rank, size (large/mid/small/micro), security_id, ticker, cik, issuer_market_cap,
-        issuer_float_market_cap. by="market_cap" ranks on issuer_market_cap; by="float_market_cap"
+        """Companies ranked by size on a day (one row per company: its primary class), or on each
+        of several days (`on` a list: one read, ranks per date; ties go to the lower security_id).
+        Columns: date, rank, size (large/mid/small/micro), security_id, ticker, type, cik,
+        issuer_market_cap, issuer_float_market_cap. by="market_cap" ranks on issuer_market_cap; by="float_market_cap"
         on issuer_float_market_cap (companies without a usable public float are left out).
         `types` keeps those Massive types plus securities with no recorded type (companies
         delisted before Massive's snapshots carried one: Dell, Broadcom, SanDisk); the panel
@@ -238,12 +239,15 @@ class Vinculum:
         if by not in SIZE_COLUMNS:
             raise ValueError(f"unknown by={by!r}; choose from {list(SIZE_COLUMNS)}")
         col = SIZE_COLUMNS[by]
-        day = _day(on)
-        lf = self.scan().filter((pl.col("date") == day) & pl.col("is_primary") & pl.col(col).is_not_null())
+        many = not isinstance(on, (str, date)) and isinstance(on, Iterable)
+        days = sorted({_day(d) for d in on}) if many else [_day(on)]
+        lf = self.scan().filter(pl.col("date").is_in(days) & pl.col("is_primary") & pl.col(col).is_not_null())
         if types:
             lf = lf.filter(pl.col("type").is_in(list(types)) | pl.col("type").is_null())
         df = (lf.select("date", "security_id", "ticker", "type", "cik", "issuer_market_cap", "issuer_float_market_cap")
-              .collect().sort(col, descending=True).with_row_index("rank", offset=1))
+              .collect().sort(["date", col, "security_id"], descending=[False, True, False])
+              .with_columns(pl.int_range(1, pl.len() + 1, dtype=pl.UInt32).over("date").alias("rank"))
+              .select("rank", pl.all().exclude("rank")))
         bucket = pl.lit("micro")
         for name, (lo, hi) in reversed(list(SIZE_BUCKETS.items())):
             cond = pl.col("rank") >= lo if hi is None else pl.col("rank").is_between(lo, hi)

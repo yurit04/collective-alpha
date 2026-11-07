@@ -75,6 +75,10 @@ subspace query bars AAPL --start 2024-01-01 --adjust splits
 All jobs can be stopped and re-run: each finished day or dataset is recorded in
 `_catalog/catalog.sqlite`, so it is skipped next time.
 
+Only one job writes at a time: a backfill started while the nightly sync runs (or the other way
+round) stops at once with "another job is writing to ...", naming the running job; run it again
+when that one has finished.
+
 ## Querying
 
 ```python

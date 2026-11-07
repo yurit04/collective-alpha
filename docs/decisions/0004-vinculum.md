@@ -367,3 +367,29 @@ history (it accumulates only from the first download) and may not be in smaller 
 - **Not changed.** `Store`'s `adjust="splits"` and unimatrix-zero's returns still fold the spin
   into the price series. For returns that is right, as it keeps the spin's value in the holding.
 - **Checks.** DELL 2021-12-31 and DD 2025-12-31 market caps in `vinculum check`.
+
+## Addendum (2026-11-06): the safety net uses hindsight, on purpose
+The checks that withhold market cap (`_build.screen`, `penny_basis`) look ahead:
+- The turnover rule takes the median over the whole period a SEC count is in use, which can
+  reach about 400 days past the day judged.
+- The penny-ADR rules use a security's whole history and Massive's current market cap.
+
+So whether a day has a market cap, and so its universe membership, can depend on later data.
+
+- **Measured** (current build, data to 2026-11-05, 279 month ends, top 3000 by issuer market
+  cap). The turnover rule was re-run point in time, as the median of the days up to each date (market cap on
+  withheld days rebuilt as close x shares x basis):
+  - from the first day: 4 names leave and 10 enter, 0.05 changes per month end;
+  - from day 20 (no judgement before): 0 leave and 30 enter, 0.11 per month end.
+  - The names that would enter are errors the hindsight keeps out: Fanhua (CISG/FANH) shown
+    at $0.5-1.1T, LATAM's old ADS at $15T, WSTC at $9.5T.
+  - The penny-ADR rules withhold 309 month-end rows of 10 securities that would otherwise be top
+    3000 (1.1 per month end): ADRs with a wrong ratio (AMCN, TC, DUO, SPI, Fanhua), the cases
+    those rules were written for.
+- **Decision.** Keep both: the hindsight decides only whether a stored figure is believable,
+  never a price or a return, and a point-in-time version admits trillion-dollar errors to the
+  universe. A universe at a past date can still change when later data arrives (a rebuild may
+  withhold days it showed before); studies that need the universe frozen as first seen should
+  save it.
+- **Not done.** No point-in-time screen; revisit if a strategy trades names near the top-3000
+  cut where one name per month end matters.

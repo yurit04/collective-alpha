@@ -32,10 +32,14 @@ def default_root() -> Path:
 
 
 def _day(d: Any) -> date | None:
-    if d is None or isinstance(d, date) and not isinstance(d, datetime):
-        return d
+    """None, a date, a datetime (its date) or an ISO string -> date. Every package has this same
+    copy (tests/test_shared_helpers.py checks they agree)."""
+    if d is None:
+        return None
     if isinstance(d, datetime):
         return d.date()
+    if isinstance(d, date):
+        return d
     return date.fromisoformat(str(d)[:10])
 
 

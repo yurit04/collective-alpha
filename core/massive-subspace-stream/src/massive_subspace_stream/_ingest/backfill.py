@@ -7,11 +7,15 @@ and re-run; finished work is skipped.
 
 from __future__ import annotations
 
+import fcntl
+import functools
 import logging
+import os
 import shutil
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -39,6 +43,19 @@ SYNC_LOOKBACK_DAYS = 30  # sync re-fetches days missing this far back from the l
 # Parquet output relative to the downloaded .csv.gz size (measured; used for disk checks).
 OUTPUT_RATIO = {"bars": 1.0, "ticks": 1.3}
 REFERENCE_FIRST = ("tickers", "ticker_types", "exchanges", "conditions", "market_holidays", "splits", "dividends", "ipos")
+
+
+class BusyError(RuntimeError):
+    """Another job is writing to this data root; nothing was done."""
+
+
+def _exclusive(job: Callable) -> Callable:
+    """Run an Ingestor job holding the data root's writer lock (jobs that call other jobs reuse it)."""
+    @functools.wraps(job)
+    def run(self: Ingestor, *args, **kwargs):
+        with self.writer(job.__name__):
+            return job(self, *args, **kwargs)
+    return run
 
 
 class DiskSpaceError(RuntimeError):
@@ -78,6 +95,42 @@ class Ingestor:
         self.catalog = Catalog(self.layout.catalog_path)
         self._flat = flat_client
         self._rest = rest_client
+        self._lock_depth = 0
+
+    @contextmanager
+    def writer(self, job: str = "job") -> Iterator[None]:
+        """Hold the data root's writer lock (`_run/writer.lock`): one writing job at a time, so
+        a manual backfill during the nightly sync cannot lose either one's updates. Raises
+        BusyError at once when another process holds it. Reentrant within this Ingestor."""
+        if self._lock_depth:
+            self._lock_depth += 1
+            try:
+                yield
+            finally:
+                self._lock_depth -= 1
+            return
+        fh = open(self.layout.run_dir / "writer.lock", "a+")  # noqa: SIM115 - held for the job
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            fh.seek(0)
+            holder = fh.read().strip() or "unknown job"
+            fh.close()
+            raise BusyError(f"another job is writing to {self.layout.root} ({holder}); "
+                            "try again when it has finished") from None
+        try:
+            fh.seek(0)
+            fh.truncate()
+            fh.write(f"{job}, pid {os.getpid()}, since {datetime.now(UTC):%Y-%m-%d %H:%M} UTC\n")
+            fh.flush()
+            self._lock_depth = 1
+            yield
+        finally:
+            self._lock_depth = 0
+            fh.seek(0)
+            fh.truncate()
+            fcntl.flock(fh, fcntl.LOCK_UN)
+            fh.close()
 
     # Clients are created lazily so commands that don't need them work without credentials.
     @property
@@ -95,6 +148,7 @@ class Ingestor:
         return self._rest
 
     # ------------------------------------------------------------------ flat files
+    @_exclusive
     def flat(
         self,
         dataset: str,
@@ -278,6 +332,7 @@ class Ingestor:
         return [n for n, spec in REST_DATASETS.items()
                 if spec.nightly and n not in self.settings.plan_info.rest_excluded]
 
+    @_exclusive
     def rest(self, names: Iterable[str] | None = None, full: bool = False) -> list[JobResult]:
         """Refresh REST datasets (default: `rest_defaults()`). A named dataset is always tried;
         one the plan lacks then answers 403 and is skipped."""
@@ -455,6 +510,7 @@ class Ingestor:
         return years, newest
 
     # ------------------------------------------------------------------ composite jobs
+    @_exclusive
     def initial(self, since: Any = None, minute: bool = True, rest: bool = True,
                 workers: int | None = None) -> list[JobResult]:
         """First-time load: reference data, then day bars, minute bars, then the other REST datasets."""
@@ -468,6 +524,7 @@ class Ingestor:
             results += self.rest([n for n in self.rest_defaults() if n not in REFERENCE_FIRST])
         return results
 
+    @_exclusive
     def sync(self) -> list[JobResult]:
         """Daily catch-up: new flat-file days since the last one stored, plus incremental REST
         refreshes. Days of the last SYNC_LOOKBACK_DAYS the bucket has but the store lacks (a
@@ -491,6 +548,7 @@ class Ingestor:
             results.append(JobResult("identity", note="skipped: never built (run `subspace identity build`)"))
         return results
 
+    @_exclusive
     def identity(self, fetch: bool = True) -> JobResult:
         """(Re)build the security master. New month-end snapshots and dated lookups are fetched
         when fetch=True; everything already downloaded is reused."""
@@ -552,11 +610,12 @@ class Ingestor:
                         dataset, len(unrepairable), self.settings.plan)
         if repair and (missing or broken):
             todo = sorted((set(missing) | set(broken)) - set(unrepairable))
-            for key in set(broken) & set(todo):  # a broken day the plan can't replace stays listed
-                self.catalog.remove(dataset, key)
-            for key in todo:
-                tickers = (have.get(key, {}).get("detail") or {}).get("tickers")
-                self.flat(dataset, start=key, end=key, tickers=tickers)
+            with self.writer("verify --repair"):
+                for key in set(broken) & set(todo):  # a broken day the plan can't replace stays listed
+                    self.catalog.remove(dataset, key)
+                for key in todo:
+                    tickers = (have.get(key, {}).get("detail") or {}).get("tickers")
+                    self.flat(dataset, start=key, end=key, tickers=tickers)
         return {"missing": missing, "broken": sorted(broken), "unrepairable": unrepairable}
 
 

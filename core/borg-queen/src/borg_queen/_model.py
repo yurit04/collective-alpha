@@ -33,14 +33,16 @@ class RiskSettings:
     shrink: float = 0.3         # weight of the size-decile mean in specific variance
 
 
-def _day(x: Any) -> date | None:
-    if x is None:
+def _day(d: Any) -> date | None:
+    """None, a date, a datetime (its date) or an ISO string -> date. Every package has this same
+    copy (tests/test_shared_helpers.py checks they agree)."""
+    if d is None:
         return None
-    if isinstance(x, datetime):
-        return x.date()
-    if isinstance(x, date):
-        return x
-    return date.fromisoformat(str(x)[:10])
+    if isinstance(d, datetime):
+        return d.date()
+    if isinstance(d, date):
+        return d
+    return date.fromisoformat(str(d)[:10])
 
 
 def default_root() -> Path:

@@ -104,6 +104,22 @@ def _ingestor():
     return Ingestor(_settings())
 
 
+def _one_writer(command):
+    """Exit with a message (code 2) when another job holds the data root's writer lock."""
+    import functools
+
+    @functools.wraps(command)
+    def run(*args, **kwargs):
+        from ._ingest.backfill import BusyError
+
+        try:
+            return command(*args, **kwargs)
+        except BusyError as exc:
+            typer.secho(str(exc), fg=typer.colors.YELLOW, err=True)
+            raise typer.Exit(2) from None
+    return run
+
+
 def _split(value: str | None) -> list[str] | None:
     return [v.strip() for v in value.split(",") if v.strip()] if value else None
 
@@ -215,6 +231,7 @@ def datasets() -> None:
 
 # ---------------------------------------------------------------------- backfill
 @backfill_app.command("initial")
+@_one_writer
 def backfill_initial(
     since: Annotated[str | None, typer.Option(help="First date (default: earliest available, 2003-09-10).")] = None,
     minute: Annotated[bool, typer.Option(help="Include minute bars (about 100 GB for full history).")] = True,
@@ -227,6 +244,7 @@ def backfill_initial(
 
 
 @backfill_app.command("history")
+@_one_writer
 def backfill_history(
     dataset: Annotated[str, typer.Option(help=f"One of: {', '.join(FLAT_DATASETS)}.")],
     start: Annotated[str, typer.Option(help="First date, YYYY-MM-DD.")],
@@ -245,6 +263,7 @@ def backfill_history(
 
 
 @backfill_app.command("rest")
+@_one_writer
 def backfill_rest(
     names: Annotated[list[str] | None, typer.Argument(help=f"Datasets (default all): {', '.join(REST_DATASETS)}.")] = None,
     full: Annotated[bool, typer.Option(help="Ignore saved progress and re-pull full history.")] = False,
@@ -254,12 +273,14 @@ def backfill_rest(
 
 
 @app.command()
+@_one_writer
 def sync() -> None:
     """Daily catch-up: new day/minute bars plus incremental REST refreshes; prunes old live data."""
     _report(_ingestor().sync())
 
 
 @app.command()
+@_one_writer
 def verify(
     dataset: Annotated[str, typer.Option(help=f"One of: {', '.join(FLAT_DATASETS)}.")] = "bars_minute",
     start: Annotated[str | None, typer.Option()] = None,
@@ -399,6 +420,7 @@ def service_status() -> None:
 
 # ---------------------------------------------------------------------- identity
 @identity_app.command("build")
+@_one_writer
 def identity_build(
     fetch: Annotated[bool, typer.Option(help="Download missing snapshots and dated lookups first.")] = True,
 ) -> None:

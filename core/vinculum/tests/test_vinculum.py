@@ -292,6 +292,16 @@ def test_ranks_and_universe(v):
         v.universe(D(2021, 6, 15), size="huge")
 
 
+def test_ranks_on_several_days_match_one_day_at_a_time(v):
+    days = [D(2021, 6, 1), D(2021, 6, 15), D(2021, 7, 2)]
+    both = v.ranks(days)
+    one = pl.concat([v.ranks(d) for d in days])
+    key = ["date", "rank"]
+    assert both.columns == one.columns and both.height == one.height > 0
+    assert both.sort(key).select(key + ["security_id", "size"]).equals(one.sort(key).select(key + ["security_id", "size"]))
+    assert both.group_by("date").agg(pl.col("rank").min())["rank"].to_list() == [1] * len(days)
+
+
 def test_fundamentals_point_in_time(v):
     f = v.fundamentals(["revenue", "equity"], start=D(2021, 5, 1), end=D(2021, 12, 31), freq="1d")
     alph = f.filter(pl.col("ticker") == "ALPH")
