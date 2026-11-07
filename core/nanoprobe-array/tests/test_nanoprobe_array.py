@@ -168,6 +168,21 @@ def test_features_never_look_ahead():
         assert [v for v in x if v is not None] == pytest.approx([v for v in y if v is not None], rel=1e-12), n
 
 
+def test_first_open_features_wait_for_the_first_print():
+    """gap and ret_open use the day's first open only from the bar that printed it: a name with
+    no prints in its first bars must not see a later open there."""
+    n = None
+    b = pl.DataFrame({"security_id": ["A"] * 4, "date": [DAYS[0]] * 4, "bar": [0, 1, 2, 3],
+                      "minutes_from_open": [5, 10, 15, 20], "open": [n, n, 10.0, 10.5],
+                      "high": [n, n, 10.2, 10.6], "low": [n, n, 9.9, 10.4], "close": [n, n, 10.1, 10.5],
+                      "volume": [0.0, 0.0, 100.0, 100.0], "dollar_volume": [0.0, 0.0, 1010.0, 1050.0],
+                      "prev_close": [9.0] * 4})
+    f = features(b, ["gap", "ret_open"]).sort("bar")
+    assert f["gap"][:2].is_null().all() and f["ret_open"][:2].is_null().all()
+    assert f["gap"][2] == pytest.approx(10.0 / 9.0 - 1) and f["gap"][3] == pytest.approx(10.0 / 9.0 - 1)
+    assert f["ret_open"][3] == pytest.approx(10.5 / 10.0 - 1)
+
+
 def test_feature_values():
     g = grid(resample(MINUTES, SESSIONS, 5), SESSIONS, 5)
     f = features(g, ["ret_bar", "ret_open", "rvol", "or_high", "or_break", "range_pos"], or_minutes=30)

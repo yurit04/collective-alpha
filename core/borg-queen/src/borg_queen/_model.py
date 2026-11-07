@@ -181,9 +181,9 @@ class RiskModel:
 
     # ------------------------------------------------------------------ forecasts
     def _model_at(self, m: date):
-        ex = self.exposures(m).sort("security_id")
         sp = self.specific_var(m).select("security_id", "spec_var")
-        ex = ex.join(sp, on="security_id", how="left")
+        # Sorted after the join (joins keep no row order): _align finds names by searchsorted.
+        ex = self.exposures(m).join(sp, on="security_id", how="left").sort("security_id")
         X = design(ex["sector"].to_numpy(), ex.select(list(STYLES)).to_numpy())
         return ex["security_id"].to_numpy(), X, ex["spec_var"].fill_null(np.nan).to_numpy(), self._cov_matrix(m)
 

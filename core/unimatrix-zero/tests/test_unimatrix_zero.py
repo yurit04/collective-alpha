@@ -136,6 +136,15 @@ def test_weight_builders():
     assert t["weight"].sum() == pytest.approx(1) and t["weight"].max() <= 0.3 + 1e-9
 
 
+def test_cap_too_tight_for_the_leg_keeps_equal_weights():
+    """4 names cannot each stay under 10% and sum to 1: equal weights, never a shrunken leg."""
+    t = top_n_weights(panel(), "score", n=4, max_weight=0.1, weighting="cap")
+    assert t["weight"].sum() == pytest.approx(1) and t["weight"].to_list() == pytest.approx([0.25] * 4)
+    ls = quantile_weights(panel(), "score", q=0.25, weighting="cap", max_weight=0.3)   # 2 names a leg
+    assert ls.filter(pl.col("weight") > 0)["weight"].to_list() == pytest.approx([0.5, 0.5])
+    assert ls.filter(pl.col("weight") < 0)["weight"].to_list() == pytest.approx([-0.5, -0.5])
+
+
 # ---------------------------------------------------------------- engine
 def weights(rows):
     return pl.DataFrame(rows, schema={"date": pl.Date, "security_id": pl.String, "weight": pl.Float64}, orient="row")

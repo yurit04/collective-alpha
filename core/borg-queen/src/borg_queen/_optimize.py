@@ -102,7 +102,7 @@ class Optimizer:
     # ------------------------------------------------------------------ inputs
     def _inputs(self, on: date, alpha: pl.DataFrame, market: pl.DataFrame | None, nav: float):
         m = self.risk._month(on)
-        ex = self.risk.exposures(m).sort("security_id")
+        ex = self.risk.exposures(m)
         sv = self.risk.specific_var(m).select("security_id", "spec_var")
         ex = ex.join(sv, on="security_id", how="left").join(alpha.select("security_id", "alpha"),
                                                              on="security_id", how="left")
@@ -110,7 +110,8 @@ class Optimizer:
             ex = ex.join(market.select("security_id", "adv", "vol"), on="security_id", how="left")
         else:
             ex = ex.with_columns(pl.lit(None, pl.Float64).alias("adv"), pl.lit(None, pl.Float64).alias("vol"))
-        ex = ex.filter(pl.col("spec_var").is_not_null())
+        # Sorted after the joins (joins keep no row order): solve finds holdings by searchsorted.
+        ex = ex.filter(pl.col("spec_var").is_not_null()).sort("security_id")
         costs = self.costs
         lin = ex.with_columns(costs.spread_cost().alias("c"))["c"].to_numpy()       # with_columns broadcasts
         eta = (ex.with_columns(costs.impact_cost(pl.lit(1.0), nav).alias("e"))["e"].to_numpy()
