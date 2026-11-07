@@ -33,3 +33,43 @@ at the top of the dependency graph.
   where it listed "orchestration" as planned.
 - Later phases (scheduled runs with one log and one lock, rebalance-day orchestration for
   transwarp-conduit) go in this package.
+
+## Addendum 2026-11-07: phase 2, one nightly runner (`collective run`)
+
+**Problem.** On macOS the four jobs were separate launchd services at fixed times (Massive
+06:30, EDGAR 07:00, FINRA 07:15, vinculum 07:45). Nothing made a later job wait for an earlier
+one: on 2026-11-06 the Massive sync ran until about 07:42, three minutes before vinculum
+started. A longer sync would let vinculum build from yesterday's bars, and the risk model and
+intraday summaries were not scheduled at all.
+
+**Decision.** `collective run` runs every step one after another: `subspace sync`, `cortical
+sync`, `sensor sync`, `vinculum build`, `nanoprobe build`, `queen build`.
+
+- **Each step is the package's own CLI**, started as a subprocess (the script next to the
+  interpreter, else PATH). A step behaves exactly as by hand, nothing is reimplemented, and a
+  crash in one cannot take the runner down.
+- **A failed step does not stop the rest** (vinculum rebuilds from whatever is stored, as
+  `nightly_sync.sh` already did); the run is recorded as failed and exits 1.
+- **Busy, not failed.** `subspace sync` exits 2 when another Massive job holds the writer lock
+  (the Ingestor writer lock); the runner retries it every 5 minutes for up to 2 hours.
+- **One lock, one log, one history.** `<UNICOMPLEX_DATA_ROOT>/_run/nightly.lock` (flock; a
+  second runner exits 0), `runs/<run_id>.log` with every step's output, and one JSON line per
+  run in `runs.jsonl` (status, and per step: exit code, seconds, attempts). These are the only
+  files unicomplex writes.
+- **Skip if recent.** A full run that succeeded under 3 hours ago makes `run` a no-op
+  (`--force` overrides), so a manual run before 06:30 is not repeated.
+- **One launchd job**, `com.collective-alpha.unicomplex.nightly`, Tue-Sat 06:30 local time. Its
+  plist carries each package's data root as resolved at install time through that package's
+  public settings, plus `COLLECTIVE_CONFIG`; no credentials. Installing refuses while the old
+  per-package schedules exist; `--replace` removes them through each package's own `service
+  remove` (never the Massive stream).
+- **Status knows about it.** `collective status` gains `unicomplex/nightly_run`: ok when the
+  last full run after the latest scheduled time (less the 3-hour skip window, after a
+  15-minute grace) succeeded; stale when it is missing or failed (with the failed steps and
+  the log); info while a run holds the lock or before the first run.
+- `tools/nightly_sync.sh` (Linux) keeps its network wait and then calls `collective run`.
+
+**Rejected.** A dependency graph with parallel steps: the steps share one disk and the
+Massive sync dominates; sequence is simpler and as fast in practice. Calling the packages'
+Python APIs in-process: one package's memory or a hung thread would affect the rest, and
+the CLIs already handle their own settings, logging and exit codes.

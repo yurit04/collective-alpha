@@ -46,11 +46,11 @@ Current core graph:
 | `transwarp-conduit` | Execution through Interactive Brokers: IB contract mapping, order sheets with limits, paper-first MOC orders, journal, reconciliation | unimatrix-zero, massive-subspace-stream |
 | `nanoprobe-array` | Intraday: regular-session bar clock, minute bars resampled with gap rules, auction prices, per-bar features, daily intraday summaries store | massive-subspace-stream, vinculum |
 | `tactical-cube` | Intraday backtests: decisions at bar ends, lagged VWAP or auction fills, participation caps, flat-by times or overnight holds, intraday costs, look-ahead check; daily output in unimatrix-zero's format | nanoprobe-array, unimatrix-zero, vinculum |
-| `unicomplex` | Orchestration: `collective status`, a read-only freshness report over every store against the nightly schedule (phase 1) | massive-subspace-stream, edgar-cortical-node, finra-sensor-array, vinculum, borg-queen, transwarp-conduit |
+| `unicomplex` | Orchestration: `collective run`, every nightly sync and build in order under one lock and log (one launchd job); `collective status`, a read-only freshness report over every store | massive-subspace-stream, edgar-cortical-node, finra-sensor-array, vinculum, nanoprobe-array, borg-queen, transwarp-conduit |
 
 Planned (not built):
 intraday cost calibration from quotes and trades (decision 0014 phase 3),
-`unicomplex` phase 2 (scheduled runs with one log and lock), `transwarp-conduit` phases 2-3 (cost calibration, live).
+`transwarp-conduit` phases 2-3 (cost calibration, live).
 
 ## Commands
 
@@ -67,6 +67,7 @@ uv run queen --help                    # risk model (see core/borg-queen/README.
 uv run conduit --help                  # IB execution (see core/transwarp-conduit/README.md)
 uv run nanoprobe --help                # intraday bars, features, daily intraday summaries (core/nanoprobe-array/README.md)
 uv run collective status               # is every store as fresh as the schedule allows? (core/unicomplex/README.md)
+uv run collective run --dry-run        # the nightly steps in order (`run` runs them; `runs` shows history)
 ```
 
 ## Market data
@@ -88,8 +89,9 @@ uv run collective status               # is every store as fresh as the schedule
 - Do not delete anything under the data root without asking.
 - Ask before starting long or large jobs: `backfill initial`, minute-bar history, any
   `trades`/`quotes` download without `--symbols` (3–9 GB per day), `cortical backfill` /
-  `cortical profiles` (1.4 / 1.6 GB), `sensor backfill short-volume` (~13,000 files, ~3 GB), or
-  `service install`.
+  `cortical profiles` (1.4 / 1.6 GB), `sensor backfill short-volume` (~13,000 files, ~3 GB),
+  `service install` (any package, including `collective service install`) or `collective run`
+  (the whole nightly sequence, an hour or more).
 - Only one websocket connection per API key: use the stream service, don't open another.
 - Orders (transwarp-conduit): `conduit status`, `contracts`, `plan`, `show`, `orders`, `fills` and
   `reconcile` only read. Never run `submit`, `cancel` or `cancel-all` (or the same `Conduit`

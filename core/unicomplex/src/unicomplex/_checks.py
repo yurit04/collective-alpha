@@ -1,6 +1,6 @@
 """Freshness checks. Each check reads one store through its public API and compares what it
-holds with what the schedule should have produced by now; nothing here writes or connects
-to a broker. A store that is missing or unreadable is reported, never raised."""
+holds with what the schedule should have produced by now (and the nightly run's own history);
+nothing here writes or connects to a broker. A store that is missing or unreadable is reported, never raised."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ ET = ZoneInfo("America/New_York")
 STATES = ("ok", "stale", "info", "missing")
 EDGAR_SYNC_SLACK_DAYS = 3        # the sync runs Tue-Sat through yesterday: Monday shows Friday
 SHORT_INTEREST_MAX_DAYS = 26     # two settlement cycles plus FINRA's 7-business-day publication lag
-RISK_MODEL_MAX_DAYS = 45         # the risk model is rebuilt by hand; older than this, say so
+RISK_MODEL_MAX_DAYS = 45         # month ends; rebuilt by the nightly run (or by hand)
 STREAM_QUIET_MINUTES = 30        # a running stream without a message this long (in market hours)
 
 
@@ -180,11 +180,57 @@ def conduit_checks(root: Path) -> list[Check]:
     return [Check("transwarp-conduit", "orders", "info", _iso(last_fill), None, detail)]
 
 
+# ---------------------------------------------------------------------------- nightly run
+NIGHTLY_GRACE_MINUTES = 15       # a run due less than this long ago may not have started yet
+RUN_WEEKDAYS = (1, 2, 3, 4, 5)   # Tue-Sat (Python weekday numbers), as the launchd job
+
+
+def last_scheduled(now: datetime, hour: int, minute: int, tz=None) -> datetime:
+    """The latest scheduled start (Tue-Sat at hour:minute, local time) at least the grace
+    period before `now`."""
+    local = (now - timedelta(minutes=NIGHTLY_GRACE_MINUTES)).astimezone(tz)
+    for back in range(8):
+        day = local.date() - timedelta(days=back)
+        at = datetime.combine(day, datetime.min.time().replace(hour=hour, minute=minute), local.tzinfo)
+        if day.weekday() in RUN_WEEKDAYS and at <= local:
+            return at
+    raise AssertionError("unreachable: a scheduled day falls in every week")
+
+
+def nightly_checks(runner, now: datetime, tz=None) -> list[Check]:
+    """Did the last scheduled full run happen and succeed? A run that finished up to
+    `skip_if_ok_hours` before the scheduled time counts (the scheduled one then skips)."""
+    s = runner.settings
+    due = last_scheduled(now, s.run_hour, s.run_minute, tz)
+    expected = _iso(due)
+    held = runner.running()
+    if held is not None:
+        return [Check("unicomplex", "nightly_run", "info", held.get("started"), expected,
+                      f"running now ({held.get('run_id', '?')}: {', '.join(held.get('steps', []))})")]
+    last = runner.last(full=True)
+    if last is None:
+        return [Check("unicomplex", "nightly_run", "info", None, expected,
+                      "no full run recorded yet (`collective run`, or `collective service install`)")]
+    finished = datetime.fromisoformat(last["finished"]) if last.get("finished") else None
+    when = _iso(finished)
+    if finished is None or finished < due - timedelta(hours=s.skip_if_ok_hours):
+        return [Check("unicomplex", "nightly_run", "stale", when, expected,
+                      f"no full run since the one scheduled at {due:%a %H:%M} (last: {last.get('run_id')})")]
+    if last.get("status") != "ok":
+        failed = last.get("failed") or []
+        return [Check("unicomplex", "nightly_run", "stale", when, expected,
+                      f"run {last.get('run_id')} {last.get('status')}: " + (", ".join(failed) or "?")
+                      + (f"; log {last['log']}" if last.get("log") else ""))]
+    secs = sum(st.get("seconds", 0) for st in last.get("steps", []))
+    return [Check("unicomplex", "nightly_run", "ok", when, expected,
+                  f"run {last.get('run_id')}: {len(last.get('steps', []))} steps OK in {secs / 60:.0f} min")]
+
+
 # ---------------------------------------------------------------------------- all together
 def collect(massive=None, edgar=None, finra=None, vinculum=None, risk=None, conduit_root: Path | str | None = None,
-            now: datetime | None = None) -> list[Check]:
-    """Every check. Stores default to each package's configured one; pass fakes in tests.
-    `now` (UTC) defaults to the current time."""
+            now: datetime | None = None, runner=None) -> list[Check]:
+    """Every check. Stores default to each package's configured one, `runner` to the nightly
+    `Runner`; pass fakes in tests. `now` (UTC) defaults to the current time."""
     now = now or datetime.now(UTC)
     today = today_et(now)
     checks: list[Check] = []
@@ -232,7 +278,13 @@ def collect(massive=None, edgar=None, finra=None, vinculum=None, risk=None, cond
     checks += _guard("finra", "short", _finra)
     checks += _guard("vinculum", "market_cap", _vinculum)
     checks += _guard("borg-queen", "risk_model", _risk)
+    def _nightly():
+        from ._runner import Runner
+
+        return nightly_checks(runner if runner is not None else Runner(), now)
+
     checks += _guard("transwarp-conduit", "orders", _conduit)
+    checks += _guard("unicomplex", "nightly_run", _nightly)
     return checks
 
 

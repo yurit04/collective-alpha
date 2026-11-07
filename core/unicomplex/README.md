@@ -1,16 +1,70 @@
 # unicomplex
 
-Orchestration for the collective. Phase 1 is one read-only command:
+Orchestration for the collective: one nightly run of every sync and build, and one read-only
+status of how fresh every store is.
 
 ```bash
+uv run collective run --dry-run   # the steps and the commands they run; runs nothing
+uv run collective run             # run them now, one after another (an hour or more)
+uv run collective runs            # recent runs: status and minutes per step
 uv run collective status          # how fresh every store is against the nightly schedule
 uv run collective status --json   # the same as JSON (one object per check)
 ```
 
-It exits 1 when anything is stale or missing, so a cron job, `tools/nightly_sync.sh` or a
-shell prompt can act on it. Nothing here downloads, builds, connects to a broker or trades.
+## The nightly run
 
-## What it checks
+`collective run` runs these in order, each only after the previous one has finished:
+
+| Step | Command | What it does |
+|---|---|---|
+| massive | `subspace sync` | bars, flat files, reference data and the security master through yesterday |
+| edgar | `cortical sync` | SEC company facts filed since the last sync |
+| finra | `sensor sync` | FINRA short interest and daily short sale volume |
+| vinculum | `vinculum build` | market cap, universes and the joins |
+| nanoprobe | `nanoprobe build` | intraday summaries for the years behind the minute bars |
+| queen | `queen build` | the risk model |
+
+- A failed step does not stop the rest (vinculum rebuilds from whatever is stored); the run
+  exits 1 and `collective status` shows it as stale with the failed steps.
+- If another Massive job holds the writer lock, `subspace sync` is retried every 5 minutes for
+  up to 2 hours.
+- One run at a time: a second `collective run` while one is going exits 0 and does nothing.
+- A full run that succeeded in the last 3 hours makes `run` a no-op; `--force` runs anyway.
+- `--only massive,vinculum` or `--skip queen` run part of it (partial runs don't count as the
+  nightly run in `status`). `--quiet` prints only the progress lines.
+
+Everything goes under `~/market_data/unicomplex` (`UNICOMPLEX_DATA_ROOT`): `runs/<run_id>.log`
+(every step's output), `runs.jsonl` (one line per run) and `_run/nightly.lock`.
+
+### Scheduling it
+
+macOS, one launchd job at 06:30 Tuesday to Saturday (machine local time):
+
+```bash
+uv run collective service install --replace   # removes the four per-package schedules first
+uv run collective service status
+uv run collective service remove
+```
+
+Without `--replace`, installing refuses while the old Massive sync, EDGAR sync, FINRA sync or
+vinculum build schedules exist, since they would run next to it. The Massive stream service is
+never touched. The time is set in `collective.toml`:
+
+```toml
+[unicomplex]
+run_hour = 6
+run_minute = 30
+```
+
+Linux: `tools/nightly_sync.sh` (the systemd timer) waits for the network and calls
+`collective run`.
+
+## Status
+
+`collective status` exits 1 when anything is stale or missing, so a cron job or a shell prompt
+can act on it. It only reads.
+
+### What it checks
 
 | Source | Check | Fresh when |
 |---|---|---|
@@ -21,8 +75,9 @@ shell prompt can act on it. Nothing here downloads, builds, connects to a broker
 | finra | `short_interest` | the last settlement date is within 26 days (two cycles plus the 7-business-day publication lag) |
 | finra | `short_volume` | the last day is the last completed session |
 | vinculum | `market_cap` | the panel runs through the last completed session (`vinculum build` after the syncs) |
-| borg-queen | `risk_model` | the last month end in the model is within 45 days (it is rebuilt by hand) |
+| borg-queen | `risk_model` | the last month end in the model is within 45 days (rebuilt by the nightly run) |
 | transwarp-conduit | `orders` | informational: the last order sheet and its status, fills journaled (read from the journal, no Gateway connection) |
+| unicomplex | `nightly_run` | the last full `collective run` after the latest scheduled time (Tue-Sat 06:30, 15 minutes' grace) succeeded; info while one is running or before the first |
 
 States: `ok`, `stale` (behind the schedule), `info` (no expectation), `missing` (the store is
 absent or unreadable; the error is shown, the other checks still run).
@@ -34,5 +89,4 @@ print(render(checks))
 ```
 
 ## Later phases
-Scheduled runs with one log and one lock (replacing the per-package launchd jobs and
-`tools/nightly_sync.sh`), and rebalance-day orchestration for transwarp-conduit.
+Rebalance-day orchestration for transwarp-conduit.

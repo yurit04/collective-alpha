@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 
 import polars as pl
+import pytest
 from typer.testing import CliRunner
 from unicomplex import Check, collect, render
 from unicomplex._checks import today_et
@@ -12,6 +13,12 @@ from unicomplex._checks import today_et
 NOW = datetime(2026, 11, 4, 15, 0, tzinfo=UTC)          # Wednesday 10:00 ET
 TODAY = today_et(NOW)                                    # 2026-11-04
 YESTERDAY = date(2026, 11, 3)
+
+
+@pytest.fixture(autouse=True)
+def _own_root(tmp_path_factory, monkeypatch):
+    """Never read or write the real unicomplex root (run history, lock) from a test."""
+    monkeypatch.setenv("UNICOMPLEX_DATA_ROOT", str(tmp_path_factory.mktemp("unicomplex")))
 
 
 def weekdays(a, b):
@@ -94,7 +101,7 @@ def test_everything_fresh(tmp_path):
     assert {k: v.state for k, v in c.items()} == {
         "massive/bars_day": "ok", "massive/bars_minute": "ok", "massive/stream": "ok", "edgar/facts": "ok",
         "edgar/series": "ok", "finra/short_interest": "ok", "finra/short_volume": "ok", "vinculum/market_cap": "ok",
-        "borg-queen/risk_model": "ok", "transwarp-conduit/orders": "info"}
+        "borg-queen/risk_model": "ok", "transwarp-conduit/orders": "info", "unicomplex/nightly_run": "info"}
     assert c["massive/bars_day"].expected == "2026-11-03" and c["massive/bars_day"].last == "2026-11-03"
     text = render(list(c.values()), NOW)
     assert "everything is as fresh" in text and "collective status at 2026-11-04 10:00 ET" in text
