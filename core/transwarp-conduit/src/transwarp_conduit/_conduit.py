@@ -24,12 +24,16 @@ OPEN_STATES = ("PendingSubmit", "ApiPending", "PreSubmitted", "Submitted", "Pend
 MARKET_LOOKBACK_DAYS = 120       # calendar days of returns for ADV (21 days) and vol (63 days)
 
 
-def _day(x: Any) -> date | None:
-    if x is None or isinstance(x, date) and not isinstance(x, datetime):
-        return x
-    if isinstance(x, datetime):
-        return x.date()
-    return date.fromisoformat(str(x))
+def _day(d: Any) -> date | None:
+    """None, a date, a datetime (its date) or an ISO string -> date. Every package has this same
+    copy (tests/test_shared_helpers.py checks they agree)."""
+    if d is None:
+        return None
+    if isinstance(d, datetime):
+        return d.date()
+    if isinstance(d, date):
+        return d
+    return date.fromisoformat(str(d)[:10])
 
 
 class Conduit:

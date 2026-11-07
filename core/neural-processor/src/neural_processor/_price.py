@@ -10,7 +10,7 @@ import math
 
 import polars as pl
 
-from ._lineage import relabel
+from ._lineage import as_lookup, from_lookup, relabel
 
 LOOKBACK_DAYS = 400       # calendar days of bars needed before the first panel date
 STALE = "10d"             # a price lookup further back than this is missing (stopped trading)
@@ -18,12 +18,12 @@ VOL_WINDOW = 63
 BETA_WINDOW = 252
 HIGH_WINDOW = 252
 BREAK = 3.0               # daily return above +300%: a data break
+MARKET = "SPY"            # beta is measured against this ticker's daily total return
 
 
 def daily(bars: pl.LazyFrame, caps: pl.LazyFrame | None, links: pl.DataFrame | None = None) -> pl.LazyFrame:
     """Daily table: security_id, date, tr (total-return index), px (split-adjusted price index),
-    dv (dollar volume), ret, market_cap (when `caps` is given), mkt (cap-weighted return of all
-    rows). With `links` (see _lineage), a predecessor's bars before the link continue the
+    dv (dollar volume), ret, market_cap (when `caps` is given). With `links` (see _lineage), a predecessor's bars before the link continue the
     successor's series; the return across the link comes from the raw closes (a ~1:1 exchange),
     and tr / px are rebuilt from returns so their levels are continuous."""
     g = "security_id"
@@ -50,12 +50,13 @@ def daily(bars: pl.LazyFrame, caps: pl.LazyFrame | None, links: pl.DataFrame | N
                         pl.when(brk).then(1.0).otherwise(step("__px")).alias("__pxr"))
          .with_columns((1 + pl.col("ret").fill_null(0)).cum_prod().over(g).alias("tr"),
                        pl.col("__pxr").fill_null(1).cum_prod().over(g).alias("px")))
-    if caps is None:
-        return d.with_columns(pl.lit(None, pl.Float64).alias("mkt"))
-    prev_cap = pl.col("market_cap").shift(1).over(g)
-    w = d.with_columns(prev_cap.alias("__w")).filter(pl.col("__w").is_not_null() & pl.col("ret").is_not_null())
-    mkt = w.group_by("date").agg(((pl.col("ret") * pl.col("__w")).sum() / pl.col("__w").sum()).alias("mkt"))
-    return d.join(mkt, on="date", how="left")
+    return d
+
+
+def market_returns(bars: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame:
+    """One security's daily bars (adjust="all") -> date, mkt (daily total return)."""
+    return (bars.lazy().filter(pl.col("close") > 0).sort("date")
+            .select("date", (pl.col("close") / pl.col("close").shift(1) - 1).alias("mkt")))
 
 
 def rolling_stats(d: pl.LazyFrame, names: list[str]) -> pl.LazyFrame:
@@ -87,33 +88,40 @@ def rolling_stats(d: pl.LazyFrame, names: list[str]) -> pl.LazyFrame:
 
 
 def _price_at(daily_tr: pl.DataFrame, keys: pl.DataFrame, offset: str, name: str) -> pl.DataFrame:
-    """keys (security_id, date) + `name` = last total-return price on or before date + offset."""
+    """keys (__key, security_id, date) + `name` = last total-return price on or before date + offset."""
     k = keys.with_columns(pl.col("date").dt.offset_by(offset).alias("__at")).sort("__at")
     return (k.join_asof(daily_tr.rename({"date": "__d"}), left_on="__at", right_on="__d", by="security_id",
                         strategy="backward", tolerance=STALE, check_sortedness=False)
-            .select("security_id", "date", pl.col("tr").alias(name)))
+            .select("__key", "security_id", "date", pl.col("tr").alias(name)))
 
 
 def price_signals(bars: pl.LazyFrame, caps: pl.LazyFrame | None, keys: pl.DataFrame, names: list[str],
-                  links: pl.DataFrame | None = None) -> pl.DataFrame:
+                  links: pl.DataFrame | None = None, market: pl.LazyFrame | None = None) -> pl.DataFrame:
     """Price signals for keys (security_id, date). `bars`: lazy daily bars (adjust="all") of
     those securities (and their predecessors) from LOOKBACK_DAYS before the first date; `caps`:
-    security_id, date, market_cap (for turnover and the market return); `links`: security
-    handoffs to follow (see _lineage)."""
+    security_id, date, market_cap (for turnover); `links`: security handoffs to follow (see
+    _lineage); `market`: date, mkt (market_returns of MARKET), needed for beta_12m, so a
+    security's beta never depends on which other securities were asked for."""
     keys = keys.select("security_id", "date").unique()
     out = keys
+    look = as_lookup(keys, links)       # a predecessor's own rows find its history under the successor
     need_daily = [n for n in names if n not in ("momentum_12_1", "reversal_1m")]
-    d = daily(bars, caps if {"turnover", "beta_12m"} & set(names) else None, links)
+    d = daily(bars, caps if "turnover" in names else None, links)
+    if "beta_12m" in names:
+        if market is None:
+            raise ValueError("beta_12m needs the market's daily returns (market=market_returns(...))")
+        d = d.join(market.lazy(), on="date", how="left")
     if need_daily:
         stats = (rolling_stats(d, need_daily).select("security_id", "date", *need_daily)
-                 .join(keys.lazy(), on=["security_id", "date"]).collect())
-        out = out.join(stats, on=["security_id", "date"], how="left")
+                 .join(look.lazy(), on=["security_id", "date"]).collect())
+        out = out.join(from_lookup(stats), on=["security_id", "date"], how="left")
     if {"momentum_12_1", "reversal_1m"} & set(names):
         tr = d.select("security_id", "date", "tr").collect().sort("date")
-        p0 = _price_at(tr, keys, "0d", "__p0")
-        p1 = _price_at(tr, keys, "-1mo", "__p1")
-        p12 = _price_at(tr, keys, "-12mo", "__p12")
-        px = p0.join(p1, on=["security_id", "date"]).join(p12, on=["security_id", "date"])
+        p0 = _price_at(tr, look, "0d", "__p0")
+        p1 = _price_at(tr, look, "-1mo", "__p1")
+        p12 = _price_at(tr, look, "-12mo", "__p12")
+        on = ["__key", "security_id", "date"]
+        px = from_lookup(p0.join(p1, on=on).join(p12, on=on))
         sig = []
         if "momentum_12_1" in names:
             sig.append((pl.col("__p1") / pl.col("__p12") - 1).alias("momentum_12_1"))

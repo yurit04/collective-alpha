@@ -34,6 +34,20 @@ def predecessors(ids: list[str], links: pl.DataFrame) -> list[str]:
     return sorted(out)
 
 
+def as_lookup(df: pl.DataFrame | pl.LazyFrame, links: pl.DataFrame | None, date_col: str = "date"):
+    """Rows to look up in a relabelled series: `__key` keeps each row's own security_id and
+    security_id becomes the id its history is filed under after `relabel` (a predecessor row
+    before its link: the successor's). Join on security_id, then put `__key` back. Without
+    this, a predecessor's own rows find nothing once its history moved to the successor."""
+    df = df.with_columns(pl.col("security_id").alias("__key"))
+    return relabel(df, links, date_col) if links is not None and links.height else df
+
+
+def from_lookup(df: pl.DataFrame | pl.LazyFrame):
+    """Undo `as_lookup`: security_id back to the row's own id."""
+    return df.with_columns(pl.col("__key").alias("security_id")).drop("__key")
+
+
 def relabel(df: pl.DataFrame | pl.LazyFrame, links: pl.DataFrame, date_col: str = "date"):
     """Give predecessor rows dated before each link the successor's security_id (chains are
     followed in link order: A -> B -> C ends as C)."""

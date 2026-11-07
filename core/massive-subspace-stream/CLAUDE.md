@@ -11,7 +11,7 @@ User docs: README.md in this folder.
 | `load_settings(config_file=None, **overrides)` / `Settings` | resolved configuration |
 | `Ingestor(settings)` | `.flat(dataset, start, end, tickers)`, `.rest(names, full)`, `.rest_defaults()`, `.initial()`, `.sync()`, `.verify()` -> {missing, broken, unrepairable}, `.identity(fetch)` |
 | `StreamService(settings, channels, watchlist, watch_channels)` | `await .run()`; prefer the CLI |
-| `ConfigError`, `JobResult` | errors / job summaries |
+| `ConfigError`, `BusyError`, `JobResult` | errors (BusyError: another job holds the writer lock) / job summaries |
 
 `Settings.plan` (`"starter"|"developer"|"advanced"`, see `_config.PLANS`) sets the history limit
 (`history_start()`), flat-file datasets, websocket feed (`stream_url`) and channels, and the REST
@@ -59,6 +59,9 @@ cli.py          `subspace` (typer)
 
 Invariants:
 - A partition is marked in the catalog only after its file is safely renamed into place.
+- One writing job per data root: Ingestor's flat, rest, initial, sync, identity and verify
+  --repair hold `_run/writer.lock` (`Ingestor.writer`, reentrant); a second job raises BusyError
+  (CLI exit 2) before touching anything. New writing jobs take it too. The stream has its own lock.
 - Stored prices are unadjusted; adjustment happens in `_adjust.py` at query time.
 - Timestamps are UTC ns; `date` is the US/Eastern trading date.
 - Minute bars exclude the closing auction print; daily bars include it (verified with trades).

@@ -30,8 +30,11 @@ CONCEPTS and SIC codes) and massive-subspace-stream (daily bars).
 - **Signals inside vinculum:** couples a nightly data build to research definitions.
 - **Pre-computed daily panel for every signal:** about 50 columns x 30M security-days, rebuilt
   whenever a definition changes. Not worth it before the backtester shows which signals matter.
-- **Equal-weighted market for beta:** small stocks dominate it; cap-weighted over the panel's
-  own securities tracks SPY daily (correlation 0.99).
+- **Equal-weighted market for beta:** small stocks dominate it.
+- **Cap-weighted market over the panel's own securities for beta** (the first version): it
+  tracks SPY daily over a large panel (correlation 0.99), but a security's beta then depended on
+  which others were asked for, and a single ticker got 1. Beta is against SPY's daily total
+  return, the market unimatrix-zero reports against (2026-11).
 
 ## Limits
 Directions come from published studies (`note` marks mixed evidence). Sector is today's SIC

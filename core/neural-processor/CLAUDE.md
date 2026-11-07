@@ -7,7 +7,7 @@ folder. Design: docs/decisions/0007-neural-processor.md.
 
 | Name | Use |
 |---|---|
-| `Processor(vinculum=None, store=None, edgar=None)` | `.panel(signals, start, end, tickers, by, top, size, universe, rank_by, freq="1m"\|"1d", transform, winsor, neutralize, policy, backend)` |
+| `Processor(vinculum=None, store=None, edgar=None)` | `.panel(signals, start, end, tickers, by, top, size, universe, rank_by, rebalance="daily"\|"monthly", freq="1m"\|"1d", transform, winsor, neutralize, policy, backend)` |
 | `SIGNALS` / `Signal` | name -> group, formula, direction (+1/-1), source (fundamental/growth/price/short), items, market, needs_usd, expr, note |
 | `GROUPS`, `catalogue()`, `resolve(signals)` | group names; the catalogue as a table; names or groups -> signal names |
 | `transform`, `winsorize`, `neutralize`, `composite` | per-date cross-sectional operations on a panel |
@@ -23,7 +23,7 @@ one column per signal (raw, or transformed when asked).
 ```
 _signals.py     the catalogue: Signal definitions and polars expressions
 _processor.py   Processor.panel: fundamentals, market columns, lags, universe, sectors, price, short
-_price.py       daily bars -> price signals (rolling windows, month offsets, market return)
+_price.py       daily bars -> price signals (rolling windows, month offsets); beta against SPY (MARKET)
 _lineage.py     follow vinculum successors of kind "security" (relabel predecessor rows)
 _transforms.py  winsorize, neutralize, transform, composite
 _sectors.py     FF12 mapping
@@ -36,6 +36,9 @@ Invariants:
 - Price signals on day d use bars up to d's close; short interest only reports with
   published_date <= d (within 35 days).
 - Sort before rolling or shifting: polars joins do not keep row order.
+- Across a security handoff the predecessor's history is filed under the successor (`relabel`);
+  rows still carrying the predecessor's id look it up there (`_lineage.as_lookup`/`from_lookup`)
+  and keep their own id. Never join a relabelled series on the rows' own ids.
 - A signal's `direction` orients composites; never flip a signal's raw sign in the panel.
 - New signals: add a `Signal` to `_signals.py` with its items (EDGAR names in
   edgar_cortical_node.CONCEPTS) and a test; price/short signals also need code in their module.

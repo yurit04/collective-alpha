@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -17,12 +17,16 @@ Backend = Literal["polars", "pandas"]
 _SCHEMAS = {"short_interest": SI_SCHEMA, "short_volume": SV_SCHEMA}
 
 
-def _day(value: Any) -> date | None:
-    if value is None:
+def _day(d: Any) -> date | None:
+    """None, a date, a datetime (its date) or an ISO string -> date. Every package has this same
+    copy (tests/test_shared_helpers.py checks they agree)."""
+    if d is None:
         return None
-    if isinstance(value, date):
-        return value
-    return date.fromisoformat(str(value)[:10])
+    if isinstance(d, datetime):
+        return d.date()
+    if isinstance(d, date):
+        return d
+    return date.fromisoformat(str(d)[:10])
 
 
 class FinraStore:

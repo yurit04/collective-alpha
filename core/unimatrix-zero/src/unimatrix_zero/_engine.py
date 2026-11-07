@@ -12,7 +12,7 @@ from __future__ import annotations
 import bisect
 import warnings
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import polars as pl
@@ -28,11 +28,15 @@ GRACE = timedelta(days=10)       # returns start this long before the first sign
 
 
 def _day(d: Any) -> date | None:
+    """None, a date, a datetime (its date) or an ISO string -> date. Every package has this same
+    copy (tests/test_shared_helpers.py checks they agree)."""
     if d is None:
         return None
+    if isinstance(d, datetime):
+        return d.date()
     if isinstance(d, date):
         return d
-    return date.fromisoformat(str(d))
+    return date.fromisoformat(str(d)[:10])
 
 
 @dataclass

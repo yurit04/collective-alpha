@@ -145,3 +145,23 @@ def test_sync_retries_a_day_that_failed_on_an_earlier_night(settings, monkeypatc
     assert results["bars_minute"].done == 2 and results["bars_minute"].ok      # the failed day and the new one
     assert ing.catalog.partition_keys("bars_minute") == [d.isoformat() for d in days]
     assert not any("2023-12-29" in k for k in flat.downloads)
+
+
+def test_one_writing_job_at_a_time(settings):
+    """A second job on the same data root (another process, or here another Ingestor) stops
+    with BusyError, naming the job that holds the lock, and writes nothing; jobs that call other
+    jobs reuse their own lock."""
+    from massive_subspace_stream._ingest.backfill import BusyError
+
+    first, _ = make_ingestor(settings)
+    second, flat = make_ingestor(settings)
+    with first.writer("sync"):
+        with pytest.raises(BusyError, match="sync, pid"):
+            second.flat("bars_day", "2024-01-01", "2024-01-02")
+        with pytest.raises(BusyError):
+            second.verify("bars_day", "2024-01-01", "2024-01-02", repair=True)
+        assert second.catalog.partition_keys("bars_day") == [] and flat.downloads == []
+        assert first.flat("bars_day", "2024-01-01", "2024-01-02").done == 1   # the holder may write
+    r = second.flat("bars_day", "2024-01-01", "2024-01-05")                    # free again
+    assert (r.done, r.skipped) == (1, 1)                                       # first's day is stored
+    assert (second.layout.run_dir / "writer.lock").read_text() == ""

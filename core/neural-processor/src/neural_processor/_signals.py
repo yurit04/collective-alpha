@@ -158,7 +158,7 @@ _DEFS: list[Signal] = [
     Signal("reversal_1m", "price", "total return over the last month", -1, "price"),
     Signal("high_52w", "price", "split-adjusted close / its 52-week high", 1, "price"),
     Signal("volatility_3m", "price", "annualized std of daily total returns, last 63 trading days", -1, "price"),
-    Signal("beta_12m", "price", "beta of daily returns to the cap-weighted panel market, 252 days", -1, "price",
+    Signal("beta_12m", "price", "beta of daily total returns to SPY's, 252 days", -1, "price",
            note="betting against beta"),
     Signal("turnover", "price", "mean daily dollar volume / market cap, last 63 trading days", -1, "price"),
     Signal("illiquidity", "price", "Amihud: mean |daily return| / dollar volume x 1e6, last 63 days", 1, "price"),
