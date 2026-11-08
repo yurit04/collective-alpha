@@ -290,9 +290,9 @@ class Nanoprobe:
     def build(self, years: Iterable[int] | None = None, workers: int = 4, full: bool = False) -> dict:
         """Build the daily summaries, one file per year.
 
-        years    the years to (re)build; default: every year whose file is missing or older than
-                 the stored minute bars (so a nightly run redoes only the current year), or all
-                 years with full=True.
+        years    the years to (re)build; default: every year whose file is missing or ends before
+                 its last trading day with minute bars (so a nightly run redoes only the current
+                 year), or all years with full=True.
         workers  processes, one year each (spawned: forked polars can deadlock).
         """
         t0 = time.time()
@@ -300,10 +300,12 @@ class Nanoprobe:
         manifest = self._manifest()
         built = manifest.get("years", {})
         if years is None:
+            # Each year should reach its last trading day (Dec 31 is often a weekend or holiday).
+            year_end = {d.year: d for d in self.store.trading_days(first, last)}
             todo = []
             for y in range(first.year, last.year + 1):
                 info = built.get(str(y))
-                want = min(last, date(y, 12, 31)).isoformat()
+                want = year_end.get(y, min(last, date(y, 12, 31))).isoformat()
                 if full or info is None or info.get("last_date", "") < want or \
                         not (self.root / "summaries" / f"year={y}.parquet").exists():
                     todo.append(y)

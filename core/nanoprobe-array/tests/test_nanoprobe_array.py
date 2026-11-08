@@ -3,6 +3,7 @@ dividend, a sparse name B with a 2-for-1 split, and pre-market prints."""
 
 from __future__ import annotations
 
+import json
 import math
 from datetime import UTC, date, datetime, timedelta
 
@@ -265,6 +266,28 @@ def test_nanoprobe_bars_days_auctions(tmp_path):
     assert set(got[0][1]["security_id"].unique()) == {"A", "B"}
     a = p.auctions("A", DAYS[0], DAYS[2])
     assert {"open_auction", "close_auction", "prev_close"} <= set(a.columns) and a.height == 3
+
+
+def test_build_skips_a_finished_year_ending_on_a_weekend(tmp_path):
+    """2023 ended on a Sunday: a year stored through its last session (12-29) is complete and
+    must not be rebuilt every night."""
+    last_2023 = D(2023, 12, 29)
+
+    class TwoYears(FakeStore):
+        def trading_days(self, start, end=None):
+            return [d for d in [last_2023, *DAYS] if start <= d <= (end or start)]
+
+        def coverage(self):
+            return pl.DataFrame({"dataset": ["bars_minute"], "first": [last_2023.isoformat()],
+                                 "last": [DAYS[-1].isoformat()]})
+
+    (tmp_path / "summaries").mkdir()
+    pl.DataFrame({"date": [last_2023]}).write_parquet(tmp_path / "summaries" / "year=2023.parquet")
+    (tmp_path / "build.json").write_text(json.dumps({"years": {"2023": {
+        "rows": 1, "days": 1, "first_date": "2023-12-29", "last_date": "2023-12-29", "built_at": "x"}}}))
+    p = Nanoprobe(root=tmp_path, store=TwoYears())
+    assert p.build(workers=1)["years"] == [2024]
+    assert p.build(workers=1)["years"] == []
 
 
 def test_build_and_summaries(tmp_path):
