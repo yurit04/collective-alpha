@@ -64,7 +64,7 @@ subspace backfill rest news short_interest   # refresh specific REST datasets
 subspace sync                                # daily catch-up
 subspace verify --dataset bars_minute --repair
 subspace stream start | stop | status        # live websocket capture
-subspace service install                     # launchd: daily sync (Tue-Sat 06:30) + always-on stream
+subspace service install --only stream       # launchd: always-on stream (the sync runs in `collective run`)
 subspace identity build                      # security master (first run: ~210 snapshots + dated lookups)
 subspace identity check                      # coverage and regression checks
 subspace identity show FB                    # every company FB has meant, and their other tickers
@@ -73,7 +73,15 @@ subspace query bars AAPL --start 2024-01-01 --adjust splits
 ```
 
 All jobs can be stopped and re-run: each finished day or dataset is recorded in
-`_catalog/catalog.sqlite`, so it is skipped next time.
+`_catalog/catalog.sqlite`, so it is skipped next time. `sync` also looks back 30 days from the
+last stored day and fetches any day the store lacks, so a download that failed one night is
+retried the next.
+
+Scheduling: the nightly sync runs as the first step of `collective run` (one launchd job for
+every package, installed with `collective service install --replace`; see
+[unicomplex](../unicomplex/README.md)). Install only the stream here. A plain
+`subspace service install` would also add this package's own 06:30 sync, which would run next
+to the nightly job.
 
 Only one job writes at a time: a backfill started while the nightly sync runs (or the other way
 round) stops at once with "another job is writing to ...", naming the running job; run it again

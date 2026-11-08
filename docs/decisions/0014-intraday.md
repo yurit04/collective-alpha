@@ -75,6 +75,9 @@ for whole-market work). Details: core/nanoprobe-array/CLAUDE.md.
   `build()` redoes only years behind the minute bars, and `tools/nightly_sync.sh` runs it after
   vinculum. There is no macOS launchd job yet (that waits for unicomplex phase 2's single
   scheduler) and no `collective status` check yet.
+  *Update 2026-11-07:* unicomplex phase 2 runs `nanoprobe build` as a step of `collective run`
+  on both macOS and Linux (decision 0012), and `collective status` checks the summaries
+  (`nanoprobe/summaries`: through the last completed session).
 - **VWAP needs volume-weighted typical prices**, and `vwap_dev` is null until the day's first
   print (0 / 0 would read as NaN).
 - **`days()` reads only the named securities** (by security, so ids and renamed tickers both

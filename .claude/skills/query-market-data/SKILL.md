@@ -1,6 +1,6 @@
 ---
 name: query-market-data
-description: How to load stored market data (Massive bars, trades, quotes, news; FINRA short interest and short sale volume; SEC EDGAR point-in-time fundamentals and share counts; vinculum market cap, size universes and fundamentals per security) into pandas or polars, check what is downloaded, and fetch what is missing. Use for any analysis that needs market or fundamental data.
+description: How to load stored market data (Massive bars, trades, quotes, news; intraday bars on a session clock, auction prices and daily intraday summaries; FINRA short interest and short sale volume; SEC EDGAR point-in-time fundamentals and share counts; vinculum market cap, size universes and fundamentals per security) into pandas or polars, check what is downloaded, and fetch what is missing. Use for any analysis that needs market or fundamental data.
 ---
 
 # Querying market data
@@ -54,6 +54,23 @@ Every method takes `backend="pandas"` for pandas output.
 
 Massive financials caveat: each fiscal period is dated by the *latest* filing that reported it
 (often a year after the original) and may be restated. For backtests use EDGAR (below).
+
+## Intraday bars, auctions and daily intraday summaries (nanoprobe-array)
+```python
+from nanoprobe_array import Nanoprobe, FEATURES
+p = Nanoprobe()
+p.bars(["SPY", "QQQ"], "2024-01-01", "2024-12-31", freq="5min", fill="grid",
+       prev_close=True, features=["ret_open", "gap", "vwap_dev"])         # a few names, long span
+for day, bars in p.days("2025-01-01", "2025-03-31", top=500, freq="15min"): ...   # whole market: a day at a time
+p.auctions("NVDA", "2024-06-07", "2024-06-11")   # official open/close auctions, prev_close on today's basis
+p.summaries(["SPY", "AAPL"], "2020-01-01")       # one row per security and day: overnight/intraday returns, VWAP, rv
+```
+- Regular session only, bars labelled by their end; early closes from the NYSE calendar.
+- Raw prices within a day; across days only through `prev_close` or the summaries.
+- The official close is in `auctions`/summaries, never in an intraday bar.
+- `bars` needs tickers; whole-market reads go through `days`.
+- Summaries need `uv run nanoprobe build` (missing years and the current one, about a minute; `--full` is ~27 min:
+  ask first). Intraday backtests: `tactical_cube.Cube` (see core/tactical-cube/README.md).
 
 ## Point-in-time fundamentals and shares (SEC EDGAR)
 ```python

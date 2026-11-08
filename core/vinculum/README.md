@@ -21,8 +21,12 @@ Design: `docs/decisions/0004-vinculum.md`.
 uv sync --all-packages
 uv run vinculum build              # ~30 s; needs the security master, EDGAR facts and profiles
 uv run vinculum check              # known market caps, classes, top companies, Massive agreement
-uv run vinculum service install    # nightly build, Tue-Sat 07:45 (after both data syncs)
 ```
+
+After that, `vinculum build` runs every night as a step of `collective run`, after the Massive,
+EDGAR and FINRA syncs (one launchd job for all packages; see
+[unicomplex](../unicomplex/README.md)). `vinculum service install` still installs a stand-alone
+07:45 schedule, but only use it without the nightly job: both would run.
 
 Inputs: `subspace identity build`, `subspace backfill rest ticker_details` (Massive's current
 share counts, used to set ADR and class ratios), `cortical backfill` and `cortical profiles`.

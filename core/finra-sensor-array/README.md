@@ -30,10 +30,14 @@ Two kinds of difference turned up, and in both FINRA's own file is the better re
 uv sync --all-packages
 uv run sensor backfill short-interest    # ~2,300 small API requests, ~10-15 min
 uv run sensor backfill short-volume      # ~13,000 files, ~3 GB downloaded, ~1 GB stored
-uv run sensor service install            # daily sync, Tue-Sat 07:15
 ```
 
-Both jobs can be stopped and re-run: finished days are recorded in `state.json`.
+Both backfills can be stopped and re-run: finished days are recorded in `state.json`.
+
+After the backfill, `sensor sync` runs every night as a step of `collective run` (one launchd
+job for all packages; see [unicomplex](../unicomplex/README.md)). `sensor service install`
+still installs a stand-alone 07:15 schedule, but only use it without the nightly job: both
+would run.
 
 ## Querying
 
