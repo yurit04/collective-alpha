@@ -1,13 +1,13 @@
 # unicomplex
 
 Orchestration for the collective: one nightly run of every sync and build, and one read-only
-status of how fresh every store is.
+status of how fresh the stores are.
 
 ```bash
 uv run collective run --dry-run   # the steps and the commands they run; runs nothing
 uv run collective run             # run them now, one after another (about 15 minutes)
 uv run collective runs            # recent runs: status and minutes per step
-uv run collective status          # how fresh every store is against the nightly schedule
+uv run collective status          # how fresh the stores are against the nightly schedule
 uv run collective status --json   # the same as JSON (one object per check)
 ```
 
@@ -55,7 +55,7 @@ work took 70 on 2026-11-06. With the lid closed and no external display macOS ma
 
 Without `--replace`, installing refuses while the old Massive sync, EDGAR sync, FINRA sync or
 vinculum build schedules exist, since they would run next to it. The Massive stream service is
-never touched. The time is set in `collective.toml`:
+never touched; install it on its own with `uv run subspace service install --only stream`. The time is set in `collective.toml`:
 
 ```toml
 [unicomplex]
@@ -82,6 +82,7 @@ can act on it. It only reads.
 | finra | `short_interest` | the last settlement date is within 26 days (two cycles plus the 7-business-day publication lag) |
 | finra | `short_volume` | the last day is the last completed session |
 | vinculum | `market_cap` | the panel runs through the last completed session (`vinculum build` after the syncs) |
+| nanoprobe | `summaries` | the daily intraday summaries reach the last completed session (`nanoprobe build` after vinculum); the detail says when they trail the minute bars |
 | borg-queen | `risk_model` | the last month end in the model is within 45 days (rebuilt by the nightly run) |
 | transwarp-conduit | `orders` | informational: the last order sheet and its status, fills journaled (read from the journal, no Gateway connection) |
 | unicomplex | `nightly_run` | the last full `collective run` after the latest scheduled time (Tue-Sat 06:30, 15 minutes' grace) succeeded; info while one is running or before the first |

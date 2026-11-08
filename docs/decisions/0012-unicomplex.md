@@ -81,3 +81,9 @@ Awake, the whole sequence takes about 12 minutes (Massive 3, EDGAR about 4, FINR
 vinculum 3.5, nanoprobe 1, queen 0.3). The launchd job now runs under `caffeinate -i -s`, which
 keeps the Mac awake until the run exits. Starting it at its next wake after 06:30, rather than
 waking the Mac at 06:30, is left to the user's power settings (`pmset repeat`).
+
+**Addition 2026-11-07 (intraday summaries).** `collective status` now checks nanoprobe-array's
+daily intraday summaries (`nanoprobe/summaries`) against the last completed session, like the
+market-cap panel: the nightly run builds them after vinculum. The check reads
+`Nanoprobe.status()` on the same Massive store as the other checks; when the summaries trail
+the minute bars the detail says so.

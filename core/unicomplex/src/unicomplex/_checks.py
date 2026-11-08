@@ -154,6 +154,20 @@ def vinculum_checks(v, expected_session: date) -> list[Check]:
                   f"built {built}, {st.get('rows', 0):,} rows" if through else "not built (`vinculum build`)")]
 
 
+# ---------------------------------------------------------------------------- intraday summaries
+def nanoprobe_checks(probe, expected_session: date) -> list[Check]:
+    """The daily intraday summaries, built by the nightly run after vinculum, should reach the
+    last completed session."""
+    st = probe.status()
+    if not st.get("built_at"):
+        return [Check("nanoprobe", "summaries", "missing", detail="not built (`nanoprobe build`)")]
+    last = _date(st.get("last_date"))
+    detail = f"built {str(st.get('built_at', ''))[:16]}, {st.get('years', 0)} years, {st.get('rows', 0):,} rows"
+    if st.get("behind"):
+        detail += f"; behind the minute bars ({st.get('minute_bars_last')})"
+    return [Check("nanoprobe", "summaries", _vs(last, expected_session), _iso(last), _iso(expected_session), detail)]
+
+
 # ---------------------------------------------------------------------------- risk model
 def risk_checks(risk, today: date) -> list[Check]:
     st = risk.status()
@@ -228,7 +242,7 @@ def nightly_checks(runner, now: datetime, tz=None) -> list[Check]:
 
 # ---------------------------------------------------------------------------- all together
 def collect(massive=None, edgar=None, finra=None, vinculum=None, risk=None, conduit_root: Path | str | None = None,
-            now: datetime | None = None, runner=None) -> list[Check]:
+            now: datetime | None = None, runner=None, nanoprobe=None) -> list[Check]:
     """Every check. Stores default to each package's configured one, `runner` to the nightly
     `Runner`; pass fakes in tests. `now` (UTC) defaults to the current time."""
     now = now or datetime.now(UTC)
@@ -240,6 +254,7 @@ def collect(massive=None, edgar=None, finra=None, vinculum=None, risk=None, cond
 
         return massive if massive is not None else Store()
 
+    store = None
     try:
         store = _massive()
         expected_session = last_trading_day(store, today)
@@ -263,6 +278,12 @@ def collect(massive=None, edgar=None, finra=None, vinculum=None, risk=None, cond
 
         return vinculum_checks(vinculum if vinculum is not None else Vinculum(), expected_session)
 
+    def _nanoprobe():
+        from nanoprobe_array import Nanoprobe
+
+        probe = nanoprobe if nanoprobe is not None else Nanoprobe(store=store)
+        return nanoprobe_checks(probe, expected_session)
+
     def _risk():
         from borg_queen import RiskModel
 
@@ -277,7 +298,9 @@ def collect(massive=None, edgar=None, finra=None, vinculum=None, risk=None, cond
     checks += _guard("edgar", "facts", _edgar)
     checks += _guard("finra", "short", _finra)
     checks += _guard("vinculum", "market_cap", _vinculum)
+    checks += _guard("nanoprobe", "summaries", _nanoprobe)
     checks += _guard("borg-queen", "risk_model", _risk)
+
     def _nightly():
         from ._runner import Runner
 

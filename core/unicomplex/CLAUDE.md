@@ -1,14 +1,14 @@
 # unicomplex (core, depends on massive-subspace-stream, edgar-cortical-node, finra-sensor-array, vinculum, nanoprobe-array, borg-queen, transwarp-conduit)
 
 Orchestration: `collective run` (every nightly sync and build in order, one lock, one log) and
-`collective status` (a read-only freshness report over every store).
+`collective status` (a read-only freshness report over the data stores).
 User docs: README.md in this folder. Design: docs/decisions/0012-unicomplex.md (phase 2 in its addendum).
 
 ## Public API (`from unicomplex import ...`)
 
 | Name | Use |
 |---|---|
-| `collect(massive=None, edgar=None, finra=None, vinculum=None, risk=None, conduit_root=None, now=None, runner=None)` | every check as `list[Check]`; stores default to each package's configured one, `runner` to `Runner()` |
+| `collect(massive=None, edgar=None, finra=None, vinculum=None, risk=None, conduit_root=None, now=None, runner=None, nanoprobe=None)` | every check as `list[Check]`; stores default to each package's configured one (`Nanoprobe` on the same Massive store), `runner` to `Runner()` |
 | `Check` | source, name, state (ok / stale / info / missing), last, expected, detail; `.to_dict()` |
 | `render(checks, now=None)` | the table with a verdict line |
 | `STATES` | the four states |
@@ -25,7 +25,8 @@ failed), `collective runs [-n N] [--json]`, `collective service install [--repla
 
 ```
 _checks.py    one function per source (massive_checks, edgar_checks, finra_checks, vinculum_checks,
-              risk_checks, conduit_checks, nightly_checks), the expectations, collect(), render(), to_json()
+              nanoprobe_checks, risk_checks, conduit_checks, nightly_checks), the expectations,
+              collect(), render(), to_json()
 _config.py    settings
 _runner.py    Step, STEPS, Runner (lock, per-run log, runs.jsonl, busy retries, skip-if-recent)
 _services.py  launchd plist (com.collective-alpha.unicomplex.nightly), replacing the per-package schedules
@@ -42,7 +43,7 @@ Invariants:
   `busy_exit` code is retried (another job holds that package's writer lock).
 - One run at a time (flock on `_run/nightly.lock`); a second run exits 0 and records nothing.
 - Only public APIs of the other packages (`Store.coverage/stream_status/trading_days`,
-  `EdgarStore.status`, `FinraStore.status`, `Vinculum.status`, `RiskModel.status`,
+  `EdgarStore.status`, `FinraStore.status`, `Vinculum.status`, `Nanoprobe.status`, `RiskModel.status`,
   `transwarp_conduit.Journal/OrderSheet/load_settings`, each package's `load_settings` /
   `ENV_ROOT` for the plist): a status field another package adds or renames is picked up here.
 - The plist never carries credentials; it never touches the Massive stream service.

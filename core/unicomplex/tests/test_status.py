@@ -73,6 +73,18 @@ class FakeVinculum:
         return {"through": self.through, "built_at": "2026-11-04T12:45:00+00:00", "rows": 123}
 
 
+class FakeNanoprobe:
+    def __init__(self, last="2026-11-03", built=True, behind=False):
+        self.last, self.built, self.behind = last, built, behind
+
+    def status(self):
+        if not self.built:
+            return {"built_at": None, "years": 0, "rows": 0, "first_date": None, "last_date": None,
+                    "minute_bars_last": "2026-11-03", "behind": True}
+        return {"built_at": "2026-11-04T11:50:00+00:00", "years": 24, "rows": 49_500_000, "first_date": "2003-09-10",
+                "last_date": self.last, "minute_bars_last": "2026-11-03", "behind": self.behind}
+
+
 class FakeRisk:
     def __init__(self, last_month="2026-11-02", built=True):
         self.last_month, self.built = last_month, built
@@ -88,7 +100,7 @@ class Broken:
 
 def _run(**kw):
     base = {"massive": FakeMassive(), "edgar": FakeEdgar(), "finra": FakeFinra(), "vinculum": FakeVinculum(),
-            "risk": FakeRisk(), "now": NOW}
+            "nanoprobe": FakeNanoprobe(), "risk": FakeRisk(), "now": NOW}
     return collect(**{**base, **kw})
 
 
@@ -101,7 +113,7 @@ def test_everything_fresh(tmp_path):
     assert {k: v.state for k, v in c.items()} == {
         "massive/bars_day": "ok", "massive/bars_minute": "ok", "massive/stream": "ok", "edgar/facts": "ok",
         "edgar/series": "ok", "finra/short_interest": "ok", "finra/short_volume": "ok", "vinculum/market_cap": "ok",
-        "borg-queen/risk_model": "ok", "transwarp-conduit/orders": "info", "unicomplex/nightly_run": "info"}
+        "nanoprobe/summaries": "ok", "borg-queen/risk_model": "ok", "transwarp-conduit/orders": "info", "unicomplex/nightly_run": "info"}
     assert c["massive/bars_day"].expected == "2026-11-03" and c["massive/bars_day"].last == "2026-11-03"
     text = render(list(c.values()), NOW)
     assert "everything is as fresh" in text and "collective status at 2026-11-04 10:00 ET" in text
@@ -110,13 +122,14 @@ def test_everything_fresh(tmp_path):
 def test_stale_and_missing(tmp_path):
     two_days_ago = date(2026, 11, 2)
     c = by_name(_run(massive=FakeMassive(last=two_days_ago, running=False), edgar=FakeEdgar("2026-10-30", current=False),
-                     finra=FakeFinra(si="2026-10-01"), vinculum=Broken(), risk=FakeRisk(built=False),
-                     conduit_root=tmp_path))
+                     finra=FakeFinra(si="2026-10-01"), vinculum=Broken(), nanoprobe=FakeNanoprobe(built=False),
+                     risk=FakeRisk(built=False), conduit_root=tmp_path))
     assert c["massive/bars_day"].state == "stale" and c["massive/bars_day"].expected == "2026-11-03"
     assert c["massive/stream"].state == "stale" and "not running" in c["massive/stream"].detail
     assert c["edgar/facts"].state == "stale" and c["edgar/series"].state == "stale"
     assert c["finra/short_interest"].state == "stale" and c["finra/short_volume"].state == "ok"
     assert c["vinculum/market_cap"].state == "missing" and "vinculum build" in c["vinculum/market_cap"].detail
+    assert c["nanoprobe/summaries"].state == "missing" and "nanoprobe build" in c["nanoprobe/summaries"].detail
     assert c["borg-queen/risk_model"].state == "missing"
     assert "need attention" in render(list(c.values()), NOW)
 
@@ -124,7 +137,8 @@ def test_stale_and_missing(tmp_path):
 def test_monday_expects_friday_and_edgar_slack():
     monday = datetime(2026, 11, 9, 14, 0, tzinfo=UTC)
     c = by_name(collect(massive=FakeMassive(last=date(2026, 11, 6)), edgar=FakeEdgar("2026-11-06"),
-                        finra=FakeFinra(sv="2026-11-06"), vinculum=FakeVinculum("2026-11-06"), risk=FakeRisk(),
+                        finra=FakeFinra(sv="2026-11-06"), vinculum=FakeVinculum("2026-11-06"),
+                        nanoprobe=FakeNanoprobe("2026-11-06"), risk=FakeRisk(),
                         conduit_root="/nonexistent", now=monday))
     assert c["massive/bars_day"].state == "ok" and c["edgar/facts"].state == "ok" and c["finra/short_volume"].state == "ok"
     assert c["transwarp-conduit/orders"].state == "info" and "no order sheets" in c["transwarp-conduit/orders"].detail
@@ -135,8 +149,30 @@ def test_quiet_stream_in_market_hours_is_stale():
     assert c["massive/stream"].state == "stale"
     night = datetime(2026, 11, 4, 2, 0, tzinfo=UTC)
     c = by_name(collect(massive=FakeMassive(last_message=(night - timedelta(hours=5)).isoformat()), edgar=FakeEdgar(),
-                        finra=FakeFinra(), vinculum=FakeVinculum(), risk=FakeRisk(), conduit_root="/x", now=night))
+                        finra=FakeFinra(), vinculum=FakeVinculum(), nanoprobe=FakeNanoprobe(), risk=FakeRisk(),
+                        conduit_root="/x", now=night))
     assert c["massive/stream"].state == "ok"                 # outside market hours a quiet stream is fine
+
+
+def test_nanoprobe_summaries_behind():
+    c = by_name(_run(nanoprobe=FakeNanoprobe(last="2026-10-30", behind=True), conduit_root="/x"))["nanoprobe/summaries"]
+    assert c.state == "stale" and c.last == "2026-10-30" and c.expected == "2026-11-03"
+    assert "behind the minute bars (2026-11-03)" in c.detail
+
+
+def test_nanoprobe_uses_the_given_massive_store(tmp_path, monkeypatch):
+    """Without a nanoprobe fake, the default Nanoprobe reads the same Massive store as the rest."""
+    monkeypatch.setenv("NANOPROBE_DATA_ROOT", str(tmp_path / "nanoprobe"))
+    calls = []
+
+    class Counting(FakeMassive):
+        def coverage(self):
+            calls.append(1)
+            return super().coverage()
+
+    c = by_name(_run(massive=Counting(), nanoprobe=None, conduit_root="/x"))["nanoprobe/summaries"]
+    assert c.state == "missing" and "nanoprobe build" in c.detail      # empty root: not built
+    assert len(calls) == 2                                               # massive_checks, then Nanoprobe.status
 
 
 def test_conduit_journal_is_read(tmp_path):

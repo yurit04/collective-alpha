@@ -85,5 +85,5 @@ daily bar (2.7M rows in 2025):
 | `ret_close_auction` | last regular minute's close to the official close |
 | `rv_5min`, `bars_5min` | realized volatility from 5-minute closes, and how many 5-minute bars traded |
 
-`build()` redoes only years whose file is missing or behind the minute bars, so a nightly run
-(`tools/nightly_sync.sh`) takes about a minute.
+`build()` redoes only years whose file is missing or behind the minute bars, so the nightly run
+(the `nanoprobe` step of `collective run`, after vinculum) takes about a minute.

@@ -8,7 +8,7 @@ uv workspace: reusable **core** packages plus independent **projects**.
 ```
 core/<package>/        reusable building blocks (src layout, own tests, own CLAUDE.md)
 projects/<project>/    research / strategies; consume core packages only
-projects/subspace-probe/notebooks/<core-package>/   demo notebooks, one folder per core module (rule 5)
+projects/subspace-probe/notebooks/<core-package>/   demo notebooks, one folder per core module (rule 6)
 tools/check_architecture.py   enforces the dependency rules below
 tests/                 repo-level tests (architecture rules)
 .github/workflows/ci.yml      lint, dependency rules and offline tests on push and pull request (3.12, 3.13)
@@ -19,12 +19,13 @@ docs/decisions/        short design records: why X over Y
 ## Dependency rules (enforced)
 
 1. Core packages may depend on other core packages; the graph must stay acyclic.
-2. Projects depend on core packages only, never on another project.
-3. Core never depends on a project.
-4. Import another workspace package only if your `pyproject.toml` declares it, and only
+2. Projects depend on core packages only.
+3. A project never depends on another project.
+4. Core never depends on a project.
+5. Import another workspace package only if your `pyproject.toml` declares it, and only
    its public API (names exported from its top-level `__init__`). Modules starting with
    `_` are private.
-5. Demo notebooks live in `projects/subspace-probe/notebooks/<core-package>/`, one folder per
+6. Demo notebooks live in `projects/subspace-probe/notebooks/<core-package>/`, one folder per
    core package. A notebook there shows that package and may use only it, the packages it
    declares as dependencies, and the project's own helpers. Outputs are committed (the
    notebooks are read on GitHub); never strip them.
@@ -46,7 +47,7 @@ Current core graph:
 | `transwarp-conduit` | Execution through Interactive Brokers: IB contract mapping, order sheets with limits, paper-first MOC orders, journal, reconciliation | unimatrix-zero, massive-subspace-stream |
 | `nanoprobe-array` | Intraday: regular-session bar clock, minute bars resampled with gap rules, auction prices, per-bar features, daily intraday summaries store | massive-subspace-stream, vinculum |
 | `tactical-cube` | Intraday backtests: decisions at bar ends, lagged VWAP or auction fills, participation caps, flat-by times or overnight holds, intraday costs, look-ahead check; daily output in unimatrix-zero's format | nanoprobe-array, unimatrix-zero, vinculum |
-| `unicomplex` | Orchestration: `collective run`, every nightly sync and build in order under one lock and log (one launchd job); `collective status`, a read-only freshness report over every store | massive-subspace-stream, edgar-cortical-node, finra-sensor-array, vinculum, nanoprobe-array, borg-queen, transwarp-conduit |
+| `unicomplex` | Orchestration: `collective run`, every nightly sync and build in order under one lock and log (one launchd job); `collective status`, a read-only freshness report over the data stores | massive-subspace-stream, edgar-cortical-node, finra-sensor-array, vinculum, nanoprobe-array, borg-queen, transwarp-conduit |
 
 Planned (not built):
 intraday cost calibration from quotes and trades (decision 0014 phase 3),
@@ -66,7 +67,7 @@ uv run sensor --help                   # FINRA short data (see core/finra-sensor
 uv run queen --help                    # risk model (see core/borg-queen/README.md)
 uv run conduit --help                  # IB execution (see core/transwarp-conduit/README.md)
 uv run nanoprobe --help                # intraday bars, features, daily intraday summaries (core/nanoprobe-array/README.md)
-uv run collective status               # is every store as fresh as the schedule allows? (core/unicomplex/README.md)
+uv run collective status               # are the stores as fresh as the schedule allows? (core/unicomplex/README.md)
 uv run collective run --dry-run        # the nightly steps in order (`run` runs them; `runs` shows history)
 ```
 
