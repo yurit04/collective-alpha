@@ -52,6 +52,9 @@ What the plan setting changes:
 - **The nightly refresh leaves out datasets the plan lacks.** It also doesn't look up the
   security master's dated tickers beyond the plan's history.
 
+A REST answer that is not valid JSON is retried like a server error; if it stays broken, only
+that dataset (or ticker) fails, not the whole sync.
+
 Snapshot datasets (`splits`, `dividends`, `ipos`, `tickers`, ...) are protected on every plan.
 A refresh that answers with less history keeps the stored rows it no longer returns, and logs
 a warning. Without that, a 5-year answer would silently cut the split history that adjusted
@@ -95,7 +98,7 @@ when that one has finished.
 ```python
 from massive_subspace_stream import Store
 
-store = Store()
+store = Store()          # only reads: on a machine without data it returns empty and creates nothing
 daily = store.bars(["AAPL", "MSFT"], start="2020-01-01", adjust="splits")             # polars
 minute = store.bars("NVDA", start="2024-06-03", end="2024-06-07", freq="1min",
                     session="regular", backend="pandas")                                # pandas
@@ -173,7 +176,7 @@ corporate actions are counted by `subspace identity check`, not guessed.
 | `bars_day`, `bars_minute` | flat files | full history from 2003-09-10; minute bars are about 100 GB |
 | `trades`, `quotes` | flat files | on demand only: about 3 GB (trades) and 9 GB (quotes) per day compressed |
 | `tickers`, `ticker_types`, `exchanges`, `conditions`, `market_holidays` | REST | reference data (`conditions`: trade/quote condition codes and how they affect bars) |
-| `ticker_details` | REST | daily snapshot per active stock/ADR (~5,700 calls): market cap, share-class and weighted shares (ADS counts for ADRs), SIC; history builds up from the first run |
+| `ticker_details` | REST | daily snapshot per active stock/ADR (~5,700 calls): market cap, share-class and weighted shares (ADS counts for ADRs), SIC; history builds up from the first run. A day counts as fetched only when every request succeeded; a re-run asks for the tickers still missing |
 | `splits`, `dividends`, `ipos` | REST | corporate actions (a shorter answer never deletes stored history) |
 | `income_statements`, `balance_sheets`, `cash_flow_statements`, `ratios` | REST | fundamentals |
 | `news` | REST | incremental |

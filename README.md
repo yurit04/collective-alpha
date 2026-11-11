@@ -73,6 +73,9 @@ tools/reset.sh --dry-run           # what a reset would stop and delete
 tools/reset.sh                     # stop every job, delete the stores (asks; keeps the IB journal)
 ```
 
+A download that ends with a few failed items (one day of thousands, one ticker) is run again,
+up to 3 times a minute apart, fetching only what is still missing; Ctrl-C stops the bootstrap at
+once and prints the `--from` step to resume with.
 `tools/bootstrap.sh --help` and `tools/reset.sh --help` list the options (`--since`,
 `--no-minute`, `--no-services`, `--stream`, `--include-journal`, ...). On Linux the bootstrap
 installs the systemd user units in `tools/systemd/` (a crontab line on WSL2 without systemd); the

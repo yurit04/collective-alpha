@@ -22,6 +22,11 @@ uv run cortical sync         # daily: only companies that filed since the last s
 uv run cortical status
 ```
 
+`sync` copes with the SEC's gaps: a weekday whose daily index is missing (a holiday, an index
+not posted yet, a throttled request all look the same) is asked for again for 7 days, and a
+company whose document cannot be fetched or read fails alone and is retried on the next sync.
+A bulk download cut off on the way starts again (3 attempts).
+
 `backfill` and `sync` end by materializing every item's point-in-time series and the share
 counts (`series.parquet`, `shares.parquet`, about two minutes), so `series()` and `shares()`
 read instead of rebuilding from 100 million facts on every call. `cortical series` rebuilds
