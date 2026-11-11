@@ -10,6 +10,9 @@ may be restated, so backtests on them look ahead. EDGAR keeps the original filin
 
 ## Setup
 
+`tools/bootstrap.sh` at the repo root runs every package's first-time setup in order, then
+schedules the nightly run; see the root README's Quick start. By hand:
+
 ```bash
 uv sync --all-packages
 uv run cortical init         # folders, SEC contact check

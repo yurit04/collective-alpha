@@ -47,3 +47,7 @@ description: Scaffold a new core package under core/ (e.g. features, backtesting
    showing the module's functionality, using only the module and its declared dependencies;
    declare the module in subspace-probe's `pyproject.toml`; execute the notebook and commit it
    with outputs; add it to the project's README.
+8. If the module keeps a store (its own data root): add it to `roots()` in
+   `core/unicomplex/src/unicomplex/_roots.py`, so `tools/reset.sh` deletes it and the Linux units
+   see it. If it needs a first-time download or build, add a step to `tools/bootstrap.sh`; if it
+   needs a nightly one, add a `Step` to unicomplex's `STEPS`.

@@ -47,7 +47,7 @@ out; `uv run python tools/check_architecture.py --graph` prints the full graph.<
 | [`transwarp-conduit`](core/transwarp-conduit/README.md) | `conduit` | Execution through Interactive Brokers: order sheets with limits, paper-first market-on-close orders, journal, reconciliation |
 | [`nanoprobe-array`](core/nanoprobe-array/README.md) | `nanoprobe` | Intraday: minute bars resampled on a session clock with gap rules, auction prices, per-bar features, daily intraday summaries since 2003 |
 | [`tactical-cube`](core/tactical-cube/README.md) | | Intraday backtests: lagged VWAP and auction fills, participation caps, flat-by times or overnight holds, intraday costs, a look-ahead check |
-| [`unicomplex`](core/unicomplex/README.md) | `collective` | Orchestration: `collective run`, every nightly sync and build in order under one lock and log (one launchd job); `collective status`, a read-only freshness report |
+| [`unicomplex`](core/unicomplex/README.md) | `collective` | Orchestration: `collective run`, every nightly sync and build in order under one lock and log (one launchd job); `collective status`, a read-only freshness report; `collective roots`, where every store lives |
 
 Projects:
 
@@ -100,14 +100,16 @@ uv run queen build                   # the risk model
 ```
 
 After that, one nightly run keeps the stores current: `uv run collective service install
---replace` on macOS (one launchd job, Tue-Sat 06:30, replacing the per-package schedules), or
-`tools/nightly_sync.sh` on Linux. Both run `collective run`: every sync, then the vinculum,
-intraday and risk-model builds, one after another. The live stream is a separate, always-on
-service (Massive allows one websocket per key):
+--replace` on macOS (one launchd job, Tue-Sat 06:30, replacing the per-package schedules), or the
+systemd user timer in `tools/systemd/` on Linux, which starts `tools/nightly_sync.sh`. Both run
+`collective run`: every sync, then the vinculum, intraday and risk-model builds, one after
+another. The live stream is a separate, always-on service (Massive allows one websocket per key,
+so run it on one machine only):
 
 ```bash
-uv run collective service install --replace
-uv run subspace service install --only stream
+uv run collective service install --replace     # macOS
+uv run subspace service install --only stream   # macOS
+tools/bootstrap.sh --only services              # Linux: the timer (add --stream for the stream)
 ```
 
 One command says whether it all worked:

@@ -17,6 +17,9 @@ Design: `docs/decisions/0004-vinculum.md`.
 
 ## Setup
 
+`tools/bootstrap.sh` at the repo root runs every package's first-time setup in order, then
+schedules the nightly run; see the root README's Quick start. By hand:
+
 ```bash
 uv sync --all-packages
 uv run vinculum build              # ~30 s; needs the security master, EDGAR facts and profiles

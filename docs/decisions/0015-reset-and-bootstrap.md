@@ -51,8 +51,13 @@ Choices:
 
 ## Consequences
 - `tests/test_lifecycle_scripts.py` runs both scripts' dry runs against temporary stores, so CI
-  (Ubuntu) exercises the Linux paths and the Mac exercises the launchd ones.
+  (Ubuntu) exercises the Linux paths and the Mac exercises the launchd ones. A real deletion is
+  tested too, in a temporary HOME (on Linux only in CI, since it would remove the machine's own
+  systemd units and crontab line).
 - `collective roots` prints tab-separated columns the scripts read; changing them means
   changing the scripts.
+- The reset's last step removes the folder that held the stores (`~/market_data`) only when it
+  is empty; a `.DS_Store` left by Finder does not count. A journal that does not exist shows as
+  absent, not as kept (both fixed the day the scripts were first used).
 - A new store means a line in `unicomplex._roots`; a new first-time step means a function in
   `bootstrap.sh` (and its nightly counterpart a `Step` in `STEPS`).

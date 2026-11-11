@@ -41,7 +41,7 @@ cli.py        `collective`
 
 Invariants:
 - Writes only under its own root: `_run/nightly.lock`, `runs/<run_id>.log`, `runs.jsonl`,
-  `_logs/nightly.launchd.log`. `status` and `run --dry-run` write nothing.
+  `_logs/nightly.launchd.log`. `status`, `roots` and `run --dry-run` write nothing.
 - A step is the package's own CLI run as a subprocess; never call another package's build or
   sync in-process, and never reimplement one here. A new nightly job = one `Step` in `STEPS`
   (and its package as a dependency).

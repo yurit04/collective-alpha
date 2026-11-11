@@ -142,7 +142,9 @@ v.scan()                                                  # lazy polars over the
 - Rebuilt nightly (`vinculum build`, ~30 s); `vinculum check` runs the regression checks.
 
 ## When data is missing
-- Check `store.coverage()` or `uv run subspace status`.
+- Check `store.coverage()` or `uv run subspace status`; `uv run collective status` shows every store.
+- Nothing there at all (a fresh machine): `tools/bootstrap.sh` loads everything, but takes hours and
+  ~150 GB, so ask the user; `tools/bootstrap.sh --dry-run` shows the steps.
 - Fetch with the CLI (ask the user first for large jobs; see root CLAUDE.md):
   - `uv run subspace backfill history --dataset bars_minute --start 2020-01-01 --end 2020-12-31`
   - `uv run subspace backfill history --dataset trades --start D --end D --symbols AAPL,MSFT`

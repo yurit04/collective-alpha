@@ -7,6 +7,9 @@ It depends on no other package in this repo.
 
 ## Setup
 
+`tools/bootstrap.sh` at the repo root runs every package's first-time setup in order, then
+schedules the nightly run; see the root README's Quick start. By hand:
+
 ```bash
 uv sync --all-packages      # from the repo root
 uv run subspace init        # creates folders, checks credentials and plan coverage

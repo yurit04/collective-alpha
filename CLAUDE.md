@@ -12,7 +12,7 @@ projects/subspace-probe/notebooks/<core-package>/   demo notebooks, one folder p
 tools/check_architecture.py   enforces the dependency rules below
 tools/bootstrap.sh, reset.sh  build everything from nothing / stop all jobs and delete the stores (macOS, Linux, WSL2)
 tools/nightly_sync.sh, systemd/   the nightly run on Linux (systemd user units installed by bootstrap.sh)
-tests/                 repo-level tests (architecture rules)
+tests/                 repo-level tests (architecture rules, dry runs of bootstrap.sh and reset.sh)
 .github/workflows/ci.yml      lint, dependency rules and offline tests on push and pull request (3.12, 3.13)
 docs/decisions/        short design records: why X over Y
 .claude/skills/        new-core-module, new-project, query-market-data
@@ -49,7 +49,7 @@ Current core graph:
 | `transwarp-conduit` | Execution through Interactive Brokers: IB contract mapping, order sheets with limits, paper-first MOC orders, journal, reconciliation | unimatrix-zero, massive-subspace-stream |
 | `nanoprobe-array` | Intraday: regular-session bar clock, minute bars resampled with gap rules, auction prices, per-bar features, daily intraday summaries store | massive-subspace-stream, vinculum |
 | `tactical-cube` | Intraday backtests: decisions at bar ends, lagged VWAP or auction fills, participation caps, flat-by times or overnight holds, intraday costs, look-ahead check; daily output in unimatrix-zero's format | nanoprobe-array, unimatrix-zero, vinculum |
-| `unicomplex` | Orchestration: `collective run`, every nightly sync and build in order under one lock and log (one launchd job); `collective status`, a read-only freshness report over the data stores | massive-subspace-stream, edgar-cortical-node, finra-sensor-array, vinculum, nanoprobe-array, borg-queen, transwarp-conduit |
+| `unicomplex` | Orchestration: `collective run`, every nightly sync and build in order under one lock and log (one launchd job); `collective status`, a read-only freshness report over the data stores; `collective roots`, every store's root (read by tools/bootstrap.sh and reset.sh) | massive-subspace-stream, edgar-cortical-node, finra-sensor-array, vinculum, nanoprobe-array, borg-queen, transwarp-conduit |
 
 Planned (not built):
 intraday cost calibration from quotes and trades (decision 0014 phase 3),

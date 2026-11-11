@@ -26,6 +26,9 @@ Two kinds of difference turned up, and in both FINRA's own file is the better re
 
 ## Setup
 
+`tools/bootstrap.sh` at the repo root runs every package's first-time setup in order, then
+schedules the nightly run; see the root README's Quick start. By hand:
+
 ```bash
 uv sync --all-packages
 uv run sensor backfill short-interest    # ~2,300 small API requests, ~10-15 min
