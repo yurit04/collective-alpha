@@ -228,6 +228,87 @@ def test_sync_refreshes_only_filers(loaded, settings):
     assert EdgarStore(settings=settings).series("revenue", ciks=3333).height == 1
 
 
+def test_sync_asks_again_for_a_weekday_without_an_index(loaded, settings):
+    """403/404 for a daily index is a holiday, an index not posted yet or a throttled request:
+    the day used to be passed for good, and its filers waited for the monthly reload."""
+    ing, fake = loaded["ingestor"], loaded["fake"]
+    state = lambda: EdgarStore(settings=settings).layout.read_state()  # noqa: E731
+    fake.docs["0000001111"] = acme(extra_revenue=[fact("2024-01-01", "2024-03-31", 140, "C1", "2024-05-02", fy=2024)])
+    res = ing.sync(through=D(2024, 5, 3))            # Wed 1st to Fri 3rd, no index for any of them yet
+    assert res.ok and res.done == 0 and "no daily index for 2024-05-01" in res.note
+    assert state()["sync_through"] == "2024-05-03"
+    assert state()["index_pending"] == ["2024-05-01", "2024-05-02", "2024-05-03"]
+
+    fake.indexes["20240502"] = master_index([(1111, "ACME CORP", "10-Q", "20240502", "edgar/data/1111/x.txt")])
+    fake.requests.clear()
+    res = ing.sync(through=D(2024, 5, 6))            # the next sync: Thursday's index is there now
+    assert res.done == 1 and sum("companyfacts" in r for r in fake.requests) == 1
+    assert q(EdgarStore(settings=settings).series("revenue", ciks=1111), D(2024, 3, 31))["value"] == 140
+    assert sum("master.202405" in r for r in fake.requests) == 6        # 1st-3rd again, 4th-6th new
+    assert state()["index_pending"] == ["2024-05-01", "2024-05-03", "2024-05-06"]   # never a weekend day
+
+    ing.sync(through=D(2024, 5, 10))                 # a week on, the 1st and 3rd count as holidays
+    assert state()["index_pending"] == ["2024-05-06", "2024-05-07", "2024-05-08", "2024-05-09", "2024-05-10"]
+
+
+def test_sync_survives_a_company_document_it_cannot_read(loaded, settings):
+    """One unreadable answer failed the whole sync before its progress was saved, every night."""
+    ing, fake = loaded["ingestor"], loaded["fake"]
+    fake.indexes["20240502"] = master_index([(1111, "ACME CORP", "10-Q", "20240502", "a.txt"),
+                                             (2222, "MULTI", "10-Q", "20240502", "b.txt")])
+    fake.docs["0000001111"] = acme(extra_revenue=[fact("2024-01-01", "2024-03-31", 140, "C1", "2024-05-02", fy=2024)])
+    fake.docs["0000002222"] = ["not", "a", "company", "document"]
+    res = ing.sync(through=D(2024, 5, 3))
+    assert not res.ok and list(res.failed) == ["0000002222"] and res.done == 1
+    state = EdgarStore(settings=settings).layout.read_state()
+    assert state["sync_through"] == "2024-05-03" and state["retry_ciks"] == ["0000002222"]
+    assert q(EdgarStore(settings=settings).series("revenue", ciks=1111), D(2024, 3, 31))["value"] == 140
+
+
+def test_a_download_cut_off_on_the_way_starts_again(tmp_path):
+    """A dropped connection during the 1.4 GB bulk file raised an httpx error and failed the job."""
+    import httpx
+    from edgar_cortical_node._client import SecClient, SecError
+
+    class CutOff(httpx.SyncByteStream):
+        def __iter__(self):
+            yield b"half"
+            raise httpx.ReadError("connection reset")
+
+    calls = []
+
+    def flaky(request):
+        calls.append(1)
+        return httpx.Response(200, stream=CutOff()) if len(calls) == 1 else httpx.Response(200, content=b"whole file")
+
+    client = SecClient("ua a@b.c", requests_per_second=1000, sleep=lambda s: None, transport=httpx.MockTransport(flaky))
+    dest = tmp_path / "raw" / "companyfacts.zip"
+    assert client.download("https://www.sec.gov/x.zip", dest) == 10 and dest.read_bytes() == b"whole file"
+    assert len(calls) == 2 and [p.name for p in dest.parent.iterdir()] == ["companyfacts.zip"]   # no .part left
+
+    never = SecClient("ua a@b.c", requests_per_second=1000, sleep=lambda s: None,
+                      transport=httpx.MockTransport(lambda r: httpx.Response(200, stream=CutOff())))
+    with pytest.raises(SecError, match="network error"):
+        never.download("https://www.sec.gov/x.zip", tmp_path / "raw" / "other.zip")
+    assert not (tmp_path / "raw" / "other.zip").exists()
+    refused = []
+    no = SecClient("ua a@b.c", requests_per_second=1000, sleep=lambda s: None,
+                   transport=httpx.MockTransport(lambda r: refused.append(1) or httpx.Response(403)))
+    with pytest.raises(SecError, match="HTTP 403"):
+        no.download("https://www.sec.gov/x.zip", tmp_path / "raw" / "other.zip")
+    assert len(refused) == 1                                        # a refusal is not retried
+
+
+def test_a_200_answer_that_is_not_json_is_a_sec_error():
+    import httpx
+    from edgar_cortical_node._client import SecClient, SecError
+
+    client = SecClient("ua a@b.c", requests_per_second=1000, sleep=lambda s: None,
+                       transport=httpx.MockTransport(lambda r: httpx.Response(200, text="<html>busy</html>")))
+    with pytest.raises(SecError, match="not JSON"):
+        client.get_json("https://data.sec.gov/api/xbrl/companyfacts/CIK0000001111.json")
+
+
 def test_materialized_series_match_the_facts_and_track_their_version(loaded, settings):
     from edgar_cortical_node import CONCEPTS
 

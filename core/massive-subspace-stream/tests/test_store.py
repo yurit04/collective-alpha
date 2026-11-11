@@ -132,3 +132,15 @@ def test_coverage_and_trading_days(store):
     days = store.trading_days("2024-11-27", "2024-12-02")
     assert days == [date(2024, 11, 27), date(2024, 11, 29), date(2024, 12, 2)]
     assert date(2024, 11, 28) not in days and timedelta(days=1)
+
+
+def test_store_on_a_missing_root_reads_empty_and_creates_nothing(tmp_path):
+    """Store() used to create the root and an empty catalog, so `collective status` on a
+    machine without data (after tools/reset.sh) left ~/market_data behind."""
+    from massive_subspace_stream import Store, load_settings
+
+    root = tmp_path / "absent" / "massive"
+    store = Store(settings=load_settings(data_root=root, env_file=None))
+    assert store.coverage().height == 0
+    assert store.catalog.get("bars_day", "2024-01-02") is None and store.catalog.get_state("identity", "last_build") is None
+    assert not (tmp_path / "absent").exists()

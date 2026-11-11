@@ -110,6 +110,43 @@ def test_bootstrap_from_and_options(tmp_path):
     assert "cortical backfill" not in res.stdout
 
 
+def fetch_harness(tmp_path: Path, fails: int, dry: int = 0) -> tuple[subprocess.CompletedProcess, int]:
+    """Run bootstrap.sh's `fetch` function alone against a fake tool that fails `fails` times."""
+    tool = tmp_path / "bin" / "subspace"
+    tool.parent.mkdir()
+    tool.write_text(f'#!/bin/sh\necho "$*" >> "{tmp_path}/calls"\n'
+                    f'[ "$(wc -l < "{tmp_path}/calls")" -gt {fails} ] || exit 1\n')
+    tool.chmod(0o755)
+    text = BOOTSTRAP.read_text()
+    function = text[text.index("fetch() {"):]
+    function = function[:function.index("\n}\n") + 3]
+    script = ('say() { printf "%s\\n" "$*"; }; warn() { printf "warning: %s\\n" "$*" >&2; }\n'
+              f'BIN="{tool.parent}" DRY={dry} TRIES=3 RETRY_WAIT=0 CURRENT=massive\n{function}\n'
+              'fetch subspace backfill initial --no-minute\necho next-command\n')
+    res = subprocess.run([BASH, "-c", script], capture_output=True, text=True, timeout=60)
+    calls = (tmp_path / "calls").read_text().splitlines() if (tmp_path / "calls").exists() else []
+    assert all(c == "backfill initial --no-minute" for c in calls)
+    return res, len(calls)
+
+
+def test_bootstrap_runs_a_download_with_failed_items_again(tmp_path):
+    """One failed day out of thousands used to stop the bootstrap in the middle of the night."""
+    res, calls = fetch_harness(tmp_path, fails=2)
+    assert res.returncode == 0 and calls == 3 and "next-command" in res.stdout
+    assert res.stderr.count("running it again") == 2
+
+
+def test_bootstrap_gives_up_on_a_download_that_keeps_failing(tmp_path):
+    res, calls = fetch_harness(tmp_path, fails=99)
+    assert res.returncode == 1 and calls == 3 and "next-command" not in res.stdout
+    assert "failed 3 times" in res.stderr and "tools/bootstrap.sh --from massive" in res.stderr
+
+
+def test_bootstrap_dry_run_runs_no_download(tmp_path):
+    res, calls = fetch_harness(tmp_path, fails=0, dry=1)
+    assert res.returncode == 0 and calls == 0 and "subspace backfill initial --no-minute" in res.stdout
+
+
 def test_bootstrap_rejects_unknown_steps(tmp_path):
     res = run(BOOTSTRAP, "--dry-run", "--from", "borg", tmp=tmp_path)
     assert res.returncode == 1 and "unknown step" in res.stderr

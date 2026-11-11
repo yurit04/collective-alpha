@@ -30,7 +30,8 @@ CLI: `sensor backfill short-interest|short-volume [--start --end] | sync | statu
 ```
 _config.py    settings ([finra_sensor_array] in collective.toml, FINRA_DATA_ROOT)
 _layout.py    paths, state.json, atomic writes
-_client.py    API (POST, paged by 5000) and CDN (403/404 = no file); shared rate limit, retries
+_client.py    API (POST, paged by 5000 up to Record-Total; without that header, until a short
+              page) and CDN (403/404 = no file); shared rate limit, retries
 _calendar.py  NYSE business days, si_published() = settlement + 7 business days
 _parse.py     API rows / daily files -> tables; facility summing; finra_symbols()
 _ingest.py    Ingestor: per-day fetch, one write per year file, state of done/empty days

@@ -60,7 +60,7 @@ class RestClient:
         for attempt in range(self.max_retries + 1):
             try:
                 resp = self._http.get(path, params=params)
-            except httpx.TransportError as exc:
+            except (httpx.TransportError, httpx.DecodingError) as exc:
                 if attempt == self.max_retries:
                     raise RestError(0, _short(path), f"network error: {exc}") from exc
                 log.warning("network error on %s (%s); retrying in %.0fs", _short(path), type(exc).__name__, delay)
@@ -68,7 +68,15 @@ class RestClient:
                 delay = min(delay * 2, 60)
                 continue
             if resp.status_code == 200:
-                return resp.json()
+                try:
+                    return resp.json()
+                except ValueError as exc:  # a cut-off body or an error page sent with status 200
+                    if attempt == self.max_retries:
+                        raise RestError(200, _short(path), f"the response is not JSON ({exc})") from exc
+                    log.warning("unreadable answer on %s; retrying in %.0fs", _short(path), delay)
+                    self._sleep(delay)
+                    delay = min(delay * 2, 60)
+                    continue
             if resp.status_code in RETRY_STATUS and attempt < self.max_retries:
                 wait = float(resp.headers.get("Retry-After") or delay)
                 log.warning("HTTP %s on %s; retrying in %.0fs", resp.status_code, _short(path), wait)

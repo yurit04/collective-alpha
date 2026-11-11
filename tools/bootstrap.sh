@@ -8,7 +8,9 @@
 #   tools/bootstrap.sh --only services    # one step, or a comma-separated list
 #   tools/bootstrap.sh --since 2015-01-01 --no-minute   # a smaller Massive history
 #
-# Steps, in order (each calls the package's own CLI; a failed step stops the bootstrap):
+# Steps, in order (each calls the package's own CLI; a failed step stops the bootstrap). A
+# download that ends with failed items (one day of 11,000, one ticker) is run again, up to 3
+# times a minute apart: each run skips what is stored and fetches only what is missing.
 #   setup      uv sync --all-packages, collective.toml from the example if missing, disk and
 #              system checks, `subspace init` (credentials, plan), `cortical init` (SEC contact)
 #   massive    subspace backfill initial, subspace identity build        (hours; ~100 GB with minute bars)
@@ -47,6 +49,8 @@ STEPS="setup massive edgar finra vinculum nanoprobe queen services status"
 ROOTS_ENV="$HOME/.config/collective-alpha/roots.env"
 UNIT_DIR="$HOME/.config/systemd/user"
 CRON_TAG="# collective-alpha"
+TRIES=3          # a download command is run this many times before the bootstrap stops
+RETRY_WAIT=60    # seconds between those runs
 
 WSL=0
 if [ "$OS" = Linux ] && grep -qi microsoft /proc/version 2>/dev/null; then WSL=1; fi
@@ -118,6 +122,25 @@ run() {   # run a command (or show it under --dry-run); stop the bootstrap when 
 }
 tool() { local name=$1; shift; run "$BIN/$name" "$@"; }
 
+fetch() {   # a download command: like `tool`, but run again when it fails (see the header)
+    local name=$1 n=1 code
+    shift
+    say "\$ $BIN/$name $*"
+    [ "$DRY" = 1 ] && return 0
+    while :; do
+        "$BIN/$name" "$@"
+        code=$?
+        [ "$code" = 0 ] && return 0
+        [ "$n" -ge "$TRIES" ] && break
+        n=$((n + 1))
+        warn "\`$name $*\` failed (exit $code); running it again in ${RETRY_WAIT}s (attempt $n of $TRIES)"
+        sleep "$RETRY_WAIT"
+    done
+    printf '\nerror: `%s` failed %s times (exit %s).\n' "$BIN/$name $*" "$TRIES" "$code" >&2
+    printf 'Fix the cause and resume with: tools/bootstrap.sh --from %s\n' "$CURRENT" >&2
+    exit "$code"
+}
+
 free_gb() {   # free space where $1 is (or would be created)
     local d=$1
     while [ ! -d "$d" ]; do d=$(dirname "$d"); done
@@ -184,18 +207,18 @@ step_massive() {
     [ -n "$SINCE" ] && args="--since $SINCE"
     [ "$MINUTE" = 0 ] && args="$args --no-minute"
     # shellcheck disable=SC2086  # word splitting of the options is intended
-    tool subspace backfill initial $args
-    tool subspace identity build
+    fetch subspace backfill initial $args
+    fetch subspace identity build
 }
 
 step_edgar() {
-    tool cortical backfill
-    tool cortical profiles
+    fetch cortical backfill
+    fetch cortical profiles
 }
 
 step_finra() {
-    tool sensor backfill short-interest
-    tool sensor backfill short-volume
+    fetch sensor backfill short-interest
+    fetch sensor backfill short-volume
 }
 
 step_vinculum() {
@@ -286,6 +309,9 @@ say "collective-alpha bootstrap: $OS$([ "$WSL" = 1 ] && echo ' (WSL2)'), repo $R
 say "steps: $selected$([ "$DRY" = 1 ] && echo '   (dry run: nothing runs)')"
 MASSIVE_ROOT="" UC_ROOT="" LOG="" RUN_TIME="06:30"
 T0=$(date +%s)
+# Ctrl-C stops the bootstrap. Without this a command that turns the interrupt into an ordinary
+# failure (exit 1) would be taken for a failed download and run again.
+trap 'printf "\ninterrupted; resume with: tools/bootstrap.sh --from %s\n" "${CURRENT:-setup}" >&2; exit 130' INT
 for CURRENT in $selected; do
     head_ "$CURRENT  ($(date '+%Y-%m-%d %H:%M'))"
     "step_$CURRENT"

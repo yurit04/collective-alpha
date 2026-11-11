@@ -68,15 +68,16 @@ class FinraClient:
         return int(resp.headers.get("record-total", 0))
 
     def short_interest(self, settlement_date: str) -> list[dict[str, Any]]:
-        """Every row for one settlement date (paged by PAGE)."""
+        """Every row for one settlement date (paged by PAGE). The Record-Total header says when
+        to stop; without it, paging goes on until a page comes back short."""
         rows: list[dict[str, Any]] = []
         while True:
             resp = self._request("POST", API_URL, json=_si_query(settlement_date, limit=PAGE, offset=len(rows)))
             _raise(resp, API_URL)
             page = resp.json() if resp.content else []
             rows += page
-            total = int(resp.headers.get("record-total", len(rows)))
-            if not page or len(rows) >= total:
+            total = resp.headers.get("record-total")
+            if not page or (len(rows) >= int(total) if total is not None else len(page) < PAGE):
                 return rows
 
     def daily_file(self, facility: str, day) -> str | None:

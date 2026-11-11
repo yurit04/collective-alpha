@@ -60,7 +60,7 @@ class SecClient:
                     resp = self._http.send(req, stream=True)
                 else:
                     resp = self._http.request(method, url)
-            except httpx.TransportError as exc:
+            except (httpx.TransportError, httpx.DecodingError) as exc:
                 if attempt == self.max_retries:
                     raise SecError(0, url, f"network error: {exc}") from exc
                 self._sleep(delay)
@@ -84,7 +84,10 @@ class SecClient:
             return None
         if resp.status_code != 200:
             raise SecError(resp.status_code, url, resp.text[:200])
-        return orjson.loads(resp.content)
+        try:
+            return orjson.loads(resp.content)
+        except orjson.JSONDecodeError as exc:  # a cut-off or error page sent with status 200
+            raise SecError(200, url, f"the response is not JSON ({exc})") from exc
 
     def get_text(self, url: str) -> str | None:
         """Text, or None for 404/403 (daily index files do not exist on weekends and holidays)."""
@@ -101,9 +104,28 @@ class SecClient:
             raise SecError(resp.status_code, url)
         return resp.headers.get("last-modified")
 
-    def download(self, url: str, dest: Path, progress_every: int = 200 << 20) -> int:
-        """Stream a large file to `dest` (written to a temp file, then renamed)."""
+    def download(self, url: str, dest: Path, progress_every: int = 200 << 20, attempts: int = 3) -> int:
+        """Stream a large file to `dest` (written to a temp file, then renamed). A transfer cut
+        off on the way (a dropped connection, fewer bytes than announced) starts again, up to
+        `attempts` times; a refusal (any status but 200) is raised at once."""
         dest.parent.mkdir(parents=True, exist_ok=True)
+        delay = 5.0
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._download_once(url, dest, progress_every)
+            except (httpx.TransportError, httpx.DecodingError, SecError) as exc:
+                cut_off = not isinstance(exc, SecError) or exc.status == 200
+                if not cut_off or attempt == attempts:
+                    if isinstance(exc, SecError):
+                        raise
+                    raise SecError(0, url, f"network error: {exc}") from exc
+                log.warning("download of %s cut off (%s); starting again in %.0fs (attempt %d of %d)",
+                            url, exc, delay, attempt + 1, attempts)
+                self._sleep(delay)
+                delay = min(delay * 2, 60)
+        raise AssertionError("unreachable")
+
+    def _download_once(self, url: str, dest: Path, progress_every: int) -> int:
         tmp = dest.with_name(dest.name + ".part")
         resp = self._request("GET", url, stream=True)
         try:

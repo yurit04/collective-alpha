@@ -40,6 +40,7 @@ CLI: `cortical init | backfill | profiles | sync | series | status | show CIK | 
 _config.py    settings (collective.toml [edgar_cortical_node], EDGAR_DATA_ROOT, EDGAR_USER_AGENT)
 _layout.py    paths (facts buckets, companies, profiles, names, series, shares), state.json
 _client.py    SEC HTTP: User-Agent, shared rate limit (<= 8/s), retries, streamed downloads
+              (a transfer cut off on the way starts again, 3 attempts)
 _parse.py     company-facts JSON -> long table; submissions -> profiles/names; daily index; workers
 _ingest.py    bulk load (parallel processes, per-bucket compaction, swap), profiles, daily sync,
               series() (materialized tables, stamped with the facts version)
@@ -74,6 +75,12 @@ Invariants:
 - Concepts with `second_quarter=True` (public float): a 10-K value dated within 10 days of the
   filing's fiscal year end (its latest Assets/StockholdersEquity date) moves back six months,
   source "redated"; 10-Q copies and values dated after the year end are never moved.
+- A missing daily index (403/404) is final only for weekends: the SEC answers the same for a
+  holiday, an index not posted yet and a throttled request. `sync` keeps such weekdays in
+  `index_pending` (state.json) and asks again for `INDEX_RECHECK_DAYS` (7); `sync_through` still
+  advances. Never treat a missing weekday index as "no filings" at the first answer.
+- One company's document that cannot be fetched or read (`get_json` raises SecError for a 200
+  that is not JSON) fails that CIK only: it goes to `retry_ciks` and the sync saves its progress.
 - Never send the user's own e-mail to the SEC unless they put it in their config.
 - Respect the SEC's 10 requests/second limit (default 8, shared across threads).
 - The parse workers use the `spawn` start method (`_ingest._SPAWN`). Never let them fork: the

@@ -59,6 +59,11 @@ cli.py          `subspace` (typer)
 
 Invariants:
 - A partition is marked in the catalog only after its file is safely renamed into place.
+- Reading creates nothing: `Store` opens the catalog with `create=False` (a missing catalog reads
+  as empty), so `collective status` on a machine without data leaves no folders behind. Only
+  `Ingestor`, the stream and `subspace init/status` create the root.
+- A 200 answer that is not JSON is retried like a 5xx, then raised as `RestError`, so it fails
+  one dataset (or one ticker, one lookup), never the whole job.
 - One writing job per data root: Ingestor's flat, rest, initial, sync, identity and verify
   --repair hold `_run/writer.lock` (`Ingestor.writer`, reentrant); a second job raises BusyError
   (CLI exit 2) before touching anything. New writing jobs take it too. The stream has its own lock.
@@ -84,7 +89,8 @@ Invariants:
 - Adding a REST dataset = one `RestSpec` entry in `_datasets/rest.py` (+ optional `Store` helper).
   `nightly=False` keeps a dataset out of default refreshes (short_interest, short_volume, float:
   finra-sensor-array and vinculum provide them); naming it still fetches it.
-  Mode "details" = one request per active ticker per day (`ticker_details`).
+  Mode "details" = one request per active ticker per day (`ticker_details`); the day counts as
+  fetched only when no request failed, and a re-run asks for the tickers not stored for it yet.
 - Never request what the plan lacks: flat files before `history_start()`, datasets outside
   `plan_info.flat_datasets`, channels outside `plan_info.stream_channels`.
 - A snapshot refresh never deletes stored history: `guard_snapshot` keeps stored rows dated

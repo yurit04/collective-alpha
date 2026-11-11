@@ -6,7 +6,8 @@ profiles.parquet               company profiles (SIC, fiscal year end, tickers, 
 names.parquet                  company name history: cik, name, valid_from, valid_to
 series.parquet                 materialized point-in-time series of every item (first-filed policy)
 shares.parquet                 materialized share counts per company
-state.json                     bulk file date, how far the daily sync got, CIKs to retry, the facts
+state.json                     bulk file date, how far the daily sync got, CIKs to retry, weekdays
+                               whose daily index was missing (`index_pending`, asked again), the facts
                                version (`facts_version`, a counter) and the one the series were built from
 raw/companyfacts.zip           last bulk download (kept for re-parsing)
 raw/submissions.zip            last profiles bulk download

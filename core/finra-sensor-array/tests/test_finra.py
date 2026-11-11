@@ -114,6 +114,21 @@ def test_client_pages_retries_and_missing_files():
     assert calls[1].headers["User-Agent"] == "ua"
 
 
+def test_short_interest_pages_on_without_the_record_total_header():
+    """Without the header the first page (5,000 rows) was taken for the whole settlement date."""
+    from finra_sensor_array._client import PAGE
+
+    offsets = []
+
+    def handler(request: httpx.Request):
+        offset = __import__("json").loads(request.read())["offset"]
+        offsets.append(offset)
+        return httpx.Response(200, json=[{"n": offset + i} for i in range(PAGE if offset < 2 * PAGE else 7)])
+
+    c = FinraClient("ua", requests_per_second=0, transport=httpx.MockTransport(handler), sleep=lambda s: None)
+    assert len(c.short_interest("2025-10-15")) == 2 * PAGE + 7 and offsets == [0, PAGE, 2 * PAGE]
+
+
 # ---------------------------------------------------------------- ingest and store
 def test_short_interest_backfill_revisions_and_empty_days(settings):
     fake = FakeClient(si={"2025-09-30": [si_row("BRKB", 100), si_row("AAPL", 50, "NNM")],

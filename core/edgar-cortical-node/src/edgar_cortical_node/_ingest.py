@@ -3,8 +3,10 @@
 bulk()   download companyfacts.zip (if newer), convert every company in parallel processes,
          compact one file per CIK bucket, then swap the new facts into place.
 sync()   for each day since the last sync, read the SEC daily index, re-fetch company facts
-         for companies that filed financial reports, and replace their rows. Runs a full
-         bulk() instead when the last one is older than `bulk_refresh_days`.
+         for companies that filed financial reports, and replace their rows. A weekday whose
+         index is not there (not posted yet, or the SEC refused the request) is asked for
+         again on the next syncs. Runs a full bulk() instead when the last one is older than
+         `bulk_refresh_days`.
 """
 
 from __future__ import annotations
@@ -53,6 +55,9 @@ from ._store import EdgarStore
 log = logging.getLogger("edgar_cortical_node")
 CHUNK_MEMBERS = 400  # companies per conversion task
 PROFILE_CHUNK = 5000  # submissions documents per conversion task
+# A weekday without a daily index is asked for again for this many days. The SEC answers 403/404
+# for a holiday, for an index it has not posted yet and when it throttles; only the first is final.
+INDEX_RECHECK_DAYS = 7
 # Parse workers are spawned, never forked: by the time the pool starts the parent has used
 # polars' thread pool, and a forked child deadlocks in it (fork is Linux's default start method).
 _SPAWN = multiprocessing.get_context("spawn")
@@ -160,8 +165,10 @@ class Ingestor:
         shutil.rmtree(staging, ignore_errors=True)
 
         built = parsedate_to_datetime(remote).date() if remote else now.date()
+        through = built - timedelta(days=1)   # the bulk file holds every filing up to here
         state.update({"bulk_last_modified": remote, "bulk_loaded_at": now.isoformat(timespec="seconds"),
-                      "sync_through": (built - timedelta(days=1)).isoformat(), "retry_ciks": [],
+                      "sync_through": through.isoformat(), "retry_ciks": [],
+                      "index_pending": [d for d in state.get("index_pending", []) if d > through.isoformat()],
                       "facts_updated_at": now.isoformat(timespec="seconds"),
                       "facts_version": int(state.get("facts_version", 0)) + 1})
         self.layout.write_state(state)
@@ -253,11 +260,11 @@ class Ingestor:
             for fut in as_completed(futures):
                 try:
                     doc = fut.result()
-                except SecError as exc:
+                    parsed = parse_submission(doc) if doc else None
+                except Exception as exc:  # noqa: BLE001 - one unreadable document must not stop the rest
                     log.warning("submissions %s: %s", futures[fut], exc)
                     failed.append(futures[fut])
                     continue
-                parsed = parse_submission(doc) if doc else None
                 if parsed:
                     profiles.append(parsed[0])
                     names += parsed[1]
@@ -272,12 +279,13 @@ class Ingestor:
         return failed
 
     # ------------------------------------------------------------------ incremental
-    def filers(self, day: date) -> list[str]:
-        """CIKs that filed a financial report on `day` (empty on weekends and holidays)."""
+    def filers(self, day: date) -> list[str] | None:
+        """CIKs that filed a financial report on `day`, or None when the SEC has no daily index
+        for it: a weekend or holiday, an index not posted yet, or a refused request."""
         url = INDEX_URL.format(year=day.year, q=quarter_of(day), ymd=day.strftime("%Y%m%d"))
         text = self.client.get_text(url)
         if not text:
-            return []
+            return None
         idx = parse_master_index(text)
         if not idx.height:
             return []
@@ -296,15 +304,16 @@ class Ingestor:
                 cik = futures[fut]
                 try:
                     doc = fut.result()
-                except SecError as exc:
+                    if doc is None:  # no XBRL facts for this filer
+                        continue
+                    df = parse_companyfacts(doc)
+                    row = company_row(doc, df)
+                except Exception as exc:  # noqa: BLE001 - one unreadable document must not stop the rest
                     log.warning("company facts %s: %s", cik, exc)
                     failed.append(cik)
                     continue
-                if doc is None:  # no XBRL facts for this filer
-                    continue
-                df = parse_companyfacts(doc)
                 frames[cik] = df
-                companies.append(company_row(doc, df))
+                companies.append(row)
         rows = 0
         by_bucket: dict[int, list[str]] = {}
         for cik in frames:
@@ -358,22 +367,33 @@ class Ingestor:
             return res
         result = JobResult("sync")
         end = through or (datetime.now(UTC).date() - timedelta(days=1))
-        day = date.fromisoformat(state["sync_through"]) + timedelta(days=1)
+        first = date.fromisoformat(state["sync_through"]) + timedelta(days=1)
+        new_days = [first + timedelta(days=i) for i in range((end - first).days + 1)]
+        # Weekdays an earlier sync found no index for: asked again until INDEX_RECHECK_DAYS old.
+        waiting = {date.fromisoformat(d) for d in state.get("index_pending", [])}
         ciks: set[str] = set(state.get("retry_ciks", []))
-        days = 0
-        while day <= end:
-            ciks.update(self.filers(day))
-            day += timedelta(days=1)
-            days += 1
+        pending: list[date] = []
+        for day in sorted(waiting | set(new_days)):
+            found = self.filers(day)
+            if found is not None:
+                if day in waiting:
+                    log.info("sync: the daily index for %s is there now (%d filers)", day, len(found))
+                ciks.update(found)
+            elif day.weekday() < 5 and (end - day).days < INDEX_RECHECK_DAYS:
+                pending.append(day)
         rows, failed = self.refresh_ciks(sorted(ciks))
         profile_note = self._sync_profiles(sorted(ciks))
         state = self.layout.read_state()
         state.update({"sync_through": max(end, date.fromisoformat(state["sync_through"])).isoformat(),
-                      "retry_ciks": failed, "last_sync": datetime.now(UTC).isoformat(timespec="seconds")})
+                      "retry_ciks": failed, "index_pending": [d.isoformat() for d in pending],
+                      "last_sync": datetime.now(UTC).isoformat(timespec="seconds")})
         self.layout.write_state(state)
         result.done = len(ciks) - len(failed)
         result.rows = rows
-        result.note = f"{days} day(s) of filings" + (f"; {profile_note}" if profile_note else "")
+        result.note = f"{len(new_days)} day(s) of filings" + (f"; {profile_note}" if profile_note else "")
+        if pending:
+            result.note += (f"; no daily index for {', '.join(d.isoformat() for d in pending)} "
+                            "(a holiday, or asked again next sync)")
         if rows or not EdgarStore(settings=self.settings).series_status()["current"]:
             result.note += f"; {self.series().line()}"
         if failed:

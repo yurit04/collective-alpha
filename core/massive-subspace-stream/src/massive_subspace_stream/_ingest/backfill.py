@@ -435,7 +435,8 @@ class Ingestor:
 
     def _refresh_details(self, spec: RestSpec, full: bool, workers: int = 8) -> JobResult:
         """One details request per active ticker of DETAIL_TYPES (from the stored reference
-        tickers), at most once per day unless `full`."""
+        tickers), at most once per day unless `full`. The day counts as fetched only when no
+        request failed; until then a re-run asks for the tickers not stored for today yet."""
         result = JobResult(spec.name)
         today = today_et()
         if not full and self.catalog.get_state(spec.name, "last_date") == today.isoformat():
@@ -447,6 +448,13 @@ class Ingestor:
         tickers = (pl.read_parquet(ref, columns=["ticker", "type", "active"])
                    .filter(pl.col("active").fill_null(True) & pl.col("type").is_in(list(DETAIL_TYPES)))
                    ["ticker"].unique().sort().to_list())
+        year_file = self.layout.rest_file(spec.path, today.year)
+        if not full and year_file.exists():  # an earlier run today that had failures
+            have = set(pl.scan_parquet(year_file).filter(pl.col("as_of") == today)
+                       .select("ticker").collect()["ticker"])
+            if have:
+                tickers = [t for t in tickers if t not in have]
+                result.skipped = len(have)
         log.info("%s: fetching details for %d tickers", spec.name, len(tickers))
 
         def one(ticker: str) -> dict | None:
@@ -483,6 +491,9 @@ class Ingestor:
                 self.catalog.mark(spec.name, str(year), pq.read_metadata(path).num_rows, path.stat().st_size,
                                   source=spec.endpoint)
             result.rows, result.done = len(rows), 1
+        if result.failed:
+            result.note = "a re-run today asks only for the failed tickers"
+        else:
             self.catalog.set_state(spec.name, "last_date", today.isoformat())
         self.catalog.set_state(spec.name, "last_refresh", datetime.now(UTC).isoformat(timespec="seconds"))
         if len(result.failed) > len(tickers) // 10:

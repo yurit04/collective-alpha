@@ -43,7 +43,7 @@ class Store:
         self.settings = settings or load_settings()
         self.layout = Layout(root or self.settings.data_root)
         self.root = self.layout.root
-        self.catalog = Catalog(self.layout.catalog_path)
+        self.catalog = Catalog(self.layout.catalog_path, create=False)   # reading creates nothing
         self._identity_cache: dict[str, tuple[float, pl.DataFrame]] = {}
 
     def __repr__(self) -> str:

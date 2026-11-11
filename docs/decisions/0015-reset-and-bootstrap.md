@@ -17,7 +17,10 @@ Two bash scripts in `tools/`, plus the Linux units in `tools/systemd/`:
   file, `subspace init`, `cortical init`), massive, edgar, finra, vinculum, nanoprobe, queen,
   services, status. It never reimplements a step: a backfill's own resume logic, disk guard and
   plan limits apply. A failed step stops it (later steps need the earlier ones) and says how to
-  resume (`--from STEP`). One question before the long download; `--yes` for scripts.
+  resume (`--from STEP`). A download command that exits with failed items is first run again
+  (3 runs, a minute apart): each run skips what is stored, and one failed day out of thousands
+  should not stop an unattended bootstrap. Ctrl-C stops it at once. One question before the
+  long download; `--yes` for scripts.
 - **`tools/reset.sh`** removes every scheduled job (all `com.collective-alpha.*` launchd plists;
   all `collective-*` systemd user units and the crontab lines bootstrap adds), refuses while a
   collective CLI from this checkout is still running (`--force` stops it: SIGTERM, then SIGKILL

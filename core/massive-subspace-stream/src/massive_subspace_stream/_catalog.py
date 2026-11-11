@@ -35,11 +35,15 @@ def _now() -> str:
 
 
 class Catalog:
-    def __init__(self, path: Path):
+    """`create=False` is for readers (`Store`): nothing is created, and a catalog that does not
+    exist yet reads as empty."""
+
+    def __init__(self, path: Path, create: bool = True):
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with closing(self._connect()) as con, con:
-            con.executescript(_SCHEMA)
+        if create:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with closing(self._connect()) as con, con:
+                con.executescript(_SCHEMA)
 
     def _connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.path, timeout=60)
@@ -72,6 +76,8 @@ class Catalog:
             )
 
     def get(self, dataset: str, partition: str) -> dict[str, Any] | None:
+        if not self.path.exists():
+            return None
         with closing(self._connect()) as con:
             row = con.execute(
                 "SELECT * FROM partitions WHERE dataset = ? AND partition = ?", (dataset, partition)
@@ -84,6 +90,8 @@ class Catalog:
             sql, args = sql + " AND partition >= ?", [*args, start]
         if end:
             sql, args = sql + " AND partition <= ?", [*args, end]
+        if not self.path.exists():
+            return []
         with closing(self._connect()) as con:
             return [_row(r) for r in con.execute(sql + " ORDER BY partition", args)]
 
@@ -95,6 +103,8 @@ class Catalog:
             con.execute("DELETE FROM partitions WHERE dataset = ? AND partition = ?", (dataset, partition))
 
     def summary(self) -> list[dict[str, Any]]:
+        if not self.path.exists():
+            return []
         with closing(self._connect()) as con:
             rows = con.execute(
                 """SELECT dataset, COUNT(*) AS partitions, MIN(partition) AS first, MAX(partition) AS last,
@@ -109,11 +119,15 @@ class Catalog:
             con.execute("INSERT OR REPLACE INTO state VALUES (?, ?, ?, ?)", (dataset, key, str(value), _now()))
 
     def get_state(self, dataset: str, key: str) -> str | None:
+        if not self.path.exists():
+            return None
         with closing(self._connect()) as con:
             row = con.execute("SELECT value FROM state WHERE dataset = ? AND key = ?", (dataset, key)).fetchone()
         return row["value"] if row else None
 
     def all_state(self) -> list[dict[str, Any]]:
+        if not self.path.exists():
+            return []
         with closing(self._connect()) as con:
             return [dict(r) for r in con.execute("SELECT * FROM state ORDER BY dataset, key")]
 

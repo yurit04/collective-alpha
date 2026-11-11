@@ -35,6 +35,24 @@ def test_403_raises_not_entitled():
         client(lambda r: httpx.Response(403, json={"message": "NOT_AUTHORIZED"})).get("/v3/quotes/X")
 
 
+def test_a_200_answer_that_is_not_json_is_retried_then_a_rest_error(settings):
+    """It used to raise JSONDecodeError through Ingestor.rest and stop the whole sync."""
+    from massive_subspace_stream._sources.rest import RestError
+
+    calls = []
+
+    def flaky(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(200, text="<html>busy</html>") if len(calls) == 1 else httpx.Response(200, json={"results": [1]})
+
+    assert client(flaky).get("/x") == {"results": [1]} and len(calls) == 2
+    broken = client(lambda r: httpx.Response(200, text="<html>busy</html>"))
+    with pytest.raises(RestError, match="not JSON"):
+        broken.get("/x")
+    results = Ingestor(settings, rest_client=broken).rest(["exchanges", "conditions"])
+    assert [r.ok for r in results] == [False, False]      # each dataset fails by itself; the job goes on
+
+
 def test_to_frame_types_dates_and_nested():
     df = to_frame([
         {"ticker": "A", "ex_dividend_date": "2024-01-02", "published_utc": "2024-01-02T15:04:05Z",
@@ -115,3 +133,32 @@ def test_ticker_details_daily_snapshot(settings):
     assert "homepage_url" not in df.columns and df.schema["as_of"] == pl.Date
     (again,) = ing.rest(["ticker_details"])                    # once per day
     assert again.note == "already fetched today" and len(gets) == 3
+
+
+def test_ticker_details_with_failures_is_not_done_for_the_day(settings):
+    """A run with failed requests marked the day fetched, so a re-run skipped the failed tickers."""
+    from massive_subspace_stream import Store
+    from massive_subspace_stream._sources.rest import RestError
+
+    rest = fake_rest({"/v3/reference/tickers": [[{"ticker": t, "type": "CS", "active": True} for t in "ABC"]]})
+    down, gets = {"B", "C"}, []
+
+    def get(path, params=None):
+        t = path.rsplit("/", 1)[1]
+        gets.append(t)
+        if t in down:
+            raise RestError(500, path, "server error")
+        return {"results": {"ticker": t, "type": "CS", "market_cap": 1e9}}
+
+    rest.get = get
+    ing = Ingestor(settings, rest_client=rest)
+    ing.rest(["tickers"])
+    (first,) = ing.rest(["ticker_details"])
+    assert not first.ok and sorted(first.failed) == ["B", "C"] and first.rows == 1
+    down.clear()
+    gets.clear()
+    (second,) = ing.rest(["ticker_details"])
+    assert second.ok and sorted(gets) == ["B", "C"] and second.rows == 2     # only what was missing
+    assert Store(settings=settings).ticker_details()["ticker"].sort().to_list() == ["A", "B", "C"]
+    (third,) = ing.rest(["ticker_details"])
+    assert third.note == "already fetched today" and len(gets) == 2
