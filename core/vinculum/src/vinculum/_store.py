@@ -496,6 +496,30 @@ class Vinculum:
         info["root"] = str(self.layout.root)
         return info
 
+    def suspect_splits(self, start: Any = None, end: Any = None, top: int | None = 3000, backend: Backend = "polars"):
+        """Days whose split-adjusted close falls to half or less while the SEC share count filed
+        before vs after rises by about the same ratio: a split the data lacks (a data check that
+        uses later filings; never a signal). `top`: only companies ranked within it the trading
+        day before (default 3000, where it was validated; None = every security: among micro caps
+        heavy issuance looks the same). security_id, ticker, cik, date, date_before, close_before,
+        close (split-adjusted), price_ratio, shares_before, shares_after, share_ratio,
+        filed_before, filed_after, rank."""
+        from ._suspect import suspect_splits
+
+        counts = self._table("share_counts").select("security_id", "filed", "shares")
+        df = suspect_splits(self.scan(), counts, _day(start), _day(end))
+        if df.height:
+            days = df["date_before"].drop_nulls().unique().to_list()
+            ranks = self.ranks(days) if days else None
+            if ranks is not None and ranks.height:
+                r = ranks.select(pl.col("date").alias("date_before"), "cik", "rank").unique(["date_before", "cik"])
+                df = df.join(r, on=["date_before", "cik"], how="left")
+        if "rank" not in df.columns:
+            df = df.with_columns(pl.lit(None, pl.UInt32).alias("rank"))
+        if top is not None:
+            df = df.filter(pl.col("rank") <= top)
+        return self._out(df, backend)
+
     def check(self) -> list[tuple[str, bool, str]]:
         """Regression and sanity checks on the built tables: (name, passed, detail)."""
         from ._checks import run_checks

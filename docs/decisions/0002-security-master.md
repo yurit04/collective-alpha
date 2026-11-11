@@ -77,6 +77,15 @@ dropped, and kept only when the close moves by about the split ratio or cannot b
 Massive records some stock dividends as 1 -> N (TotalEnergies 1 -> 91.6); with N > 10 they are
 read as (N-1) -> N. Both change `adjust=` results for the securities concerned.
 
+## Addendum 2026-11-11: large stock dividends that are splits
+The (N-1) -> N reading above also caught real splits Massive files as stock dividends:
+Alphabet's 20-for-1 (GOOG, GOOGL, 2022-07-18) and O'Reilly's 15-for-1 (2025-06-10) became 5%
+and 7% stock dividends, so their adjusted prices fell 95% in a day and their pre-split market
+caps were 19x and 14x too high. Massive's own `historical_adjustment_factor` treats them as
+full splits. The security's close now decides: a fall nearer N than N/(N-1) keeps 1 -> N;
+otherwise, or without bars on both sides, (N-1) -> N. On the stored data this changed exactly
+those three rows; TotalEnergies' three scrip dividends stay small dividends.
+
 ## Addendum 2026-11-07: searches that cannot narrow
 For 23 tickers (mostly leveraged ETFs whose FIGI changed at a reverse split: SQQQ, SOXS, GUSH,
 DRIP, SRTY, ...; also CEI, LBTYA, AHT) Massive's dated lookups between the two snapshots answer

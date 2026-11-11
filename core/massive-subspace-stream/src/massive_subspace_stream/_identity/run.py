@@ -16,7 +16,12 @@ from .._catalog import Catalog
 from .._layout import Layout
 from .._sessions import trading_days
 from .._storage import upsert_parquet, write_parquet
-from .actions import check_splits_against_prices, mapped_dividends, mapped_splits
+from .actions import (
+    check_splits_against_prices,
+    mapped_dividends,
+    mapped_splits,
+    read_stock_dividends,
+)
 from .build import (
     BarIndex,
     anchors,
@@ -151,6 +156,7 @@ def build_identity(layout: Layout, catalog: Catalog, client=None, fetch: bool = 
     attrs = attributes_table(data["snapshots"], master)
     closes = map_to_security(bars.lazy().select("ticker", "date", "close"), master)
     splits = mapped_splits(data["splits"], master, securities, overrides)
+    splits = read_stock_dividends(splits, closes)
     n_splits = splits.height
     splits = check_splits_against_prices(splits, closes)
     dividends = mapped_dividends(data["dividends"], master, securities, closes) if data["dividends"].height \

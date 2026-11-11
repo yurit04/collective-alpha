@@ -160,11 +160,31 @@ def run_checks(v) -> list[tuple[str, bool, str]]:
 
     out += _adr_checks(v, lf)
     out += _short_checks(v, lf)
+    out.append(_suspect_split_check(v))
 
     biggest = lf.filter(pl.col("is_primary")).select(pl.col("issuer_market_cap").max()).collect().item()
     out.append(("no company above $8T", biggest is not None and biggest < 8e12,
                 f"max {biggest / 1e12:.2f}T" if biggest is not None else "no market caps"))
     return out
+
+
+# One-day drops in the top 3000 whose share count rose by about the same ratio but that are not
+# splits (checked by hand): (security_id, date) -> what happened.
+NOT_SPLITS = {
+    ("BBG000F05WS6", D(2014, 2, 24)): "CAMAC Energy paid Allied ~497M new shares for assets (10-Q 2014)",
+}
+
+
+def _suspect_split_check(v) -> tuple[str, bool, str]:
+    """Top-3000 days that look like a split the data lacks (`Vinculum.suspect_splits`), less
+    those reviewed as real share issuance. Fix one with a split row in the Massive identity
+    overrides (or a corrected reading), never by hiding the return."""
+    s = v.suspect_splits()
+    left = [r for r in s.iter_rows(named=True) if (r["security_id"], r["date"]) not in NOT_SPLITS]
+    detail = ", ".join(f"{r['ticker']} {r['date']} ({r['price_ratio']:.2f}x price, {r['share_ratio']:.2f}x shares)"
+                       for r in left[:8]) + (f" ... {len(left) - 8} more" if len(left) > 8 else "")
+    return ("no top-3000 day looks like a missing split (price falls by the ratio the share count rises)",
+            not left, detail or f"none ({len(NOT_SPLITS)} reviewed as share issuance)")
 
 
 def _adr_checks(v, lf) -> list[tuple[str, bool, str]]:

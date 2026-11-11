@@ -30,6 +30,9 @@ class Settings:
     busy_retry_minutes: int = 5      # a step refused because another job holds its writer lock
     busy_wait_minutes: int = 120     # ... is retried this long before it counts as failed
     skip_if_ok_hours: float = 3.0    # a full run that succeeded this recently makes `run` a no-op
+    step_timeout_minutes: dict[str, float] = field(default_factory=dict)  # per step name; 0 = no limit
+    ready_by: str = "09:00"          # a nightly run finishing later (machine local time) is late
+    notify: bool = True              # macOS notification when a run fails, is late or leaves stale data
     config_file: Path | None = None
 
 
@@ -56,7 +59,28 @@ def _coerce(name: str, value: Any) -> Any:
         return Path(str(value)).expanduser() if value not in (None, "") else None
     if name == "skip_if_ok_hours":
         return float(value)
+    if name == "step_timeout_minutes":
+        if not isinstance(value, dict):
+            raise ConfigError(f"[{SECTION}] step_timeout_minutes must be a table of step name = minutes")
+        return {str(k): float(v) for k, v in value.items()}
+    if name == "ready_by":
+        return str(value)
+    if name == "notify":
+        if not isinstance(value, bool):
+            raise ConfigError(f"[{SECTION}] notify must be true or false")
+        return value
     return int(value)
+
+
+def ready_by_time(settings: Settings) -> tuple[int, int]:
+    """`ready_by` as (hour, minute)."""
+    try:
+        hour, minute = (int(x) for x in settings.ready_by.split(":"))
+    except ValueError:
+        raise ConfigError(f"ready_by {settings.ready_by!r} is not HH:MM") from None
+    if not (0 <= hour < 24 and 0 <= minute < 60):
+        raise ConfigError(f"ready_by {settings.ready_by!r} is not a time of day")
+    return hour, minute
 
 
 def load_settings(config_file: Path | str | None = None, **overrides: Any) -> Settings:
@@ -71,4 +95,9 @@ def load_settings(config_file: Path | str | None = None, **overrides: Any) -> Se
         settings = replace(settings, **{k: _coerce(k, v) for k, v in overrides.items()})
     if not (0 <= settings.run_hour < 24 and 0 <= settings.run_minute < 60):
         raise ConfigError(f"run time {settings.run_hour}:{settings.run_minute:02d} is not a time of day")
+    if ready_by_time(settings) <= (settings.run_hour, settings.run_minute):
+        raise ConfigError(f"ready_by {settings.ready_by} must be after the run time "
+                          f"{settings.run_hour}:{settings.run_minute:02d}")
+    if any(v < 0 for v in settings.step_timeout_minutes.values()):
+        raise ConfigError("step_timeout_minutes must not be negative")
     return settings

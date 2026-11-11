@@ -284,6 +284,33 @@ def test_malformed_stock_dividends_are_read_as_small_dividends():
     assert out["split_from"].to_list() == [90.625, 1.0, 1.0]   # 1 -> 91.6 is a 1.1% dividend; 2:1 and splits kept
 
 
+def test_price_chooses_the_reading_of_a_large_stock_dividend():
+    """Massive files Alphabet's 20-for-1 split (2022) as a 1 -> 20 stock dividend, like
+    TotalEnergies' scrip dividends: the security's own close decides which one it is."""
+    from massive_subspace_stream._identity.actions import (
+        check_splits_against_prices,
+        fix_stock_dividends,
+        read_stock_dividends,
+    )
+
+    raw = fix_stock_dividends(pl.DataFrame({
+        "split_from": [1.0, 1.0, 1.0], "split_to": [20.0, 91.625, 20.0],
+        "adjustment_type": ["stock_dividend"] * 3}))
+    splits = raw.with_columns(pl.Series("security_id", ["GOOGL", "TOT", "NOBARS"]),
+                              pl.Series("execution_date", [D(2022, 7, 18), D(2019, 3, 15), D(2020, 1, 2)]),
+                              pl.lit("massive").alias("source"))
+    closes = pl.DataFrame({
+        "security_id": ["GOOGL", "GOOGL", "TOT", "TOT"],
+        "date": [D(2022, 7, 15), D(2022, 7, 18), D(2019, 3, 14), D(2019, 3, 15)],
+        "close": [2235.55, 109.03, 58.37, 57.82]}).lazy()
+    out = read_stock_dividends(splits, closes)
+    assert "__split_from_literal" not in out.columns
+    got = dict(zip(out["security_id"], out["split_from"]))
+    assert got == {"GOOGL": 1.0, "TOT": 90.625, "NOBARS": 19.0}   # untestable: the (N-1) -> N reading
+    checked = check_splits_against_prices(out, closes)
+    assert checked.filter(pl.col("security_id") == "GOOGL")["price_check"][0] == "confirmed"
+
+
 class NoFigiLookups(FakeRefClient):
     """Snapshots carry FIGIs; dated lookups answer without them (Massive does this for some
     leveraged ETFs across a reverse split)."""

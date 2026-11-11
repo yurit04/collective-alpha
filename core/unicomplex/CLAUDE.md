@@ -13,9 +13,9 @@ User docs: README.md in this folder. Design: docs/decisions/0012-unicomplex.md (
 | `render(checks, now=None)` | the table with a verdict line |
 | `STATES` | the four states |
 | `Runner(settings=None, steps=STEPS, execute=None, clock=None, sleep=time.sleep, resolve=executable)` | `.run(only, skip, force, dry_run, echo, quiet) -> RunResult`, `.plan(only, skip)`, `.history(n)`, `.last(full=True)`, `.running()` |
-| `STEPS` / `Step` | the nightly steps in order: name, command, busy_exit, note |
-| `RunResult` / `StepResult` | status (ok / failed / skipped / locked / interrupted / dry-run), steps, log; `.exit_code`, `.failed` |
-| `load_settings()` / `Settings` / `ConfigError` | data_root (`UNICOMPLEX_DATA_ROOT`, default ~/market_data/unicomplex), run_hour/minute, busy retry and wait minutes, skip_if_ok_hours; `[unicomplex]` in collective.toml |
+| `STEPS` / `Step` | the nightly steps in order: name, command, busy_exit, note, timeout_minutes (awake time; 0 = none) |
+| `RunResult` / `StepResult` | run status (ok / failed / skipped / locked / interrupted / dry-run), steps (ok / failed / busy / timeout / interrupted), log; `.exit_code`, `.failed` |
+| `load_settings()` / `Settings` / `ConfigError` | data_root (`UNICOMPLEX_DATA_ROOT`, default ~/market_data/unicomplex), run_hour/minute, busy retry and wait minutes, skip_if_ok_hours, step_timeout_minutes (per step), ready_by ("09:00"), notify (true); `[unicomplex]` in collective.toml |
 
 CLI: `collective status [--json]` (exit 1 when anything is stale or missing),
 `collective run [--only a,b] [--skip c] [--force] [--dry-run] [--quiet]` (exit 1 when a step
@@ -28,7 +28,9 @@ _checks.py    one function per source (massive_checks, edgar_checks, finra_check
               nanoprobe_checks, risk_checks, conduit_checks, nightly_checks), the expectations,
               collect(), render(), to_json()
 _config.py    settings
-_runner.py    Step, STEPS, Runner (lock, per-run log, runs.jsonl, busy retries, skip-if-recent)
+_runner.py    Step, STEPS, Runner (lock, per-run log, runs.jsonl, busy retries, skip-if-recent,
+              time limits: StepTimeout, process-group stop, SIGTERM -> interrupted)
+_notify.py    after_run(): problems after a full run (failed steps, late, stale/missing checks) -> macOS notification
 _services.py  launchd plist (com.collective-alpha.unicomplex.nightly), replacing the per-package schedules
 cli.py        `collective`
 ```
@@ -41,6 +43,12 @@ Invariants:
   (and its package as a dependency).
 - Steps run strictly one after another; a failed step never stops the later ones. Only a step's
   `busy_exit` code is retried (another job holds that package's writer lock).
+- A step runs in its own process group; past its time limit (or when the run is interrupted)
+  the whole group is stopped (SIGTERM, SIGKILL after 60 s), so spawned workers never outlive it.
+  Limits count awake time (`time.monotonic` stops during sleep on macOS): a sleeping Mac makes
+  a run late, never a timeout. Lateness is `ready_by`: a run under way at that time is late
+  (stale in `status`, and notified); a run started by hand after it is not.
+- Only full runs notify, and only when something needs attention; partial runs never do.
 - One run at a time (flock on `_run/nightly.lock`); a second run exits 0 and records nothing.
 - Only public APIs of the other packages (`Store.coverage/stream_status/trading_days`,
   `EdgarStore.status`, `FinraStore.status`, `Vinculum.status`, `Nanoprobe.status`, `RiskModel.status`,

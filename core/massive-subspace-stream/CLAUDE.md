@@ -78,7 +78,9 @@ Invariants:
 - Corporate actions are filed by Massive under the company's current ticker; the master maps
   them to securities, and adjustment uses those (never ticker-keyed factors when a master exists).
   Mapped splits the security's own price contradicts are dropped; stock dividends recorded as
-  1 -> N (N > 10) are read as (N-1) -> N.
+  1 -> N (N > 10) are read as (N-1) -> N unless the security's close falls by nearer N across
+  the date (`read_stock_dividends`: Alphabet 2022 and O'Reilly 2025 are real splits filed this
+  way). Never apply the (N-1) -> N reading without that price test.
 - Adding a REST dataset = one `RestSpec` entry in `_datasets/rest.py` (+ optional `Store` helper).
   `nightly=False` keeps a dataset out of default refreshes (short_interest, short_volume, float:
   finra-sensor-array and vinculum provide them); naming it still fetches it.

@@ -68,6 +68,9 @@ def run(
         typer.echo(res.detail)
     else:
         typer.echo(f"log: {res.log}")
+        from ._notify import after_run
+
+        after_run(res, runner.settings, echo=typer.echo)
     raise typer.Exit(res.exit_code)
 
 

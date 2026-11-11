@@ -393,3 +393,12 @@ So whether a day has a market cap, and so its universe membership, can depend on
   save it.
 - **Not done.** No point-in-time screen; revisit if a strategy trades names near the top-3000
   cut where one name per month end matters.
+
+## Addendum 2026-11-11: suspect splits
+`Vinculum.suspect_splits` lists days whose split-adjusted close falls to half or less while the
+company's SEC share count (last filed before vs first filed after, within 200 days each side)
+rises within 1.3x of the same ratio. Compared by filing date, not period end: Alphabet's
+June 2022 quarter was filed after its split and already reported post-split shares. Limited to
+the top 3,000 the day before by default: across all securities it found 78 days, most of them
+micro caps whose heavy issuance halves the price and doubles the count. `vinculum check` fails
+while any top-3,000 hit is neither fixed nor listed in `_checks.NOT_SPLITS`.

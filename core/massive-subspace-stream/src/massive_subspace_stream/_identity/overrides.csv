@@ -3,3 +3,6 @@ break,GOOG,2014-04-03,,,,,"Google's class A moved from GOOG to GOOGL on 2014-04-
 link,GOOG,2014-04-02,GOOGL,2014-04-03,,,"Class A history before 2014-04-03 (traded as GOOG) continues as GOOGL"
 split,GOOGL,2014-04-03,,,1,2,"Class C distribution (one class C share per class A share) roughly halved the class A price; Massive has no record of it"
 link,UTX,2020-04-02,RTX,2020-04-03,,,"United Technologies became Raytheon Technologies (same CIK) after spinning off Carrier and Otis; spin-offs are not adjustment events, so adjusted prices drop that day"
+split,CORE,2014-06-27,,,1,2,"Core-Mark 2-for-1 split paid as a stock dividend (8-K 2014-05-21; split-adjusted trading from 2014-06-27); Massive has no record of it (found by the share-count check, 2026-11-11)"
+split,ARCW,2014-05-02,,,2,5,"ARC Group Worldwide 5-for-2 forward split (split-adjusted trading from 2014-05-02, 39.52 -> 15.81); Massive has no record of it (found by the share-count check, 2026-11-11)"
+split,EBSB,2014-07-29,,,1,2.4484,"Meridian Interstate Bancorp second-step conversion: each public share became 2.4484 shares of Meridian Bancorp (press release 2014-07-24; closed 2014-07-28, same EBSB ticker); Massive has no record of it (found by the share-count check, 2026-11-11)"

@@ -265,3 +265,19 @@ def test_cost_warnings_name_expensive_trades(eng):
     quiet = eng.run(w, costs=CostModel(spread=150, warn_bps=None), lag=0, market=None)
     assert quiet.cost_warnings is None
     assert {"spread_bps", "impact_bps", "adv", "vol"} <= set(bt.trades.columns)
+
+
+def test_data_warnings_list_held_days_that_look_like_a_missing_split():
+    class SuspectVinculum(FakeVinculum):
+        def suspect_splits(self, start=None, end=None):
+            return pl.DataFrame({"security_id": ["A", "B"], "ticker": ["AA", "BB"], "cik": ["1", "2"],
+                                 "date": [D(2024, 2, 14), D(2024, 2, 14)], "date_before": [D(2024, 2, 13)] * 2,
+                                 "price_ratio": [2.0, 2.0], "share_ratio": [2.0, 2.0]})
+
+    eng = Engine(vinculum=SuspectVinculum(), store=FakeStore())
+    w = pl.DataFrame({"date": [D(2024, 1, 31)], "security_id": ["A"], "weight": [1.0]})
+    with pytest.warns(UserWarning, match="look like a split the data lacks"):
+        bt = eng.run(w, market=None)
+    assert bt.data_warnings["security_id"].to_list() == ["A"]          # B is not held
+    plain = Engine(vinculum=FakeVinculum(), store=FakeStore()).run(w, market=None)
+    assert plain.data_warnings is None                                  # no check available: nothing listed

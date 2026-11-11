@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from unicomplex import STEPS, Runner, Settings, Step, _services
 from unicomplex._checks import last_scheduled, nightly_checks
+from unicomplex._runner import StepTimeout
 
 ET = ZoneInfo("America/New_York")
 START = datetime(2026, 11, 6, 11, 30, tzinfo=UTC)  # Friday 06:30 ET
@@ -41,10 +42,12 @@ class Fake:
 
     def __init__(self, clock, codes=None, seconds=60):
         self.clock, self.codes, self.seconds, self.calls = clock, dict(codes or {}), seconds, []
+        self.timeouts = {}
 
-    def __call__(self, argv, out):
+    def __call__(self, argv, out, timeout=None):
         name = Path(argv[0]).name
         self.calls.append([name, *argv[1:]])
+        self.timeouts[name] = timeout
         out(f"{name} working")
         self.clock.advance(self.seconds)
         code = self.codes.get(name, 0)
@@ -172,7 +175,7 @@ def test_second_runner_exits_while_the_lock_is_held(tmp_path):
     runner, fake, _, _ = make(tmp_path)
     seen = {}
 
-    def nested(argv, out):
+    def nested(argv, out, timeout=None):
         if not seen:
             other, _, _, _ = make(tmp_path)
             seen["held"] = other.running()
@@ -191,7 +194,7 @@ def test_lock_holds_across_processes(tmp_path):
     code = (
         "import sys, time\n"
         "from unicomplex import Runner, Settings\n"
-        f"r = Runner(Settings(data_root={str(tmp_path)!r}), execute=lambda a, o: (print('in', flush=True), "
+        f"r = Runner(Settings(data_root={str(tmp_path)!r}), execute=lambda a, o, t: (print('in', flush=True), "
         "time.sleep(3), 0)[-1], resolve=lambda n: n, steps=[__import__('unicomplex').Step('x', ('x',))])\n"
         "r.run()\n"
     )
@@ -217,7 +220,7 @@ def test_real_subprocess_execute(tmp_path):
 def test_interrupted_run_is_recorded(tmp_path):
     runner, fake, _, _ = make(tmp_path)
 
-    def stop(argv, out):
+    def stop(argv, out, timeout=None):
         if Path(argv[0]).name == "sensor":
             raise KeyboardInterrupt
         return fake(argv, out)
@@ -283,7 +286,7 @@ def test_status_says_running_while_the_lock_is_held(tmp_path):
     runner, fake, _, _ = make(tmp_path)
     seen = {}
 
-    def peek(argv, out):
+    def peek(argv, out, timeout=None):
         seen.setdefault("c", status_of(runner, START + timedelta(hours=1)))
         return fake(argv, out)
 
@@ -375,3 +378,128 @@ def test_cli_run(tmp_path, monkeypatch):
     assert r.exit_code == 2 and "unknown step" in r.output
     r = CliRunner().invoke(cli.app, ["runs"])
     assert r.exit_code == 0 and "no runs recorded yet" in r.output
+
+
+def test_each_step_gets_its_time_limit_and_settings_override_it(tmp_path):
+    runner, fake, _, _ = make(tmp_path, step_timeout_minutes={"edgar": 0, "queen": 5})
+    runner.run()
+    assert fake.timeouts["subspace"] == 240 * 60 and fake.timeouts["cortical"] is None
+    assert fake.timeouts["queen"] == 5 * 60
+    with pytest.raises(ValueError, match="unknown step"):
+        Runner(Settings(data_root=tmp_path, step_timeout_minutes={"edgr": 10}))
+
+
+def test_a_step_past_its_limit_fails_and_the_run_goes_on(tmp_path):
+    runner, fake, _, _ = make(tmp_path)
+
+    def slow_edgar(argv, out, timeout=None):
+        if Path(argv[0]).name == "cortical":
+            raise StepTimeout(timeout / 60, -15)
+        return fake(argv, out, timeout)
+
+    runner.execute = slow_edgar
+    res = runner.run()
+    edgar = res.steps[1]
+    assert edgar.status == "timeout" and "240 min" in edgar.detail and edgar.attempts == 1
+    assert [s.status for s in res.steps[2:]] == ["ok"] * 4
+    assert res.status == "failed" and res.failed == ["edgar"] and res.exit_code == 1
+
+
+def test_real_subprocess_timeout_stops_the_whole_process_group(tmp_path):
+    """The step and the worker it spawned are both stopped (spawned build workers would
+    otherwise keep running after the step was given up)."""
+    pidfile = tmp_path / "child.pid"
+    code = ("import subprocess, sys, time\n"
+            f"c = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+            f"open({str(pidfile)!r}, 'w').write(str(c.pid))\n"
+            "print('started', flush=True)\n"
+            "time.sleep(60)\n")
+    steps = [Step("slow", (sys.executable, "-c", code), timeout_minutes=0.02),   # 1.2 s
+             Step("next", (sys.executable, "-c", "print('next ran')"))]
+    runner = Runner(Settings(data_root=tmp_path), steps=steps, resolve=lambda n: n)
+    res = runner.run()
+    assert [s.status for s in res.steps] == ["timeout", "ok"]
+    log = Path(res.log).read_text()
+    assert "started" in log and "next ran" in log and "TIMEOUT" in log
+    child = int(pidfile.read_text())
+    import os
+    import time
+    for _ in range(50):                      # the child is reaped by init; give it a moment
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        os.kill(child, 9)
+        raise AssertionError("the spawned worker outlived its step")
+
+
+def test_status_flags_a_run_that_finished_after_ready_by(tmp_path):
+    runner, fake, clock, _ = make(tmp_path)
+    fake.seconds = 2 * 3600                                    # 6 steps x 2 h: 06:30 -> 18:30 ET
+    runner.run()
+    c = status_of(runner, datetime(2026, 11, 6, 23, 30, tzinfo=UTC))
+    assert c.state == "stale" and "18:30" in c.detail and "09:00 ready-by" in c.detail
+
+
+def test_status_accepts_a_late_manual_run_started_after_ready_by(tmp_path):
+    runner, _, clock, _ = make(tmp_path, skip_if_ok_hours=12)
+    clock.now = datetime(2026, 11, 6, 19, 0, tzinfo=UTC)      # 14:00 ET, by hand
+    runner.run()
+    assert status_of(runner, datetime(2026, 11, 6, 21, 0, tzinfo=UTC)).state == "ok"
+
+
+def test_status_flags_a_run_still_going_past_ready_by(tmp_path):
+    runner, fake, _, _ = make(tmp_path)
+    seen = {}
+
+    def peek(argv, out, timeout=None):
+        seen.setdefault("early", status_of(runner, START + timedelta(hours=1)))
+        seen.setdefault("late", status_of(runner, START + timedelta(hours=4)))  # 10:30 ET
+        return fake(argv, out, timeout)
+
+    runner.execute = peek
+    runner.run()
+    assert seen["early"].state == "info"
+    assert seen["late"].state == "stale" and "still running past the 09:00" in seen["late"].detail
+
+
+def test_after_run_notifies_only_when_something_needs_attention(tmp_path):
+    from unicomplex._checks import Check
+    from unicomplex._notify import after_run
+
+    sent = []
+    runner, fake, clock, _ = make(tmp_path)
+    ok = runner.run()
+    fresh = [Check("massive", "bars_day", "ok"), Check("unicomplex", "nightly_run", "ok")]
+    assert after_run(ok, runner.settings, collect=lambda: fresh, send=lambda t, m: sent.append((t, m)), tz=ET) == []
+    assert sent == []
+
+    clock.now = datetime(2026, 11, 7, 11, 30, tzinfo=UTC)
+    fake.codes, fake.seconds = {"cortical": 1}, 2 * 3600       # edgar fails and the run ends 18:30
+    bad = runner.run()
+    stale = [*fresh, Check("finra", "short_volume", "stale", detail="last 2026-11-05")]
+    found = after_run(bad, runner.settings, collect=lambda: stale, send=lambda t, m: sent.append((t, m)), tz=ET)
+    assert found == ["edgar failed: exit code 1", "finished 18:30, after the 09:00 ready-by time",
+                     "finra short_volume stale: last 2026-11-05"]
+    [(title, message)] = sent
+    assert "3 problem(s)" in title and message.splitlines() == found
+
+    partial = runner.run(only=["finra"], force=True)
+    assert after_run(partial, runner.settings, collect=lambda: stale, send=lambda t, m: sent.append((t, m))) == []
+    quiet = Settings(data_root=tmp_path, notify=False)
+    assert after_run(bad, quiet, collect=lambda: stale, send=lambda t, m: sent.append((t, m)), tz=ET)
+    assert len(sent) == 1
+
+
+def test_ready_by_must_follow_the_run_time(tmp_path):
+    from unicomplex import ConfigError, load_settings
+
+    cfg = tmp_path / "collective.toml"
+    cfg.write_text('[unicomplex]\nready_by = "06:00"\n')
+    with pytest.raises(ConfigError, match="after the run time"):
+        load_settings(cfg)
+    cfg.write_text('[unicomplex]\nready_by = "10:15"\nnotify = false\n[unicomplex.step_timeout_minutes]\nedgar = 300\n')
+    s = load_settings(cfg)
+    assert s.ready_by == "10:15" and s.notify is False and s.step_timeout_minutes == {"edgar": 300.0}
