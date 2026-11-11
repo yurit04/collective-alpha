@@ -145,15 +145,15 @@ while IFS="$(printf '\t')" read -r name kind _env path; do
     esac
     case "$HOME/" in "$path"/*) die "refusing to delete $name root '$path' (it holds your home folder)" ;; esac
     case "$REPO/" in "$path"/*) die "refusing to delete $name root '$path' (it holds this repository)" ;; esac
-    if [ "$kind" = journal ] && [ "$JOURNAL" = 0 ]; then
-        printf '  %-11s %-8s %s  (kept: trading journal; --include-journal deletes it)\n' "$name" "" "$path"
-        continue
-    fi
     if [ ! -e "$path" ]; then
         printf '  %-11s %-8s %s  (absent)\n' "$name" "-" "$path"
         continue
     fi
     size=$(du -sh "$path" 2>/dev/null | cut -f1)
+    if [ "$kind" = journal ] && [ "$JOURNAL" = 0 ]; then
+        printf '  %-11s %-8s %s  (kept: trading journal; --include-journal deletes it)\n' "$name" "$size" "$path"
+        continue
+    fi
     kb=$(du -sk "$path" 2>/dev/null | cut -f1)
     total=$((total + ${kb:-0}))
     printf '  %-11s %-8s %s\n' "$name" "$size" "$path"
@@ -197,9 +197,12 @@ done <<EOF
 $targets
 EOF
 rm -f "$ROOTS_ENV"
-# The folder that held the stores (~/market_data), only if nothing else is left in it.
+# The folder that held the stores (~/market_data), only if nothing else is left in it (a
+# .DS_Store that Finder left there does not count).
 say "$parents" | sort -u | while IFS= read -r dir; do
-    [ -n "$dir" ] && [ "$dir" != "$HOME" ] && rmdir "$dir" 2>/dev/null && say "  $dir (empty)"
+    [ -n "$dir" ] && [ "$dir" != "$HOME" ] && [ -d "$dir" ] || continue
+    [ "$(ls -A "$dir")" = .DS_Store ] && rm -f "$dir/.DS_Store"
+    rmdir "$dir" 2>/dev/null && say "  $dir (empty)"
 done
 
 head_ "Done. Rebuild with tools/bootstrap.sh."

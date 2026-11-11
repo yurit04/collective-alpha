@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,33 @@ def test_reset_dry_run_lists_the_stores_and_deletes_nothing(tmp_path):
     assert "(absent)" in out and "kept: trading journal" in out
     assert "Dry run: nothing was stopped or deleted." in out
     assert (tmp_path / "massive" / "bars" / "x.parquet").exists() and (tmp_path / "conduit").exists()
+
+
+def test_reset_calls_an_absent_journal_absent(tmp_path):
+    res = run(RESET, "--dry-run", tmp=tmp_path)
+    assert res.returncode == 0, res.stderr
+    line = next(x for x in res.stdout.splitlines() if x.strip().startswith("conduit"))
+    assert "(absent)" in line and "kept" not in line
+
+
+def test_reset_deletes_the_stores_and_the_folder_left_with_only_finder_litter(tmp_path, monkeypatch):
+    # --yes without --dry-run also removes scheduled jobs. On macOS those are the plists under
+    # $HOME, which is isolated here; on Linux the user's systemd units and crontab are not.
+    if sys.platform != "darwin" and (shutil.which("systemctl") or shutil.which("crontab")):
+        if not os.environ.get("CI"):
+            pytest.skip("would touch this machine's systemd units or crontab")
+    home = tmp_path / "home"
+    data = home / "market_data"
+    (data / "massive" / "bars").mkdir(parents=True)
+    (data / "conduit").mkdir()
+    (data / ".DS_Store").write_bytes(b"x")
+    monkeypatch.setenv("HOME", str(home))
+    res = run(RESET, "--yes", tmp=data)
+    assert res.returncode == 0, res.stderr
+    assert not (data / "massive").exists() and (data / "conduit").exists()   # the journal stays
+    res = run(RESET, "--yes", "--include-journal", tmp=data)
+    assert res.returncode == 0, res.stderr
+    assert not data.exists()                                                 # .DS_Store did not keep it
 
 
 def test_reset_with_nothing_there_says_clean(tmp_path):
