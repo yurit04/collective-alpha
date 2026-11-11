@@ -60,6 +60,26 @@ Projects:
 
 ## Quick start
 
+One script builds everything from nothing, on macOS or Linux / WSL2: packages, stores, every
+download, the security master, vinculum, the intraday summaries, the risk model, then the
+nightly job (and on macOS the live stream). It takes hours and about 150 GB with minute bars;
+every step can be stopped and resumed.
+
+```bash
+tools/bootstrap.sh --dry-run       # the steps and commands; runs nothing
+tools/bootstrap.sh                 # everything (asks once before the long download)
+tools/bootstrap.sh --from edgar    # resume at a step after fixing a failure
+tools/reset.sh --dry-run           # what a reset would stop and delete
+tools/reset.sh                     # stop every job, delete the stores (asks; keeps the IB journal)
+```
+
+`tools/bootstrap.sh --help` and `tools/reset.sh --help` list the options (`--since`,
+`--no-minute`, `--no-services`, `--stream`, `--include-journal`, ...). On Linux the bootstrap
+installs the systemd user units in `tools/systemd/` (a crontab line on WSL2 without systemd); the
+stream runs there only with `--stream`, since Massive allows one websocket per key.
+
+The same by hand:
+
 ```bash
 uv sync --all-packages
 ```
@@ -75,6 +95,8 @@ uv run cortical profiles             # company profiles and name history: 1.6 GB
 uv run sensor backfill short-interest
 uv run sensor backfill short-volume  # ~13,000 files, ~3 GB
 uv run vinculum build                # the join, ~30 s
+uv run nanoprobe build               # intraday summaries from the minute bars, ~30 min
+uv run queen build                   # the risk model
 ```
 
 After that, one nightly run keeps the stores current: `uv run collective service install

@@ -1,0 +1,15 @@
+# The nightly run on Linux: tools/nightly_sync.sh waits for the network, then `collective run`.
+# Installed by tools/bootstrap.sh into ~/.config/systemd/user/ with @REPO@ filled in; started by
+# collective-sync.timer. By hand: systemctl --user start collective-sync.service
+[Unit]
+Description=collective-alpha nightly run (collective run)
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+# Each store's root, resolved when the unit was installed (`collective roots`), as in the macOS plist.
+EnvironmentFile=-%h/.config/collective-alpha/roots.env
+ExecStart=@REPO@/tools/nightly_sync.sh
+# Each step has its own time limit inside `collective run`.
+TimeoutStartSec=infinity
+Nice=10

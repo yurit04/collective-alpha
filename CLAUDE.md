@@ -10,6 +10,8 @@ core/<package>/        reusable building blocks (src layout, own tests, own CLAU
 projects/<project>/    research / strategies; consume core packages only
 projects/subspace-probe/notebooks/<core-package>/   demo notebooks, one folder per core module (rule 6)
 tools/check_architecture.py   enforces the dependency rules below
+tools/bootstrap.sh, reset.sh  build everything from nothing / stop all jobs and delete the stores (macOS, Linux, WSL2)
+tools/nightly_sync.sh, systemd/   the nightly run on Linux (systemd user units installed by bootstrap.sh)
 tests/                 repo-level tests (architecture rules)
 .github/workflows/ci.yml      lint, dependency rules and offline tests on push and pull request (3.12, 3.13)
 docs/decisions/        short design records: why X over Y
@@ -69,6 +71,9 @@ uv run conduit --help                  # IB execution (see core/transwarp-condui
 uv run nanoprobe --help                # intraday bars, features, daily intraday summaries (core/nanoprobe-array/README.md)
 uv run collective status               # are the stores as fresh as the schedule allows? (core/unicomplex/README.md)
 uv run collective run --dry-run        # the nightly steps in order (`run` runs them; `runs` shows history)
+uv run collective roots                # where every store lives (as each package resolves it)
+tools/bootstrap.sh --dry-run           # fresh machine: every download and build, then the jobs
+tools/reset.sh --dry-run               # what a reset would stop and delete
 ```
 
 ## Market data
@@ -87,12 +92,14 @@ uv run collective run --dry-run        # the nightly steps in order (`run` runs 
 
 - Credentials live in environment variables / `~/.massive.env`. Never print, log, or commit
   them, and never put them in `collective.toml` (the code rejects that).
-- Do not delete anything under the data root without asking.
+- Do not delete anything under the data root without asking. `tools/reset.sh` deletes every store:
+  run it only with `--dry-run` unless the user asks for a reset in so many words.
 - Ask before starting long or large jobs: `backfill initial`, minute-bar history, any
   `trades`/`quotes` download without `--symbols` (3–9 GB per day), `cortical backfill` /
   `cortical profiles` (1.4 / 1.6 GB), `sensor backfill short-volume` (~13,000 files, ~3 GB),
-  `service install` (any package, including `collective service install`) or `collective run`
-  (the whole nightly sequence, about 15 minutes).
+  `service install` (any package, including `collective service install`), `collective run`
+  (the whole nightly sequence, about 15 minutes) or `tools/bootstrap.sh` without `--dry-run`
+  (all of the above, hours and ~150 GB).
 - Only one websocket connection per API key: use the stream service, don't open another.
 - Orders (transwarp-conduit): `conduit status`, `contracts`, `plan`, `show`, `orders`, `fills` and
   `reconcile` only read. Never run `submit`, `cancel` or `cancel-all` (or the same `Conduit`

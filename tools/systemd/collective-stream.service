@@ -1,0 +1,16 @@
+# The Massive live stream (`subspace stream run`), always on. Massive allows ONE websocket per
+# API key: run this on one machine only (tools/bootstrap.sh installs it on Linux only with --stream).
+[Unit]
+Description=collective-alpha Massive live stream
+
+[Service]
+WorkingDirectory=@REPO@
+EnvironmentFile=-%h/.config/collective-alpha/roots.env
+# Under a service a refused login exits 0, so it stops instead of restarting every 30 seconds.
+Environment=SUBSPACE_SERVICE=1
+ExecStart=@REPO@/.venv/bin/subspace stream run
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

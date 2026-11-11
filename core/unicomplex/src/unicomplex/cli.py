@@ -95,6 +95,23 @@ def runs(
         typer.echo(f"{r.get('run_id')}  {r.get('status'):<11}{scope}  {steps}")
 
 
+@app.command()
+def roots(
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
+) -> None:
+    """Where every store lives, as each package resolves it (collective.toml, *_DATA_ROOT).
+    One line per store: name, kind (data or journal), the variable that moves it, and the path,
+    tab-separated. Only reads."""
+    from ._roots import roots as all_roots
+
+    found = all_roots()
+    if as_json:
+        typer.echo(json.dumps([r.to_dict() for r in found], indent=1))
+        return
+    for r in found:
+        typer.echo(f"{r.name}\t{r.kind}\t{r.env}\t{r.path}")
+
+
 @service_app.command("install")
 def service_install(
     replace: Annotated[bool, typer.Option(

@@ -1,0 +1,12 @@
+# Tue-Sat at the [unicomplex] run time (@RUN_TIME@), the day after each session. Persistent: a
+# machine that was off or asleep runs it at the next start.
+[Unit]
+Description=collective-alpha nightly run, Tue-Sat @RUN_TIME@
+
+[Timer]
+OnCalendar=Tue..Sat *-*-* @RUN_TIME@:00
+Persistent=true
+Unit=collective-sync.service
+
+[Install]
+WantedBy=timers.target

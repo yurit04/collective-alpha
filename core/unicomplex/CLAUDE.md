@@ -15,11 +15,14 @@ User docs: README.md in this folder. Design: docs/decisions/0012-unicomplex.md (
 | `Runner(settings=None, steps=STEPS, execute=None, clock=None, sleep=time.sleep, resolve=executable)` | `.run(only, skip, force, dry_run, echo, quiet) -> RunResult`, `.plan(only, skip)`, `.history(n)`, `.last(full=True)`, `.running()` |
 | `STEPS` / `Step` | the nightly steps in order: name, command, busy_exit, note, timeout_minutes (awake time; 0 = none) |
 | `RunResult` / `StepResult` | run status (ok / failed / skipped / locked / interrupted / dry-run), steps (ok / failed / busy / timeout / interrupted), log; `.exit_code`, `.failed` |
+| `roots()` / `Root` | every store's root as its package resolves it (settings, collective.toml, `*_DATA_ROOT`): name, kind (`data`, or `journal` for transwarp-conduit), env, path; `.to_dict()`. Creates nothing |
 | `load_settings()` / `Settings` / `ConfigError` | data_root (`UNICOMPLEX_DATA_ROOT`, default ~/market_data/unicomplex), run_hour/minute, busy retry and wait minutes, skip_if_ok_hours, step_timeout_minutes (per step), ready_by ("09:00"), notify (true); `[unicomplex]` in collective.toml |
 
 CLI: `collective status [--json]` (exit 1 when anything is stale or missing),
 `collective run [--only a,b] [--skip c] [--force] [--dry-run] [--quiet]` (exit 1 when a step
-failed), `collective runs [-n N] [--json]`, `collective service install [--replace] | remove | status`.
+failed), `collective runs [-n N] [--json]`, `collective roots [--json]` (tab-separated: name, kind, env, path;
+read by tools/reset.sh and tools/bootstrap.sh, so keep the columns),
+`collective service install [--replace] | remove | status`.
 
 ## Internals (private)
 
@@ -30,6 +33,7 @@ _checks.py    one function per source (massive_checks, edgar_checks, finra_check
 _config.py    settings
 _runner.py    Step, STEPS, Runner (lock, per-run log, runs.jsonl, busy retries, skip-if-recent,
               time limits: StepTimeout, process-group stop, SIGTERM -> interrupted)
+_roots.py     Root, roots(): each package's data root through its public settings
 _notify.py    after_run(): problems after a full run (failed steps, late, stale/missing checks) -> macOS notification
 _services.py  launchd plist (com.collective-alpha.unicomplex.nightly), replacing the per-package schedules
 cli.py        `collective`

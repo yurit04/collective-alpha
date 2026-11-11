@@ -9,7 +9,11 @@ uv run collective run             # run them now, one after another (about 15 mi
 uv run collective runs            # recent runs: status and minutes per step
 uv run collective status          # how fresh the stores are against the nightly schedule
 uv run collective status --json   # the same as JSON (one object per check)
+uv run collective roots           # where every store lives: name, kind, variable, path (tab-separated)
 ```
+
+A fresh machine is built by `tools/bootstrap.sh` and taken back to nothing by `tools/reset.sh`
+(both in the repo root's README); both read the stores from `collective roots`.
 
 ## The nightly run
 
@@ -82,8 +86,10 @@ run_hour = 6
 run_minute = 30
 ```
 
-Linux: `tools/nightly_sync.sh` (the systemd timer) waits for the network and calls
-`collective run`.
+Linux: `tools/nightly_sync.sh` waits for the network and calls `collective run`. The systemd
+user units that start it (Tue-Sat at `run_hour:run_minute`, `Persistent=true`) and the optional
+stream unit are in `tools/systemd/`; `tools/bootstrap.sh --only services` installs them. On WSL2
+without systemd it adds a crontab line instead.
 
 ## Status
 
