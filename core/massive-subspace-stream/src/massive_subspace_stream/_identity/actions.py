@@ -61,24 +61,29 @@ MALFORMED_STOCK_DIVIDEND = 10.0
 def fix_stock_dividends(splits: pl.DataFrame) -> pl.DataFrame:
     """Massive records some stock dividends as 1 -> N instead of (N-1) -> N (TotalEnergies'
     scrip dividends appear as 1 -> 91.6, a 91-for-1 split). A stock dividend above 900% is not
-    plausible: read those as (N-1) -> N."""
+    plausible: read those as (N-1) -> N. But Massive also files some real splits this way
+    (Alphabet 1 -> 20 in 2022, O'Reilly 1 -> 15 in 2025), so such rows keep their literal
+    reading in `__split_from_literal` for `read_stock_dividends` to choose from the price."""
     if "adjustment_type" not in splits.columns or splits.is_empty():
-        return splits
+        return splits.with_columns(pl.lit(None, pl.Float64).alias("__split_from_literal"))
     bad = ((pl.col("adjustment_type") == "stock_dividend") & (pl.col("split_from") == 1)
            & (pl.col("split_to") > MALFORMED_STOCK_DIVIDEND))
-    return splits.with_columns(pl.when(bad).then(pl.col("split_to") - 1).otherwise(pl.col("split_from"))
+    return splits.with_columns(pl.when(bad).then(pl.col("split_from")).otherwise(None)
+                               .cast(pl.Float64).alias("__split_from_literal"),
+                               pl.when(bad).then(pl.col("split_to") - 1).otherwise(pl.col("split_from"))
                                .alias("split_from"))
 
 
 def mapped_splits(splits: pl.DataFrame, master: pl.DataFrame, securities: pl.DataFrame,
                   overrides: pl.DataFrame | None = None) -> pl.DataFrame:
     """security_id, ticker, execution_date, split_from, split_to, source (one row per security and date)."""
-    cols = ["ticker", "execution_date", "split_from", "split_to"]
+    cols = ["ticker", "execution_date", "split_from", "split_to", "__split_from_literal"]
     if splits.height:
         splits = fix_stock_dividends(splits.cast({"split_from": pl.Float64, "split_to": pl.Float64}))
     base = splits.select(cols).with_columns(pl.lit("massive").alias("source")) if splits.height \
         else pl.DataFrame(schema={"ticker": pl.String, "execution_date": pl.Date, "split_from": pl.Float64,
-                                  "split_to": pl.Float64, "source": pl.String})
+                                  "split_to": pl.Float64, "__split_from_literal": pl.Float64,
+                                  "source": pl.String})
     m = map_actions(base.cast({"split_from": pl.Float64, "split_to": pl.Float64}), "execution_date",
                     master, securities)
     if overrides is not None and overrides.height:
@@ -90,12 +95,49 @@ def mapped_splits(splits: pl.DataFrame, master: pl.DataFrame, securities: pl.Dat
             m = pl.concat([ovm, m], how="diagonal_relaxed")  # overrides win the de-duplication
     return (m.filter(pl.col("security_id").is_not_null() & (pl.col("split_to") > 0))
             .unique(["security_id", "execution_date"], keep="first", maintain_order=True)
-            .select("security_id", "ticker", "execution_date", "split_from", "split_to", "source", "mapped_by")
+            .select("security_id", "ticker", "execution_date", "split_from", "split_to", "source", "mapped_by",
+                    "__split_from_literal")
             .sort("security_id", "execution_date"))
 
 
 PRICE_CHECK_MIN = 1.25   # splits closer to 1 than this are not checked against prices
 PRICE_CHECK_GAP = 10     # days: the bars on both sides must be this close to the split
+
+
+def _closes_around(t: pl.DataFrame, closes: pl.LazyFrame) -> pl.DataFrame:
+    """t (security_id, execution_date, ...) + `seen`: log of the last close before the date over
+    the first close on or after it, null unless both are within PRICE_CHECK_GAP days."""
+    px = (closes.filter(pl.col("security_id").is_in(t["security_id"].unique().to_list()) & pl.col("close").gt(0))
+          .select("security_id", "date", "close").collect().sort("date"))
+    t = t.sort("execution_date").with_columns((pl.col("execution_date") - pl.duration(days=1)).alias("__before"))
+    t = t.join_asof(px.rename({"date": "__d0", "close": "__c0"}), left_on="__before", right_on="__d0",
+                    by="security_id", strategy="backward", check_sortedness=False)
+    t = t.join_asof(px.rename({"date": "__d1", "close": "__c1"}), left_on="execution_date", right_on="__d1",
+                    by="security_id", strategy="forward", check_sortedness=False)
+    testable = pl.col("__c0").is_not_null() & pl.col("__c1").is_not_null() & (
+        (pl.col("__d1") - pl.col("__d0")).dt.total_days() <= PRICE_CHECK_GAP)
+    return (t.with_columns(pl.when(testable).then((pl.col("__c0") / pl.col("__c1")).log()).alias("seen"))
+            .drop("__before", "__d0", "__c0", "__d1", "__c1"))
+
+
+def read_stock_dividends(splits: pl.DataFrame, closes: pl.LazyFrame) -> pl.DataFrame:
+    """Choose the reading of each 1 -> N stock dividend `fix_stock_dividends` flagged: the
+    literal 1 -> N split when the security's close falls by nearer N than N/(N-1) across the
+    date (Alphabet: 2,236 -> 109 on 1 -> 20), else (N-1) -> N (TotalEnergies: flat). Rows
+    without bars on both sides keep (N-1) -> N. Drops `__split_from_literal`."""
+    lit = "__split_from_literal"
+    if lit not in splits.columns:
+        return splits
+    flagged = splits.filter(pl.col(lit).is_not_null())
+    if flagged.is_empty():
+        return splits.drop(lit)
+    t = _closes_around(flagged.select("security_id", "execution_date", "split_from", "split_to", lit), closes)
+    as_split = (pl.col("seen") - (pl.col("split_to") / pl.col(lit)).log()).abs() < (
+        pl.col("seen") - (pl.col("split_to") / pl.col("split_from")).log()).abs()
+    t = t.filter(as_split.fill_null(False)).select("security_id", "execution_date", pl.col(lit).alias("__literal"))
+    return (splits.join(t, on=["security_id", "execution_date"], how="left")
+            .with_columns(pl.coalesce("__literal", "split_from").alias("split_from"))
+            .drop("__literal", lit))
 
 
 def check_splits_against_prices(splits: pl.DataFrame, closes: pl.LazyFrame) -> pl.DataFrame:
@@ -108,20 +150,9 @@ def check_splits_against_prices(splits: pl.DataFrame, closes: pl.LazyFrame) -> p
         return splits.with_columns(pl.lit(None, pl.String).alias("price_check"))
     k = (pl.col("split_to") / pl.col("split_from")).log()
     test = splits.filter((k.abs() > math.log(PRICE_CHECK_MIN)) & (pl.col("source") != "override"))
-    px = (closes.filter(pl.col("security_id").is_in(test["security_id"].unique().to_list())
-                        & pl.col("close").gt(0))
-          .select("security_id", "date", "close").collect().sort("date"))
-    t = test.select("security_id", "execution_date", k.alias("__k")).sort("execution_date")
-    t = t.with_columns((pl.col("execution_date") - pl.duration(days=1)).alias("__before")).join_asof(
-        px.rename({"date": "__d0", "close": "__c0"}), left_on="__before", right_on="__d0", by="security_id",
-        strategy="backward", check_sortedness=False)
-    t = t.join_asof(px.rename({"date": "__d1", "close": "__c1"}), left_on="execution_date", right_on="__d1",
-                    by="security_id", strategy="forward", check_sortedness=False)
-    seen = (pl.col("__c0") / pl.col("__c1")).log()
-    testable = pl.col("__c0").is_not_null() & pl.col("__c1").is_not_null() & (
-        (pl.col("__d1") - pl.col("__d0")).dt.total_days() <= PRICE_CHECK_GAP)
-    t = t.with_columns(pl.when(~testable).then(pl.lit("unchecked"))
-                       .when((seen - pl.col("__k")).abs() < seen.abs()).then(pl.lit("confirmed"))
+    t = _closes_around(test.select("security_id", "execution_date", k.alias("__k")), closes)
+    t = t.with_columns(pl.when(pl.col("seen").is_null()).then(pl.lit("unchecked"))
+                       .when((pl.col("seen") - pl.col("__k")).abs() < pl.col("seen").abs()).then(pl.lit("confirmed"))
                        .otherwise(pl.lit("contradicted")).alias("price_check"))
     out = splits.join(t.select("security_id", "execution_date", "price_check"),
                       on=["security_id", "execution_date"], how="left")

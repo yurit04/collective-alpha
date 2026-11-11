@@ -211,14 +211,38 @@ def last_scheduled(now: datetime, hour: int, minute: int, tz=None) -> datetime:
     raise AssertionError("unreachable: a scheduled day falls in every week")
 
 
+def ready_at(started: datetime, settings, tz=None) -> datetime:
+    """The `ready_by` time on the local day a run started."""
+    from ._config import ready_by_time
+
+    local = started.astimezone(tz)
+    hour, minute = ready_by_time(settings)
+    return datetime.combine(local.date(), datetime.min.time().replace(hour=hour, minute=minute), local.tzinfo)
+
+
+def ran_late(started: datetime, finished: datetime | None, settings, tz=None, now: datetime | None = None) -> bool:
+    """A run is late when it was under way at its day's `ready_by` time: it started before it
+    and finished (or, still running, `now` is) after it. A run started by hand later that day
+    is not late."""
+    deadline = ready_at(started, settings, tz)
+    end = finished or now
+    return started < deadline and end is not None and end > deadline
+
+
 def nightly_checks(runner, now: datetime, tz=None) -> list[Check]:
-    """Did the last scheduled full run happen and succeed? A run that finished up to
-    `skip_if_ok_hours` before the scheduled time counts (the scheduled one then skips)."""
+    """Did the last scheduled full run happen, succeed and finish by `ready_by`? A run that
+    finished up to `skip_if_ok_hours` before the scheduled time counts (the scheduled one then
+    skips)."""
     s = runner.settings
     due = last_scheduled(now, s.run_hour, s.run_minute, tz)
     expected = _iso(due)
     held = runner.running()
     if held is not None:
+        started = datetime.fromisoformat(held["started"]) if held.get("started") else None
+        if started is not None and ran_late(started, None, s, tz, now):
+            return [Check("unicomplex", "nightly_run", "stale", held.get("started"), expected,
+                          f"still running past the {s.ready_by} ready-by time ({held.get('run_id', '?')}); "
+                          "`pmset -g log` shows whether the Mac slept")]
         return [Check("unicomplex", "nightly_run", "info", held.get("started"), expected,
                       f"running now ({held.get('run_id', '?')}: {', '.join(held.get('steps', []))})")]
     last = runner.last(full=True)
@@ -236,6 +260,11 @@ def nightly_checks(runner, now: datetime, tz=None) -> list[Check]:
                       f"run {last.get('run_id')} {last.get('status')}: " + (", ".join(failed) or "?")
                       + (f"; log {last['log']}" if last.get("log") else ""))]
     secs = sum(st.get("seconds", 0) for st in last.get("steps", []))
+    started = datetime.fromisoformat(last["started"]) if last.get("started") else None
+    if started is not None and ran_late(started, finished, s, tz):
+        return [Check("unicomplex", "nightly_run", "stale", when, expected,
+                      f"run {last.get('run_id')} finished {finished.astimezone(tz):%H:%M}, after the {s.ready_by} "
+                      f"ready-by time ({secs / 60:.0f} min of steps); `pmset -g log` shows whether the Mac slept")]
     return [Check("unicomplex", "nightly_run", "ok", when, expected,
                   f"run {last.get('run_id')}: {len(last.get('steps', []))} steps OK in {secs / 60:.0f} min")]
 

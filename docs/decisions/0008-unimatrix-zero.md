@@ -94,3 +94,16 @@ On the rebuilt data, with the combined long-short book (top 1,000, monthly, 2012
 ## Limits
 No risk model or optimizer (planned for `borg-queen`). Delisting recoveries, borrow recalls and
 intraday fills are not modelled.
+
+## Addendum 2026-11-11: large falls are not data breaks
+The +300% rule stays one-sided on purpose. In the top 3,000 (2005-2026) there are 539 one-day
+falls of 50% or more; most are real (failed trials, frauds, delisting warnings), so zeroing
+them would hide real losses. A missed split looks different: the SEC share count, filed
+before vs after, rises by about the ratio the price fell. That test (vinculum's
+`suspect_splits`) found 5 of the 539: Alphabet 2022 and O'Reilly 2025 (real splits misread,
+fixed in the security master, 0002), Core-Mark and ARC Group Worldwide 2014 (splits Massive
+lacked) and CAMAC Energy 2014 (an acquisition paid in new shares, not a split). A sixth,
+Meridian Bancorp's 2014 second-step conversion (2.4484 new shares per old), appeared once the
+check ran on the panel itself. The missing splits are fixed by override rows; the engine now
+lists any held day the check flags in `Backtest.data_warnings` and warns, without changing
+the return.

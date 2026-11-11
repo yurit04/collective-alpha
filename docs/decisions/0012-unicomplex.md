@@ -87,3 +87,20 @@ daily intraday summaries (`nanoprobe/summaries`) against the last completed sess
 market-cap panel: the nightly run builds them after vinculum. The check reads
 `Nanoprobe.status()` on the same Massive store as the other checks; when the summaries trail
 the minute bars the detail says so.
+
+**Addition 2026-11-11 (time limits, lateness, notifications).** The 2026-11-10 run took 12
+hours: the Mac was on battery, where `caffeinate -s` does not hold, and slept through it in
+Power Nap bursts; `status` still said ok afterwards, and nothing told anyone. Three changes:
+- *Time limits per step* (`Step.timeout_minutes`, `step_timeout_minutes` setting). A hung step
+  used to hold the lock forever, and the next night's run exited as `locked`, recording
+  nothing. A step past its limit is now stopped with its process group and counts as failed.
+  Limits count awake time (`time.monotonic`), so sleep cannot cause a false timeout: lateness
+  is a separate check. SIGTERM (launchd stopping the job) now stops the running step too and
+  records the run as interrupted.
+- *Ready-by time* (`ready_by`, default 09:00 local, before the open). A run under way at that
+  time is late: stale in `status` while running and afterwards until the next run. A full run
+  started by hand after it is not late.
+- *Notifications* after full runs that need attention (failed or timed-out steps, late, any
+  stale or missing store), through `osascript`: no credentials, nothing to configure.
+  Rejected: e-mail or phone push (credentials in the environment, an outside service) for now;
+  `_notify.after_run` takes a `send` function if one is wanted later.

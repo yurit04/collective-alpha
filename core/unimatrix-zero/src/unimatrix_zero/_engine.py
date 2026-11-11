@@ -44,7 +44,8 @@ class Backtest:
     """Result of Engine.run. daily: date, gross, net, long, short, borrow, cost, turnover,
     gross_exposure, net_exposure, nav. trades: date, security_id, ticker, before, after, cost,
     spread_bps and impact_bps (per unit traded), adv, vol. cost_warnings: the trades whose cost
-    per unit traded is above CostModel.warn_bps.
+    per unit traded is above CostModel.warn_bps. data_warnings: days a held security's price
+    fell like a split the data lacks (vinculum's suspect_splits: the P&L that day is suspect).
     weights: the targets as traded (execution date `date`, signal date `signal_date`)."""
 
     daily: pl.DataFrame
@@ -53,6 +54,7 @@ class Backtest:
     market: pl.DataFrame | None = None
     settings: dict = field(default_factory=dict)
     cost_warnings: pl.DataFrame | None = None   # trades above CostModel.warn_bps per unit traded
+    data_warnings: pl.DataFrame | None = None   # held through a day that looks like a missing split
 
     def summary(self) -> pl.DataFrame:
         return summary(self.daily, self.market, self.weights["date"].n_unique())
@@ -321,9 +323,36 @@ class Engine:
             trades = trades.select("date", "security_id", "ticker", "before", "after", "cost", "spread_bps",
                                    "impact_bps", "adv", "vol")
         flagged = self._cost_warnings(trades, costs)
+        suspect = self._data_warnings(w, links, daily["date"].min(), daily["date"].max())
         return Backtest(daily=daily.select("date", "gross", "net", "long", "short", "borrow", "cost", "turnover",
                                            "gross_exposure", "net_exposure", "nav"),
-                        trades=trades, weights=w, market=mk, settings=settings, cost_warnings=flagged)
+                        trades=trades, weights=w, market=mk, settings=settings, cost_warnings=flagged,
+                        data_warnings=suspect)
+
+    def _data_warnings(self, w: pl.DataFrame, links: pl.DataFrame, start: date, end: date) -> pl.DataFrame | None:
+        """Days a held security fell like a split the data lacks (vinculum.suspect_splits, top
+        3000): warned once and listed, never changed. Held = in the targets of the last
+        rebalance before that day."""
+        try:
+            s = self.vinculum.suspect_splits(start, end)
+        except (FileNotFoundError, AttributeError):
+            return None
+        if s.is_empty():
+            return None
+        s = relabel(s, links) if links is not None and links.height else s
+        rebal = w.select(pl.col("date").alias("__ex")).unique().sort("__ex")
+        s = (s.with_columns((pl.col("date") - pl.duration(days=1)).alias("__d")).sort("__d")
+             .join_asof(rebal, left_on="__d", right_on="__ex", strategy="backward", check_sortedness=False))
+        held = (s.join(w.select(pl.col("date").alias("__ex"), "security_id", "weight"), on=["__ex", "security_id"])
+                .filter(pl.col("weight") != 0).drop("__d", "__ex").sort("date"))
+        if held.is_empty():
+            return None
+        top = held.row(0, named=True)
+        warnings.warn(
+            f"{held.height} held position-day(s) look like a split the data lacks (price fell by the ratio the "
+            f"SEC share count rose); first: {top['ticker']} ({top['security_id']}) {top['date']}, "
+            f"{top['price_ratio']:.1f}x. That day's P&L is suspect: see Backtest.data_warnings.", stacklevel=3)
+        return held
 
     @staticmethod
     def _cost_warnings(trades: pl.DataFrame, costs: CostModel) -> pl.DataFrame | None:

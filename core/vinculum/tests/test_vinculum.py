@@ -863,3 +863,31 @@ def test_price_only_events_need_flat_counts_and_an_odd_ratio():
     # SPIN: counts flat. DIV: a 15% stock dividend (counts up 15%). RND: a 2:1 split (round, whatever
     # the counts say). YUM: counts down 9% (buybacks) across a 1.391 spin. LONE: no count after it.
     assert sorted(price_only_events(o, ev)["security_id"].to_list()) == ["SPIN", "YUM"]
+
+
+def test_suspect_splits_tell_a_missing_split_from_a_crash():
+    """A missing split: the adjusted close halves and the SEC count doubles. A crash: the close
+    halves, the count stays. A split the data has: the adjusted close does not fall."""
+    from datetime import date as Day
+
+    from vinculum._suspect import suspect_splits
+
+    days = [Day(2022, 7, 14), Day(2022, 7, 15), Day(2022, 7, 18), Day(2022, 7, 19)]
+    rows = []
+    for sid, closes, factors in (("MISS", [100, 100, 50, 51], [1, 1, 1, 1]),       # 2:1 split not recorded
+                                 ("CRASH", [100, 100, 40, 41], [1, 1, 1, 1]),      # trial failure
+                                 ("KNOWN", [100, 100, 50, 51], [0.5, 0.5, 1, 1])):  # recorded: adjusted flat
+        for d, c, f in zip(days, closes, factors, strict=True):
+            rows.append({"security_id": sid, "ticker": sid, "cik": sid, "date": d, "close": float(c),
+                         "split_factor": float(f)})
+    panel = pl.DataFrame(rows).lazy()
+    counts = pl.DataFrame({
+        "security_id": ["MISS", "MISS", "CRASH", "CRASH", "KNOWN", "KNOWN"],
+        "filed": [Day(2022, 5, 1), Day(2022, 8, 1)] * 3,
+        "shares": [1e8, 2e8, 1e8, 1.02e8, 1e8, 2e8]})
+    out = suspect_splits(panel, counts)
+    assert out["security_id"].to_list() == ["MISS"]
+    r = out.row(0, named=True)
+    assert r["date"] == Day(2022, 7, 18) and r["date_before"] == Day(2022, 7, 15)
+    assert r["price_ratio"] == pytest.approx(2.0) and r["share_ratio"] == pytest.approx(2.0)
+    assert suspect_splits(panel, counts, start=Day(2022, 7, 19)).is_empty()

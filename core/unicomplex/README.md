@@ -32,6 +32,23 @@ uv run collective status --json   # the same as JSON (one object per check)
 - A full run that succeeded in the last 3 hours makes `run` a no-op; `--force` runs anyway.
 - `--only massive,vinculum` or `--skip queen` run part of it (partial runs don't count as the
   nightly run in `status`). `--quiet` prints only the progress lines.
+- Each step has a time limit (massive 4 h, edgar 4 h, finra 30 min, vinculum 1 h, nanoprobe
+  3 h, queen 1 h). A step past it is stopped with its workers and counts as failed
+  (`timeout`); the next step starts. The limits count time the Mac is awake, so sleep never
+  trips them.
+- A full run that needs attention ends with a macOS notification: a step failed or timed out,
+  the run was still going at the `ready_by` time (09:00), or `collective status` finds a store
+  stale or missing afterwards. Nothing is sent when all is well; partial runs never notify. The
+  notifications come from Script Editor (allow it under System Settings > Notifications).
+
+```toml
+[unicomplex]
+ready_by = "09:00"       # a run still going at this time is late (status: stale)
+notify = true
+
+[unicomplex.step_timeout_minutes]   # override a step's limit; 0 = no limit
+edgar = 300
+```
 
 Everything goes under `~/market_data/unicomplex` (`UNICOMPLEX_DATA_ROOT`): `runs/<run_id>.log`
 (every step's output), `runs.jsonl` (one line per run) and `_run/nightly.lock`.
@@ -49,8 +66,10 @@ uv run collective service remove
 The job runs under `caffeinate`, so the Mac stays awake until the run ends. A Mac asleep at
 06:30 starts it at its next Power Nap wake (within about 15 minutes). Without that, it would
 sleep again after ~45 seconds and the steps would crawl along in short bursts: three minutes of
-work took 70 on 2026-11-06. With the lid closed and no external display macOS may still sleep;
-`pmset -g log` shows it. To wake the Mac at 06:29 itself (a system setting, needs sudo):
+work took 70 on 2026-11-06. `caffeinate` holds only on AC power: on battery, or with the lid
+closed and no external display, macOS sleeps anyway (on 2026-11-10 a run on battery took 12
+hours). Keep the Mac plugged in, lid open, for the 06:30 run; `pmset -g log` shows whether it
+slept, and a run still going at `ready_by` shows as stale and notifies. To wake the Mac at 06:29 itself (a system setting, needs sudo):
 `sudo pmset repeat wakeorpoweron TWRFS 06:29:00`.
 
 Without `--replace`, installing refuses while the old Massive sync, EDGAR sync, FINRA sync or
@@ -85,7 +104,7 @@ can act on it. It only reads.
 | nanoprobe | `summaries` | the daily intraday summaries reach the last completed session (`nanoprobe build` after vinculum); the detail says when they trail the minute bars |
 | borg-queen | `risk_model` | the last month end in the model is within 45 days (rebuilt by the nightly run) |
 | transwarp-conduit | `orders` | informational: the last order sheet and its status, fills journaled (read from the journal, no Gateway connection) |
-| unicomplex | `nightly_run` | the last full `collective run` after the latest scheduled time (Tue-Sat 06:30, 15 minutes' grace) succeeded; info while one is running or before the first |
+| unicomplex | `nightly_run` | the last full `collective run` after the latest scheduled time (Tue-Sat 06:30, 15 minutes' grace) succeeded and finished by `ready_by` (09:00); stale while one is still running past it; info while one is running before it, or before the first |
 
 States: `ok`, `stale` (behind the schedule), `info` (no expectation), `missing` (the store is
 absent or unreadable; the error is shown, the other checks still run).

@@ -6,6 +6,12 @@ does by hand and nothing here reimplements a package. A failed step does not sto
 ones (vinculum rebuilds from whatever is stored), but the run counts as failed. A step that
 exits with its `busy_exit` code (another job holds that package's writer lock) is retried
 every `busy_retry_minutes` for up to `busy_wait_minutes`.
+
+Each step has a time limit (`Step.timeout_minutes`, overridden per step by the
+`step_timeout_minutes` setting; 0 = none). A step that runs over is stopped with its whole
+process group (its spawned workers too) and counts as failed ("timeout"); the next step starts.
+The limit counts time the Mac is awake: `time.monotonic` stands still during sleep on macOS, so
+a sleeping Mac makes a run late (the status check's `ready_by`), never a false timeout.
 """
 
 from __future__ import annotations
@@ -14,9 +20,11 @@ import fcntl
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
@@ -34,25 +42,39 @@ class Step:
     command: tuple[str, ...]       # executable then arguments
     busy_exit: int | None = None   # exit code meaning "another job holds the writer lock"
     note: str = ""
+    timeout_minutes: float = 0     # awake time before the step is stopped; 0 = no limit
 
 
+# Limits: a few times the longest awake run seen (massive 111 min, edgar ~70 min with a 52-min
+# series rebuild; the monthly EDGAR bulk reload and a nanoprobe rebuild of many years are longer).
 STEPS: tuple[Step, ...] = (
-    Step("massive", ("subspace", "sync"), busy_exit=2,
+    Step("massive", ("subspace", "sync"), busy_exit=2, timeout_minutes=240,
          note="bars, flat files, reference data and the security master through yesterday"),
-    Step("edgar", ("cortical", "sync"), note="SEC company facts filed since the last sync"),
-    Step("finra", ("sensor", "sync"), note="FINRA short interest and daily short sale volume"),
-    Step("vinculum", ("vinculum", "build"), note="market cap, universes and the joins (runs even if a sync failed)"),
-    Step("nanoprobe", ("nanoprobe", "build"), note="intraday summaries for the years behind the minute bars"),
-    Step("queen", ("queen", "build"), note="the risk model, rebuilt from 2011"),
+    Step("edgar", ("cortical", "sync"), timeout_minutes=240, note="SEC company facts filed since the last sync"),
+    Step("finra", ("sensor", "sync"), timeout_minutes=30, note="FINRA short interest and daily short sale volume"),
+    Step("vinculum", ("vinculum", "build"), timeout_minutes=60,
+         note="market cap, universes and the joins (runs even if a sync failed)"),
+    Step("nanoprobe", ("nanoprobe", "build"), timeout_minutes=180,
+         note="intraday summaries for the years behind the minute bars"),
+    Step("queen", ("queen", "build"), timeout_minutes=60, note="the risk model, rebuilt from 2011"),
 )
 EXIT_NOT_FOUND = 127
+KILL_GRACE_SECONDS = 60   # after SIGTERM, before SIGKILL
+
+
+class StepTimeout(Exception):
+    """Raised by an `execute` function when the command ran past its time limit (and was stopped)."""
+
+    def __init__(self, minutes: float, exit_code: int | None = None):
+        super().__init__(f"stopped after {minutes:g} min (the step's time limit)")
+        self.minutes, self.exit_code = minutes, exit_code
 
 
 @dataclass
 class StepResult:
     name: str
     command: list[str]
-    status: str = "pending"         # ok | failed | busy | interrupted | skipped
+    status: str = "pending"         # ok | failed | busy | timeout | interrupted | skipped
     exit_code: int | None = None
     started: str | None = None
     seconds: float = 0.0
@@ -96,25 +118,75 @@ def executable(name: str) -> str | None:
     return shutil.which(name)
 
 
-def _subprocess(argv: list[str], out: Callable[[str], None]) -> int:
-    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+def _stop_group(proc: subprocess.Popen, grace: float = KILL_GRACE_SECONDS) -> None:
+    """SIGTERM the command's process group (it and its spawned workers), SIGKILL if it lingers."""
+    for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, 10)):
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            break
+        try:
+            proc.wait(timeout=wait)
+            break
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def _subprocess(argv: list[str], out: Callable[[str], None], timeout: float | None = None) -> int:
+    """Run `argv` in its own process group, passing each output line to `out`. `timeout` is in
+    seconds of awake time; past it the group is stopped and StepTimeout raised."""
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                            process_group=0)
     assert proc.stdout is not None
-    try:
-        for line in proc.stdout:
+    stream = proc.stdout
+
+    def pump() -> None:
+        for line in stream:
             out(line.rstrip("\n"))
-        return proc.wait()
+
+    reader = threading.Thread(target=pump, name="step-output", daemon=True)
+    reader.start()
+    try:
+        try:
+            code = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _stop_group(proc)
+            reader.join(timeout=10)
+            raise StepTimeout(timeout / 60, proc.returncode) from None
+        reader.join()
+        return code
+    except StepTimeout:
+        raise
     except BaseException:
-        proc.terminate()
-        proc.wait()
+        _stop_group(proc, grace=10)
         raise
 
 
+@contextmanager
+def _sigterm_as_interrupt() -> Iterator[None]:
+    """launchd stops a job with SIGTERM; turn it into KeyboardInterrupt so the running step's
+    process group is stopped and the run is recorded as interrupted (main thread only)."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def handler(signum, frame):
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGTERM, handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
 class Runner:
-    """`execute(argv, out) -> exit code` runs one command and passes each output line to `out`;
-    `clock()` returns an aware datetime; `sleep(seconds)` waits. Tests replace all three."""
+    """`execute(argv, out, timeout) -> exit code` runs one command, passes each output line to
+    `out` and raises StepTimeout past `timeout` seconds (None = no limit); `clock()` returns an
+    aware datetime; `sleep(seconds)` waits. Tests replace all three."""
 
     def __init__(self, settings: Settings | None = None, steps: Iterable[Step] = STEPS,
-                 execute: Callable[[list[str], Callable[[str], None]], int] | None = None,
+                 execute: Callable[[list[str], Callable[[str], None], float | None], int] | None = None,
                  clock: Callable[[], datetime] | None = None, sleep: Callable[[float], None] = time.sleep,
                  resolve: Callable[[str], str | None] = executable):
         self.settings = settings or load_settings()
@@ -123,6 +195,9 @@ class Runner:
         self.clock = clock or (lambda: datetime.now(UTC))
         self.sleep = sleep
         self.resolve = resolve
+        unknown = set(self.settings.step_timeout_minutes) - {st.name for st in self.steps}
+        if unknown and self.steps == STEPS:
+            raise ValueError(f"step_timeout_minutes names unknown step(s) {', '.join(sorted(unknown))}")
 
     # ------------------------------------------------------------------ paths
     @property
@@ -149,6 +224,10 @@ class Runner:
         if unknown:
             raise ValueError(f"unknown step(s) {', '.join(unknown)}; steps are {', '.join(names)}")
         return [s for s in self.steps if (not only or s.name in only) and s.name not in skip]
+
+    def timeout_minutes(self, step: Step) -> float:
+        """The step's time limit in minutes (the `step_timeout_minutes` setting wins); 0 = none."""
+        return float(self.settings.step_timeout_minutes.get(step.name, step.timeout_minutes))
 
     def history(self, n: int | None = None) -> list[dict[str, Any]]:
         """Recorded runs, oldest first (the last `n` if given)."""
@@ -234,7 +313,7 @@ class Runner:
         run_id = now.astimezone().strftime("%Y%m%d-%H%M%S")
         info = {"run_id": run_id, "pid": os.getpid(), "host": socket.gethostname(), "started": now.isoformat(),
                 "steps": [s.name for s in steps]}
-        with self._lock(info) as got:
+        with self._lock(info) as got, _sigterm_as_interrupt():
             if not got:
                 held = self.running() or {}
                 return RunResult("locked", held.get("run_id"), detail=(
@@ -286,11 +365,16 @@ class Runner:
                 echo(line)
 
         argv = [path, *step.command[1:]]
+        limit = self.timeout_minutes(step)
         waited = 0.0
         while True:
             r.attempts += 1
             say(f"{step.name}: {' '.join(step.command)}" + (f" (attempt {r.attempts})" if r.attempts > 1 else ""))
-            code = self.execute(argv, out)
+            try:
+                code = self.execute(argv, out, limit * 60 if limit > 0 else None)
+            except StepTimeout as exc:
+                r.status, r.exit_code, r.detail = "timeout", exc.exit_code, str(exc)
+                break
             r.exit_code = code
             if step.busy_exit is None or code != step.busy_exit:
                 break

@@ -45,6 +45,11 @@ User docs: README.md in this folder. Design: docs/decisions/0004-vinculum.md.
 - `short_volume(tickers, start, end, by=...)`: date, security_id, ticker, symbol, type, cik,
   short_volume, short_exempt_volume, off_exchange_volume, volume (all venues), short_ratio,
   off_exchange_share, source
+- `suspect_splits(start, end, top=3000)`: days whose split-adjusted close falls to half or less
+  while the SEC count filed before vs after rises by about the same ratio (within 1.3x): a split
+  the data lacks. Companies ranked within `top` the day before (None = all; micro-cap issuance
+  looks the same). security_id, ticker, cik, date, date_before, close_before, close,
+  price_ratio, shares_before, shares_after, share_ratio, filed_before, filed_after, rank
 - `cik_map(security_ids)`, `share_counts(security_ids)`, `basis(security_ids)`, `scan()`
   (`basis`: basis_ratio, basis = calibrated | calibrated_raw | rescaled | override | loose |
   disagree | assumed | name | unknown | mismatch | implausible, penny_days, penny_turnover,
@@ -68,7 +73,8 @@ _store.py     Vinculum (reads, ranks, universes, fundamentals with predecessor f
 _pershare.py  per-share TTM per security across splits (w = value x cumulative split product at filing)
 _successors.py ticker handoffs and CIK changes, lineage, inherited share counts
 _short.py     FINRA symbols -> securities (security master windows), short interest/volume reads
-_checks.py    `vinculum check`
+_suspect.py   suspect_splits (missing splits by price ratio vs SEC count ratio)
+_checks.py    `vinculum check` (NOT_SPLITS: suspect days reviewed as real share issuance)
 _services.py  launchd plist (com.collective-alpha.vinculum.build)
 cik_overrides.csv, basis_overrides.csv   manual corrections, one documented row each
 ```
@@ -154,4 +160,7 @@ Invariants:
   fundamentals fall back only while the CIK in use has no fresh value. Never link by ticker alone.
 - Per-share values are converted with the security's own splits after their filing; never sum
   per-share quarters filed on different share bases without that conversion.
+- `suspect_splits` is a data check: it compares counts filed after the day. Never use it in a
+  signal. Fix a hit with a documented split row in Massive's identity overrides (or add it to
+  `_checks.NOT_SPLITS` once checked as share issuance); never by hiding the return.
 - Everything under the data root is derived: `vinculum build` may overwrite it all.
