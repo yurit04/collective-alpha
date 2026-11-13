@@ -12,6 +12,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "adaptation-matrix",
     "assimilation-trials",
     "borg-queen",
     "collective-alpha",
@@ -26,6 +27,27 @@ members = [
     "unicomplex",
     "unimatrix-zero",
     "vinculum",
+]
+
+[[package]]
+name = "adaptation-matrix"
+version = "0.1.0"
+source = { editable = "core/adaptation-matrix" }
+dependencies = [
+    { name = "massive-subspace-stream" },
+    { name = "polars" },
+    { name = "pyarrow" },
+    { name = "typer" },
+    { name = "vinculum" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "massive-subspace-stream", editable = "core/massive-subspace-stream" },
+    { name = "polars", specifier = ">=1.20" },
+    { name = "pyarrow", specifier = ">=18" },
+    { name = "typer", specifier = ">=0.12" },
+    { name = "vinculum", editable = "core/vinculum" },
 ]
 
 [[package]]
@@ -3050,6 +3072,7 @@ name = "subspace-probe"
 version = "0.1.0"
 source = { editable = "projects/subspace-probe" }
 dependencies = [
+    { name = "adaptation-matrix" },
     { name = "borg-queen" },
     { name = "edgar-cortical-node" },
     { name = "finra-sensor-array" },
@@ -3067,6 +3090,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "adaptation-matrix", editable = "core/adaptation-matrix" },
     { name = "borg-queen", editable = "core/borg-queen" },
     { name = "edgar-cortical-node", editable = "core/edgar-cortical-node" },
     { name = "finra-sensor-array", editable = "core/finra-sensor-array" },
@@ -3256,6 +3280,7 @@ name = "unicomplex"
 version = "0.1.0"
 source = { editable = "core/unicomplex" }
 dependencies = [
+    { name = "adaptation-matrix" },
     { name = "borg-queen" },
     { name = "edgar-cortical-node" },
     { name = "finra-sensor-array" },
@@ -3269,6 +3294,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "adaptation-matrix", editable = "core/adaptation-matrix" },
     { name = "borg-queen", editable = "core/borg-queen" },
     { name = "edgar-cortical-node", editable = "core/edgar-cortical-node" },
     { name = "finra-sensor-array", editable = "core/finra-sensor-array" },

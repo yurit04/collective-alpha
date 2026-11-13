@@ -93,6 +93,15 @@ class FakeRisk:
         return {"built_at": "2026-11-03T19:50:31", "last_month": self.last_month, "days": 3962} if self.built else {}
 
 
+class FakeAdaptation:
+    def __init__(self, days=0):
+        self.days = days
+
+    def status(self):
+        return {"days_done": self.days, "by_set": {"recent": self.days}, "last": "2026-11-03", "store_gb": 1.5,
+                "failed": []}
+
+
 class Broken:
     def status(self):
         raise FileNotFoundError("not built yet. Run: vinculum build")
@@ -100,7 +109,7 @@ class Broken:
 
 def _run(**kw):
     base = {"massive": FakeMassive(), "edgar": FakeEdgar(), "finra": FakeFinra(), "vinculum": FakeVinculum(),
-            "nanoprobe": FakeNanoprobe(), "risk": FakeRisk(), "now": NOW}
+            "nanoprobe": FakeNanoprobe(), "risk": FakeRisk(), "adaptation": FakeAdaptation(), "now": NOW}
     return collect(**{**base, **kw})
 
 
@@ -113,7 +122,8 @@ def test_everything_fresh(tmp_path):
     assert {k: v.state for k, v in c.items()} == {
         "massive/bars_day": "ok", "massive/bars_minute": "ok", "massive/stream": "ok", "edgar/facts": "ok",
         "edgar/series": "ok", "finra/short_interest": "ok", "finra/short_volume": "ok", "vinculum/market_cap": "ok",
-        "nanoprobe/summaries": "ok", "borg-queen/risk_model": "ok", "transwarp-conduit/orders": "info", "unicomplex/nightly_run": "info"}
+        "nanoprobe/summaries": "ok", "borg-queen/risk_model": "ok", "adaptation-matrix/costs": "info", "transwarp-conduit/orders": "info",
+        "unicomplex/nightly_run": "info"}
     assert c["massive/bars_day"].expected == "2026-11-03" and c["massive/bars_day"].last == "2026-11-03"
     text = render(list(c.values()), NOW)
     assert "everything is as fresh" in text and "collective status at 2026-11-04 10:00 ET" in text
@@ -191,3 +201,10 @@ def test_cli_exit_code(monkeypatch):
     monkeypatch.setattr(cli, "collect", lambda: [Check("edgar", "series", "stale", None, "current", "rebuild")])
     r = CliRunner().invoke(cli.app, ["status", "--json"])
     assert r.exit_code == 1 and '"state": "stale"' in r.output
+
+
+def test_cost_archive_is_context_only():
+    c = by_name(_run(conduit_root="/x"))["adaptation-matrix/costs"]
+    assert c.state == "info" and "adapt run" in c.detail
+    c = by_name(_run(adaptation=FakeAdaptation(days=3), conduit_root="/x"))["adaptation-matrix/costs"]
+    assert c.state == "info" and c.last == "2026-11-03" and "3 days (recent 3)" in c.detail

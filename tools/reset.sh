@@ -5,6 +5,8 @@
 #   tools/reset.sh                      # stop jobs, list the stores with sizes, ask, delete
 #   tools/reset.sh --yes                # no question (scripts)
 #   tools/reset.sh --include-journal    # also delete the transwarp-conduit journal (order sheets, fills)
+#   tools/reset.sh --include-archive    # also delete the adaptation-matrix cost archive (from trades and
+#                                       # quotes the Massive plan may no longer download)
 #   tools/reset.sh --force              # stop collective processes still running (a backfill, a run)
 #
 # Jobs: on macOS every ~/Library/LaunchAgents/com.collective-alpha.*.plist (the nightly run, the
@@ -21,15 +23,16 @@ UV=$(command -v uv || echo "$HOME/.local/bin/uv")
 OS=$(uname -s)
 CRON_TAG="# collective-alpha"
 ROOTS_ENV="$HOME/.config/collective-alpha/roots.env"
-TOOLS="subspace|cortical|sensor|vinculum|nanoprobe|queen|conduit|collective"
+TOOLS="subspace|cortical|sensor|vinculum|nanoprobe|queen|conduit|adapt|collective"
 
-YES=0 DRY=0 JOURNAL=0 FORCE=0
-usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; }
+YES=0 DRY=0 JOURNAL=0 ARCHIVE=0 FORCE=0
+usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; }
 while [ $# -gt 0 ]; do
     case "$1" in
         -y|--yes) YES=1 ;;
         -n|--dry-run) DRY=1 ;;
         --include-journal) JOURNAL=1 ;;
+        --include-archive) ARCHIVE=1 ;;
         -f|--force) FORCE=1 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -152,6 +155,10 @@ while IFS="$(printf '\t')" read -r name kind _env path; do
     size=$(du -sh "$path" 2>/dev/null | cut -f1)
     if [ "$kind" = journal ] && [ "$JOURNAL" = 0 ]; then
         printf '  %-11s %-8s %s  (kept: trading journal; --include-journal deletes it)\n' "$name" "$size" "$path"
+        continue
+    fi
+    if [ "$kind" = archive ] && [ "$ARCHIVE" = 0 ]; then
+        printf '  %-11s %-8s %s  (kept: cost archive, cannot be re-downloaded on a smaller plan; --include-archive deletes it)\n' "$name" "$size" "$path"
         continue
     fi
     kb=$(du -sk "$path" 2>/dev/null | cut -f1)

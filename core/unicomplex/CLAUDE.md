@@ -1,4 +1,4 @@
-# unicomplex (core, depends on massive-subspace-stream, edgar-cortical-node, finra-sensor-array, vinculum, nanoprobe-array, borg-queen, transwarp-conduit)
+# unicomplex (core, depends on massive-subspace-stream, edgar-cortical-node, finra-sensor-array, vinculum, nanoprobe-array, borg-queen, transwarp-conduit, adaptation-matrix)
 
 Orchestration: `collective run` (every nightly sync and build in order, one lock, one log) and
 `collective status` (a read-only freshness report over the data stores).
@@ -8,14 +8,14 @@ User docs: README.md in this folder. Design: docs/decisions/0012-unicomplex.md (
 
 | Name | Use |
 |---|---|
-| `collect(massive=None, edgar=None, finra=None, vinculum=None, risk=None, conduit_root=None, now=None, runner=None, nanoprobe=None)` | every check as `list[Check]`; stores default to each package's configured one (`Nanoprobe` on the same Massive store), `runner` to `Runner()` |
+| `collect(massive=None, edgar=None, finra=None, vinculum=None, risk=None, conduit_root=None, now=None, runner=None, nanoprobe=None, adaptation=None)` | every check as `list[Check]`; stores default to each package's configured one (`Nanoprobe` on the same Massive store), `runner` to `Runner()` |
 | `Check` | source, name, state (ok / stale / info / missing), last, expected, detail; `.to_dict()` |
 | `render(checks, now=None)` | the table with a verdict line |
 | `STATES` | the four states |
 | `Runner(settings=None, steps=STEPS, execute=None, clock=None, sleep=time.sleep, resolve=executable)` | `.run(only, skip, force, dry_run, echo, quiet) -> RunResult`, `.plan(only, skip)`, `.history(n)`, `.last(full=True)`, `.running()` |
 | `STEPS` / `Step` | the nightly steps in order: name, command, busy_exit, note, timeout_minutes (awake time; 0 = none) |
 | `RunResult` / `StepResult` | run status (ok / failed / skipped / locked / interrupted / dry-run), steps (ok / failed / busy / timeout / interrupted), log; `.exit_code`, `.failed` |
-| `roots()` / `Root` | every store's root as its package resolves it (settings, collective.toml, `*_DATA_ROOT`): name, kind (`data`, or `journal` for transwarp-conduit), env, path; `.to_dict()`. Creates nothing |
+| `roots()` / `Root` | every store's root as its package resolves it (settings, collective.toml, `*_DATA_ROOT`): name, kind (`data`; `archive` for adaptation-matrix, which a smaller Massive plan cannot rebuild; `journal` for transwarp-conduit), env, path; `.to_dict()`. Creates nothing |
 | `load_settings()` / `Settings` / `ConfigError` | data_root (`UNICOMPLEX_DATA_ROOT`, default ~/market_data/unicomplex), run_hour/minute, busy retry and wait minutes, skip_if_ok_hours, step_timeout_minutes (per step), ready_by ("09:00"), notify (true); `[unicomplex]` in collective.toml |
 
 CLI: `collective status [--json]` (exit 1 when anything is stale or missing),
@@ -28,7 +28,7 @@ read by tools/reset.sh and tools/bootstrap.sh, so keep the columns),
 
 ```
 _checks.py    one function per source (massive_checks, edgar_checks, finra_checks, vinculum_checks,
-              nanoprobe_checks, risk_checks, conduit_checks, nightly_checks), the expectations,
+              nanoprobe_checks, risk_checks, adaptation_checks, conduit_checks, nightly_checks), the expectations,
               collect(), render(), to_json()
 _config.py    settings
 _runner.py    Step, STEPS, Runner (lock, per-run log, runs.jsonl, busy retries, skip-if-recent,

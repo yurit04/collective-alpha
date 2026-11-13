@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -146,6 +147,59 @@ class Ingestor:
         if self._rest is None:
             self._rest = RestClient(self.settings.require_api_key(), self.settings.rest_url)
         return self._rest
+
+    # ------------------------------------------------------------------ tick files for other packages
+    def tick_files(self, kind: str, start: Any, end: Any = None) -> list[tuple[date, int]]:
+        """(day, compressed bytes) of every trades or quotes flat file between start and end that
+        the plan can download. Lists only; nothing is fetched or stored."""
+        spec = self._tick_spec(kind)
+        start_d = to_date(start)
+        end_d = to_date(end) or start_d
+        if spec.name not in self.settings.plan_info.flat_datasets:
+            return []
+        horizon = self.settings.history_start()
+        if horizon and start_d < horizon:
+            start_d = horizon
+        if end_d < start_d:
+            return []
+        return [(f.day, f.size) for f in self.flat_client.list_files(spec.s3_dir, start_d, end_d)]
+
+    def download_ticks(self, kind: str, day: Any, dest_dir: Path | str) -> Path | None:
+        """Download one day's trades or quotes flat file (.csv.gz) into `dest_dir`, outside the
+        store: nothing is catalogued and the writer lock is not taken, so a long job built on it
+        never blocks the nightly sync. The caller owns (and deletes) the file. None when there is
+        no file for that day; raises ValueError when the plan cannot download it."""
+        spec = self._tick_spec(kind)
+        day_d = to_date(day)
+        plan = self.settings.plan_info
+        if spec.name not in plan.flat_datasets:
+            raise ValueError(f"{kind} is not included in the Massive {plan.name} plan")
+        horizon = self.settings.history_start()
+        if horizon and day_d < horizon:
+            raise ValueError(f"{day_d} is before {horizon}, outside the {plan.name} plan's history")
+        files = self.flat_client.list_files(spec.s3_dir, day_d, day_d)
+        if not files:
+            return None
+        f = files[0]
+        dest = Path(dest_dir).expanduser() / f"{kind}-{day_d.isoformat()}.csv.gz"
+        if not (dest.exists() and dest.stat().st_size == f.size):
+            self.flat_client.download(f.key, dest)
+        return dest
+
+    @staticmethod
+    def convert_ticks(kind: str, src: Path | str, dest: Path | str, tickers: Iterable[str] | None = None) -> int:
+        """Convert a downloaded trades/quotes .csv.gz into Parquet at `dest` in the store's tick
+        schema (see `Store.trades` / `Store.quotes`), streaming with bounded memory; rows keep the
+        file's order (ticker, then time). Returns the number of rows written."""
+        if kind not in ("trades", "quotes"):
+            raise ValueError("kind must be 'trades' or 'quotes'")
+        return convert_ticks(kind, Path(src), Path(dest), tickers)
+
+    @staticmethod
+    def _tick_spec(kind: str) -> FlatSpec:
+        if kind not in ("trades", "quotes"):
+            raise ValueError("kind must be 'trades' or 'quotes'")
+        return FLAT_DATASETS[kind]
 
     # ------------------------------------------------------------------ flat files
     @_exclusive

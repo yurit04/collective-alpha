@@ -142,3 +142,8 @@ AUM, studies in a new project `assimilation-trials`.
   (from 2010) +2.1% gross, -14.3% net. Break-even costs are 0.4-1.6 bp per unit traded (none
   for the breakout); the model charges 0.85-1.2 bp on SPY and 3.5 bp on the top 500, so phase
   3's measured costs decide whether any of it is tradable.
+
+*Update 2026-11-11:* phase 3 moved to a new core package, `adaptation-matrix` (decision 0016):
+the measures feed unimatrix-zero as well, which cannot depend on tactical-cube, and the data
+had to be harvested before the Massive plan loses trades and quotes. Replacing tactical-cube's
+time-of-day multipliers with the measured profiles is part of 0016's phase 2.

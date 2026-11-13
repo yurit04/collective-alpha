@@ -9,7 +9,8 @@ from unicomplex import roots
 from unicomplex.cli import app
 
 VARS = ("SUBSPACE_DATA_ROOT", "EDGAR_DATA_ROOT", "FINRA_DATA_ROOT", "VINCULUM_DATA_ROOT",
-        "NANOPROBE_DATA_ROOT", "BORG_QUEEN_DATA_ROOT", "TRANSWARP_DATA_ROOT", "UNICOMPLEX_DATA_ROOT")
+        "NANOPROBE_DATA_ROOT", "BORG_QUEEN_DATA_ROOT", "ADAPTATION_DATA_ROOT", "TRANSWARP_DATA_ROOT",
+        "UNICOMPLEX_DATA_ROOT")
 
 
 def _point_everything_at(tmp_path, monkeypatch):
@@ -21,13 +22,14 @@ def test_every_store_follows_its_own_variable(tmp_path, monkeypatch):
     _point_everything_at(tmp_path, monkeypatch)
     found = roots()
     assert [r.name for r in found] == ["massive", "edgar", "finra", "vinculum", "nanoprobe", "queen",
-                                       "conduit", "unicomplex"]
+                                       "adaptation", "conduit", "unicomplex"]
     assert {r.env for r in found} == set(VARS)
     for r in found:
         assert r.path == (tmp_path / r.env.lower()).resolve()
         assert not r.path.exists()                      # resolving creates nothing
     assert {r.name: r.kind for r in found}["conduit"] == "journal"
-    assert {r.kind for r in found if r.name != "conduit"} == {"data"}
+    assert {r.name: r.kind for r in found}["adaptation"] == "archive"
+    assert {r.kind for r in found if r.name not in ("conduit", "adaptation")} == {"data"}
 
 
 def test_defaults_live_under_market_data(monkeypatch, tmp_path):

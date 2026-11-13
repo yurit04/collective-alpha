@@ -109,6 +109,7 @@ can act on it. It only reads.
 | vinculum | `market_cap` | the panel runs through the last completed session (`vinculum build` after the syncs) |
 | nanoprobe | `summaries` | the daily intraday summaries reach the last completed session (`nanoprobe build` after vinculum); the detail says when they trail the minute bars |
 | borg-queen | `risk_model` | the last month end in the model is within 45 days (rebuilt by the nightly run) |
+| adaptation-matrix | `costs` | informational: days of trades and quotes measured, by set, and the store's size (built once with `adapt run`, not nightly) |
 | transwarp-conduit | `orders` | informational: the last order sheet and its status, fills journaled (read from the journal, no Gateway connection) |
 | unicomplex | `nightly_run` | the last full `collective run` after the latest scheduled time (Tue-Sat 06:30, 15 minutes' grace) succeeded and finished by `ready_by` (09:00); stale while one is still running past it; info while one is running before it, or before the first |
 

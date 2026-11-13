@@ -1,5 +1,5 @@
 import gzip
-from datetime import date
+from datetime import date, timedelta
 
 import polars as pl
 import pyarrow.parquet as pq
@@ -165,3 +165,25 @@ def test_one_writing_job_at_a_time(settings):
     r = second.flat("bars_day", "2024-01-01", "2024-01-05")                    # free again
     assert (r.done, r.skipped) == (1, 1)                                       # first's day is stored
     assert (second.layout.run_dir / "writer.lock").read_text() == ""
+
+
+def test_download_and_convert_ticks_outside_the_store(settings, tmp_path):
+    ing, flat = make_ingestor(settings)
+    header = "ticker,conditions,correction,exchange,id,participant_timestamp,price,sequence_number,sip_timestamp,size,tape,trf_id,trf_timestamp"
+    body = "\n".join(f"{t},,0,4,{i},1,{p},{i},1793260802928367158,1,1,,0"
+                     for i, (t, p) in enumerate([("AAPL", 1.0), ("MSFT", 2.0)]))
+    flat.add("trades_v1", D1, gzip.compress((header + "\n" + body + "\n").encode()))
+    key = next(k for k in flat.files if "/trades_v1/" in k)
+    assert ing.tick_files("trades", D1) == [(D1, len(flat.files[key]))]
+    assert ing.tick_files("quotes", D1) == []
+    work = tmp_path / "work"
+    raw = ing.download_ticks("trades", D1, work)
+    assert raw.parent == work and raw.exists()
+    assert ing.download_ticks("trades", D1 + timedelta(days=1), work) is None
+    rows = Ingestor.convert_ticks("trades", raw, work / "t.parquet", tickers=["MSFT"])
+    assert rows == 1 and pl.read_parquet(work / "t.parquet")["ticker"].to_list() == ["MSFT"]
+    # Nothing was catalogued and nothing landed in the store.
+    assert ing.catalog.get("trades", D1.isoformat()) is None
+    assert not ing.layout.ticks_file("trades", D1).exists()
+    with pytest.raises(ValueError):
+        ing.download_ticks("bars_day", D1, work)

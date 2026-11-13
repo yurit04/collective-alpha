@@ -16,8 +16,9 @@ from ._config import ENV_ROOT, load_settings
 
 @dataclass(frozen=True)
 class Root:
-    name: str      # massive, edgar, finra, vinculum, nanoprobe, queen, conduit, unicomplex
-    kind: str      # "data" (rebuildable from the sources) or "journal" (order sheets and fills)
+    name: str      # massive, edgar, finra, vinculum, nanoprobe, queen, adaptation, conduit, unicomplex
+    kind: str      # "data" (rebuildable from the sources), "archive" (measured from data the plan may no
+                   # longer download: adaptation-matrix) or "journal" (order sheets and fills)
     env: str       # the variable that moves it
     path: Path
 
@@ -27,7 +28,9 @@ class Root:
 
 
 def roots() -> list[Root]:
-    """Every store, in the order the nightly run fills them, then the journal and the run log."""
+    """Every store, in the order the nightly run fills them, then the archive, the journal and the
+    run log."""
+    import adaptation_matrix
     import borg_queen
     import edgar_cortical_node
     import finra_sensor_array
@@ -47,6 +50,7 @@ def roots() -> list[Root]:
         ("nanoprobe", "data", nanoprobe_array.ENV_ROOT,
          env_or(nanoprobe_array.ENV_ROOT, "~/market_data/nanoprobe_array")),
         ("queen", "data", borg_queen.ENV_ROOT, env_or(borg_queen.ENV_ROOT, "~/market_data/borg_queen")),
+        ("adaptation", "archive", "ADAPTATION_DATA_ROOT", adaptation_matrix.load_settings().data_root),
         ("conduit", "journal", transwarp_conduit.ENV_ROOT, transwarp_conduit.load_settings().data_root()),
         ("unicomplex", "data", ENV_ROOT, load_settings().data_root),
     ]

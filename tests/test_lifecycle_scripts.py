@@ -20,7 +20,7 @@ UNITS = sorted((ROOT / "tools" / "systemd").iterdir())
 BASH = shutil.which("bash")
 VARS = {"massive": "SUBSPACE_DATA_ROOT", "edgar": "EDGAR_DATA_ROOT", "finra": "FINRA_DATA_ROOT",
         "vinculum": "VINCULUM_DATA_ROOT", "nanoprobe": "NANOPROBE_DATA_ROOT", "queen": "BORG_QUEEN_DATA_ROOT",
-        "conduit": "TRANSWARP_DATA_ROOT", "unicomplex": "UNICOMPLEX_DATA_ROOT"}
+        "conduit": "TRANSWARP_DATA_ROOT", "unicomplex": "UNICOMPLEX_DATA_ROOT", "adaptation": "ADAPTATION_DATA_ROOT"}
 
 pytestmark = pytest.mark.skipif(not BASH or not shutil.which("uv"), reason="needs bash and uv")
 
@@ -67,12 +67,14 @@ def test_reset_deletes_the_stores_and_the_folder_left_with_only_finder_litter(tm
     data = home / "market_data"
     (data / "massive" / "bars").mkdir(parents=True)
     (data / "conduit").mkdir()
+    (data / "adaptation").mkdir()
     (data / ".DS_Store").write_bytes(b"x")
     monkeypatch.setenv("HOME", str(home))
     res = run(RESET, "--yes", tmp=data)
     assert res.returncode == 0, res.stderr
     assert not (data / "massive").exists() and (data / "conduit").exists()   # the journal stays
-    res = run(RESET, "--yes", "--include-journal", tmp=data)
+    assert (data / "adaptation").exists()                                    # and the cost archive
+    res = run(RESET, "--yes", "--include-journal", "--include-archive", tmp=data)
     assert res.returncode == 0, res.stderr
     assert not data.exists()                                                 # .DS_Store did not keep it
 

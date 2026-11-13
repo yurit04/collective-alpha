@@ -12,6 +12,7 @@ dependencies = [
     "nanoprobe-array",
     "borg-queen",
     "transwarp-conduit",
+    "adaptation-matrix",
     "polars>=1.0",
     "typer>=0.12",
 ]
@@ -27,6 +28,7 @@ vinculum = { workspace = true }
 nanoprobe-array = { workspace = true }
 borg-queen = { workspace = true }
 transwarp-conduit = { workspace = true }
+adaptation-matrix = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

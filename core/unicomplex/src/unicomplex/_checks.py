@@ -180,6 +180,19 @@ def risk_checks(risk, today: date) -> list[Check]:
 
 
 # ---------------------------------------------------------------------------- execution
+# ---------------------------------------------------------------------------- cost archive
+def adaptation_checks(matrix) -> list[Check]:
+    """The cost archive is built once (`adapt run`), not nightly: shown for context."""
+    st = matrix.status()
+    if not st.get("days_done"):
+        return [Check("adaptation-matrix", "costs", "info", detail="no days measured yet (`adapt plan`, `adapt run`)")]
+    sets = ", ".join(f"{k} {v}" for k, v in sorted((st.get("by_set") or {}).items()))
+    detail = f"{st['days_done']} days ({sets}), {st.get('store_gb', 0):.1f} GB"
+    if st.get("failed"):
+        detail += f"; {len(st['failed'])} failed (`adapt status`)"
+    return [Check("adaptation-matrix", "costs", "info", _iso(_date(st.get("last"))), None, detail)]
+
+
 def conduit_checks(root: Path) -> list[Check]:
     from transwarp_conduit import Journal, OrderSheet
 
@@ -271,7 +284,7 @@ def nightly_checks(runner, now: datetime, tz=None) -> list[Check]:
 
 # ---------------------------------------------------------------------------- all together
 def collect(massive=None, edgar=None, finra=None, vinculum=None, risk=None, conduit_root: Path | str | None = None,
-            now: datetime | None = None, runner=None, nanoprobe=None) -> list[Check]:
+            now: datetime | None = None, runner=None, nanoprobe=None, adaptation=None) -> list[Check]:
     """Every check. Stores default to each package's configured one, `runner` to the nightly
     `Runner`; pass fakes in tests. `now` (UTC) defaults to the current time."""
     now = now or datetime.now(UTC)
@@ -318,6 +331,11 @@ def collect(massive=None, edgar=None, finra=None, vinculum=None, risk=None, cond
 
         return risk_checks(risk if risk is not None else RiskModel(), today)
 
+    def _adaptation():
+        from adaptation_matrix import AdaptationMatrix
+
+        return adaptation_checks(adaptation if adaptation is not None else AdaptationMatrix(store=store))
+
     def _conduit():
         from transwarp_conduit import load_settings
 
@@ -335,6 +353,7 @@ def collect(massive=None, edgar=None, finra=None, vinculum=None, risk=None, cond
 
         return nightly_checks(runner if runner is not None else Runner(), now)
 
+    checks += _guard("adaptation-matrix", "costs", _adaptation)
     checks += _guard("transwarp-conduit", "orders", _conduit)
     checks += _guard("unicomplex", "nightly_run", _nightly)
     return checks

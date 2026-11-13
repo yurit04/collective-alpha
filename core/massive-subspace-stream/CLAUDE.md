@@ -9,7 +9,7 @@ User docs: README.md in this folder.
 |---|---|
 | `Store(root=None, settings=None)` | all reads; see below |
 | `load_settings(config_file=None, **overrides)` / `Settings` | resolved configuration |
-| `Ingestor(settings)` | `.flat(dataset, start, end, tickers)`, `.rest(names, full)`, `.rest_defaults()`, `.initial()`, `.sync()`, `.verify()` -> {missing, broken, unrepairable}, `.identity(fetch)` |
+| `Ingestor(settings)` | `.flat(dataset, start, end, tickers)`, `.rest(names, full)`, `.rest_defaults()`, `.initial()`, `.sync()`, `.verify()` -> {missing, broken, unrepairable}, `.identity(fetch)`; for other packages' tick jobs: `.tick_files(kind, start, end)` -> [(day, bytes)], `.download_ticks(kind, day, dest_dir)` -> .csv.gz path, `.convert_ticks(kind, src, dest, tickers)` -> rows |
 | `StreamService(settings, channels, watchlist, watch_channels)` | `await .run()`; prefer the CLI |
 | `ConfigError`, `BusyError`, `JobResult` | errors (BusyError: another job holds the writer lock) / job summaries |
 
@@ -67,6 +67,8 @@ Invariants:
 - One writing job per data root: Ingestor's flat, rest, initial, sync, identity and verify
   --repair hold `_run/writer.lock` (`Ingestor.writer`, reentrant); a second job raises BusyError
   (CLI exit 2) before touching anything. New writing jobs take it too. The stream has its own lock.
+  `download_ticks` writes only to the caller's folder, catalogues nothing and takes no lock, so
+  a multi-day tick job in another package never blocks the nightly sync; it still obeys the plan.
 - Stored prices are unadjusted; adjustment happens in `_adjust.py` at query time.
 - Timestamps are UTC ns; `date` is the US/Eastern trading date.
 - Minute bars exclude the closing auction print; daily bars include it (verified with trades).

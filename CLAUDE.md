@@ -49,10 +49,11 @@ Current core graph:
 | `transwarp-conduit` | Execution through Interactive Brokers: IB contract mapping, order sheets with limits, paper-first MOC orders, journal, reconciliation | unimatrix-zero, massive-subspace-stream |
 | `nanoprobe-array` | Intraday: regular-session bar clock, minute bars resampled with gap rules, auction prices, per-bar features, daily intraday summaries store | massive-subspace-stream, vinculum |
 | `tactical-cube` | Intraday backtests: decisions at bar ends, lagged VWAP or auction fills, participation caps, flat-by times or overnight holds, intraday costs, look-ahead check; daily output in unimatrix-zero's format | nanoprobe-array, unimatrix-zero, vinculum |
-| `unicomplex` | Orchestration: `collective run`, every nightly sync and build in order under one lock and log (one launchd job); `collective status`, a read-only freshness report over the data stores; `collective roots`, every store's root (read by tools/bootstrap.sh and reset.sh) | massive-subspace-stream, edgar-cortical-node, finra-sensor-array, vinculum, nanoprobe-array, borg-queen, transwarp-conduit |
+| `adaptation-matrix` | Transaction costs from trades and NBBO quotes, measured on a schedule of days before the plan loses them: quoted, effective and realized half-spreads, price impact, the close against the quote, minute quotes and signed flow, matched trades of the largest names (an archive) | massive-subspace-stream, vinculum |
+| `unicomplex` | Orchestration: `collective run`, every nightly sync and build in order under one lock and log (one launchd job); `collective status`, a read-only freshness report over the data stores; `collective roots`, every store's root (read by tools/bootstrap.sh and reset.sh) | massive-subspace-stream, edgar-cortical-node, finra-sensor-array, vinculum, nanoprobe-array, borg-queen, transwarp-conduit, adaptation-matrix |
 
 Planned (not built):
-intraday cost calibration from quotes and trades (decision 0014 phase 3),
+cost calibration from adaptation-matrix's measures (decision 0016 phase 2, also 0014 phase 3),
 `transwarp-conduit` phases 2-3 (cost calibration, live).
 
 ## Commands
@@ -69,6 +70,7 @@ uv run sensor --help                   # FINRA short data (see core/finra-sensor
 uv run queen --help                    # risk model (see core/borg-queen/README.md)
 uv run conduit --help                  # IB execution (see core/transwarp-conduit/README.md)
 uv run nanoprobe --help                # intraday bars, features, daily intraday summaries (core/nanoprobe-array/README.md)
+uv run adapt plan                      # cost measurement days and download size (core/adaptation-matrix/README.md)
 uv run collective status               # are the stores as fresh as the schedule allows? (core/unicomplex/README.md)
 uv run collective run --dry-run        # the nightly steps in order (`run` runs them; `runs` shows history)
 uv run collective roots                # where every store lives (as each package resolves it)
@@ -93,10 +95,13 @@ tools/reset.sh --dry-run               # what a reset would stop and delete
 - Credentials live in environment variables / `~/.massive.env`. Never print, log, or commit
   them, and never put them in `collective.toml` (the code rejects that).
 - Do not delete anything under the data root without asking. `tools/reset.sh` deletes every store:
-  run it only with `--dry-run` unless the user asks for a reset in so many words.
+  run it only with `--dry-run` unless the user asks for a reset in so many words. Never pass
+  `--include-archive`: the adaptation-matrix store cannot be rebuilt once the plan lacks trades
+  and quotes.
 - Ask before starting long or large jobs: `backfill initial`, minute-bar history, any
   `trades`/`quotes` download without `--symbols` (3–9 GB per day), `cortical backfill` /
   `cortical profiles` (1.4 / 1.6 GB), `sensor backfill short-volume` (~13,000 files, ~3 GB),
+  `adapt run` (trades and quotes, ~14 GB a day downloaded; the full schedule ~2.6 TB, ~2 days),
   `service install` (any package, including `collective service install`), `collective run`
   (the whole nightly sequence, about 15 minutes) or `tools/bootstrap.sh` without `--dry-run`
   (all of the above, hours and ~150 GB).
