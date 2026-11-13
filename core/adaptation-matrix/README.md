@@ -7,7 +7,8 @@ has them. This package downloads a schedule of days, measures each one, keeps co
 deletes the raw files: a few hundred GB of results from several TB of downloads. The tables
 calibrate the cost models of the daily backtester (unimatrix-zero), the optimizer (borg-queen),
 the intraday backtester (tactical-cube) and execution (transwarp-conduit). Design:
-[decision 0016](../../docs/decisions/0016-adaptation-matrix.md).
+[decision 0016](../../docs/decisions/0016-adaptation-matrix.md); the cost model fitted on it:
+[decision 0017](../../docs/decisions/0017-cost-calibration.md).
 
 ## What is measured
 
@@ -66,6 +67,35 @@ m.daily("AAPL", "2026-06-01", "2026-11-10")              # one row per measured 
 m.buckets(["SPY", "AAPL"], "2026-11-10", minutes=30)     # spreads and impact by time of day
 m.trades("MSFT", "2026-11-10")                           # matched trades of a kept name
 ```
+
+## The cost model fitted on it
+
+```bash
+uv run adapt calibrate                 # fit, validate on the last 6 months, print; ~10 s
+uv run adapt calibrate --refresh       # rebuild the inputs first (~3 minutes)
+```
+
+```python
+cal = AdaptationMatrix().calibrate()
+cal.spread                             # effective half-spread: ADV and volatility slopes, level by year
+cal.validation                         # held out: fitted and former rule against measured, by ADV
+cal.close, cal.impact, cal.tod_pairs()
+```
+
+The spread formula uses only what daily bars give (21-day dollar volume, 63-day volatility, the
+year), so backtests can use it after trades and quotes are gone. Its numbers ship as
+unimatrix-zero's `SPREAD_FIT` (the default `CostModel` spread) and tactical-cube's time-of-day
+multipliers:
+
+| ADV ($ a day, 2% vol, 2025) | $10M | $100M | $1B | $10B |
+|---|---|---|---|---|
+| fitted effective half-spread | 7.1 bp | 3.1 bp | 1.3 bp | 0.6 bp |
+| former volume rule | 9.5 bp | 3.0 bp | 0.95 bp | 0.5 bp |
+
+Out of sample (May-November 2026) the fit is within 5-15% of measured costs in every ADV bucket
+(dollar-weighted); the former rule undercharged names over $100M a day by 37-62%. Index ETFs are
+not covered: SPY's effective half-spread is 0.12 bp, flat through the day. Details and plots:
+`projects/subspace-probe/notebooks/adaptation-matrix/01_calibration.ipynb`.
 
 ## Settings
 

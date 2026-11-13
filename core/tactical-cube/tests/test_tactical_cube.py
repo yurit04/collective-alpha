@@ -159,7 +159,7 @@ def test_intraday_costs():
                           "adv": [1e8, 1e8, 1e8], "vol": [0.02, 0.02, 0.02],
                           "decision_time": [T0, T0 + timedelta(minutes=55), None]})
     c = IntradayCosts(base=CostModel(spread=2.0), aum=1e6).apply(fills, 1e6)
-    assert c["spread_bps"].to_list() == pytest.approx([6.0, 2.0, 0.0])        # x3 in the first 5 minutes
+    assert c["spread_bps"].to_list() == pytest.approx([7.42, 2.04, 0.0])      # measured: x3.71 in minute 0, x1.02 at 60-120
     assert c["commission_bps"][0] == pytest.approx(3.5 / 50_000 * 1e4)        # $0.0035 x 1000 shares
     assert c["commission_bps"][1] == pytest.approx(0.35 / 500 * 1e4)          # the $0.35 minimum
     assert c["impact_bps"][0] == pytest.approx(0.02 * (50_000 / 1e8) ** 0.5 * 1e4)

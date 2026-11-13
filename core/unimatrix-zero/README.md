@@ -84,7 +84,7 @@ capital). Each returns date, security_id, weight, sector, issuer_market_cap.
 
 | Cost | Default |
 |---|---|
-| half-spread | `spread="volume"`: 30 bp x (ADV in $M)^-0.5, clipped to [0.5, 200] bp; about 1 bp at $1B a day, 3 bp at $100M, 10 bp at $10M |
+| half-spread | `spread="fitted"`: the effective half-spread measured from trades and quotes (adaptation-matrix, decision 0017), from 21-day dollar volume, 63-day volatility and the trade's year; about 1.3 bp at $1B a day, 3.1 bp at $100M, 7.1 bp at $10M (2% daily volatility, 2025), clipped to [0.5, 200] bp |
 | commission | 1 bp per trade |
 | market impact | only with `aum`: 1.0 x daily vol x sqrt(trade $ / ADV $) |
 | borrow | 25 bp a year on short value; 300 bp when short interest > 20% of float |
@@ -95,7 +95,19 @@ cap inflated by a wrong share count or ADS ratio puts a tiny company into a size
 `Backtest.cost_warnings` lists them with ticker, dollar volume and the cost split; report data
 problems to vinculum rather than filtering them here.
 
-`spread="estimate"` uses the Abdi-Ranaldo estimate instead. It is noisy for liquid stocks:
+The fit (`SPREAD_FIT`) has a level per year from 2003 (2.3-3.5 bp at $100M a day) and a
+volatility slope of 0.62: a stock twice as volatile pays about 1.5 times the spread. Held out on
+the last six months it is within 5-15% of measured costs in every size bucket
+(dollar-weighted). It was fitted on stocks: index ETFs trade far tighter (SPY 0.12 bp against
+the 0.5 bp floor), so give an ETF its measured spread as a number.
+
+`auction=True` models fills as market-on-close orders: no half-spread, because the official
+close is the fill and the mark (measured: 0 bp from the pre-close mid, median, every size);
+commission and impact remain. Off by default: without an AUM it makes closing trades nearly
+free however thin the auction.
+
+`spread="volume"` is the former rule, 30 bp x (ADV in $M)^-0.5 (it undercharged names over
+$100M a day by 37-62%). `spread="estimate"` uses the Abdi-Ranaldo estimate instead. It is noisy for liquid stocks:
 about half of large caps read 0 and the rest 10-40 bp, which roughly triples costs. A number
 gives a fixed half-spread in bp. `NO_COSTS` turns everything off.
 

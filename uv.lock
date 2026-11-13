@@ -35,18 +35,22 @@ version = "0.1.0"
 source = { editable = "core/adaptation-matrix" }
 dependencies = [
     { name = "massive-subspace-stream" },
+    { name = "numpy" },
     { name = "polars" },
     { name = "pyarrow" },
     { name = "typer" },
+    { name = "unimatrix-zero" },
     { name = "vinculum" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "massive-subspace-stream", editable = "core/massive-subspace-stream" },
+    { name = "numpy", specifier = ">=1.26" },
     { name = "polars", specifier = ">=1.20" },
     { name = "pyarrow", specifier = ">=18" },
     { name = "typer", specifier = ">=0.12" },
+    { name = "unimatrix-zero", editable = "core/unimatrix-zero" },
     { name = "vinculum", editable = "core/vinculum" },
 ]
 
@@ -166,6 +170,7 @@ name = "assimilation-trials"
 version = "0.1.0"
 source = { editable = "projects/assimilation-trials" }
 dependencies = [
+    { name = "adaptation-matrix" },
     { name = "ipykernel" },
     { name = "matplotlib" },
     { name = "nanoprobe-array" },
@@ -176,6 +181,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "adaptation-matrix", editable = "core/adaptation-matrix" },
     { name = "ipykernel", specifier = ">=6.29" },
     { name = "matplotlib", specifier = ">=3.9" },
     { name = "nanoprobe-array", editable = "core/nanoprobe-array" },

@@ -29,8 +29,8 @@ User docs: README.md in this folder. Design: docs/decisions/0009-borg-queen.md.
 - `attribute(weights)` -> daily total, one column per factor, specific, uncovered
 - `bias(weights)` -> date, forecast_vol, realized_vol, days, z_sq_mean
 
-`Optimizer.solve` needs `market` (security_id, adv, vol) whenever the CostModel uses volume
-spreads or an AUM; `Portfolio.build` supplies it. Use the same CostModel in the optimizer and in
+`Optimizer.solve` needs `market` (security_id, adv, vol) whenever the CostModel uses fitted or
+volume spreads or an AUM; `Portfolio.build` supplies it. Use the same CostModel in the optimizer and in
 `Engine.run`, and the same lag.
 
 CLI: `queen build | status | check`.

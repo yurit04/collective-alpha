@@ -52,6 +52,7 @@ the pace. One day hit a transient S3 403 and succeeded on retry. Store: 290 GB (
 minute 87, daily 1.3).
 
 ## Phase 2 (after the run): calibration
+*Done 2026-11-13: decision 0017.*
 - Daily spread model for unimatrix-zero's `CostModel` (and so borg-queen's optimizer): effective
   half-spread fitted on inputs that stay available on Starter (dollar volume, price with the
   one-cent tick floor, volatility, year), compared with the current volume rule and Abdi-Ranaldo

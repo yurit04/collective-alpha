@@ -29,7 +29,7 @@ book: names not in it go to 0.
 ## Internals (private)
 
 ```
-_costs.py      IntradayCosts (spread x time of day, sqrt impact, IB per share), NO_INTRADAY_COSTS
+_costs.py      IntradayCosts (spread x measured time-of-day profile, sqrt impact, IB per share), NO_INTRADAY_COSTS
 _sim.py        simulate_day on dense security x bar numpy arrays; schemas
 _aux.py        market_inputs, AuxCache (a year of summaries, split by date)
 _lookahead.py  check_lookahead

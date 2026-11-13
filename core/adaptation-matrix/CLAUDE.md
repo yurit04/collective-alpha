@@ -1,10 +1,11 @@
-# adaptation-matrix (core, depends on massive-subspace-stream, vinculum)
+# adaptation-matrix (core, depends on massive-subspace-stream, vinculum, unimatrix-zero)
 
 Transaction costs measured from Massive trades and NBBO quotes: quoted, effective and realized
 half-spreads, price impact, auctions against the quote, minute quotes and signed flow, and trades
 matched to the NBBO for the largest names. Built once from a schedule of days (the raw ticks are
 deleted after each day), because a smaller Massive plan cannot download trades and quotes again.
-User docs: README.md in this folder. Design: docs/decisions/0016-adaptation-matrix.md.
+It also fits the backtesters' cost models on them (`calibrate`). User docs: README.md in this
+folder. Design: docs/decisions/0016-adaptation-matrix.md, 0017-cost-calibration.md.
 
 ## Public API (`from adaptation_matrix import ...`)
 
@@ -15,6 +16,7 @@ User docs: README.md in this folder. Design: docs/decisions/0016-adaptation-matr
 | `measure_block(trades, quotes, open_ns, close_ns, interp, keep, official)` -> `DayBlock(minute, daily, trades)` | the measures for tick frames in massive-subspace-stream's schema (pure; used by the run and tests) |
 | `schedule(sessions, end, recent_months)` | the day plan as a frame (day, set, priority) |
 | `MEASURE_VERSION`, `RunResult`, `ConfigError`, `BusyError` | measure version stored per day / run summary / errors |
+| `Calibration`, `FittedSpread` | what `calibrate()` returns: `spread` (FittedSpread: adv_slope, vol_slope, knots, levels by year, `predict(adv, vol, year)`), `validation` (held-out period by ADV bucket, against the former volume rule), `close`, `impact`, `tod` (multiplier by segment start), `tod_pairs()` (tactical-cube's `tod`), `to_json()` |
 
 `AdaptationMatrix` methods (reads take `backend="polars"|"pandas"`, `by="ticker"|"security"`, `lazy`):
 - `daily(tickers, start, end)`: per measured day and ticker: `qhs_bps` (time-weighted quoted
@@ -36,10 +38,15 @@ User docs: README.md in this folder. Design: docs/decisions/0016-adaptation-matr
 - `days()`, `status()`: state per day (status, set, version, rows, GB, download/convert/measure s)
 - `schedule(end, recent_months)` -> day, set, priority, done; `estimate(sched, mb_per_s)` -> GB
   and hours per set and year (lists Massive's files; downloads nothing)
+- `calibration_inputs(engine=None, days=None, refresh=False)`: measured stock-days joined with
+  unimatrix-zero `Engine.returns` (adv, vol, raw_close, half_spread) and an asset class (stock,
+  etf, other); cached in `_calibration/inputs.parquet` (about 3 minutes to rebuild)
+- `calibrate(engine=None, test_start=None, tod_days=60, refresh=False, write=True)` ->
+  `Calibration`; writes `_calibration/calibration.json`
 - `run(end, sets, limit, days, on_day)` -> `RunResult`: download, measure, store, delete;
   resumable; long (ask first). `measure_stored(day)`: a day already in the Massive store
 
-CLI: `adapt plan [--days] | run [--sets --limit --day] | measure-stored DAY | status | show TICKER`.
+CLI: `adapt plan [--days] | run [--sets --limit --day] | measure-stored DAY | calibrate [--test-start --refresh] | status | show TICKER`.
 
 ## Internals (private)
 
@@ -49,6 +56,8 @@ _layout.py    paths, state.json, run lock, store size
 _clean.py     condition-code rules, usable quotes, matching time, interpolated time
 _measure.py   one block of tickers of one day -> minute, daily, matched trades
 _schedule.py  recent / monthly sample / event days and their order
+_calibrate.py inputs for the fits, spread fit (Poisson, year levels), validation, close, impact,
+              time-of-day profile, Calibration
 _run.py       Runner: downloader thread (one day ahead), convert, measure in ticker blocks,
               PartWriter (atomic per-table files), disk and store limits, state
 _store.py     AdaptationMatrix
@@ -74,3 +83,10 @@ Invariants:
   prints), so days without flagged auction prints still get them.
 - The store is an archive: `collective roots` marks it `archive`, and `tools/reset.sh` keeps it
   unless `--include-archive`.
+- The fits use only inputs a backtest has from daily bars on any plan (ADV, volatility, year), as
+  unimatrix-zero's `Engine.returns` computes them; never fit on a measure the backtester cannot
+  see. Stocks only (ETFs trade far tighter), stock-days with 20+ matched trades and
+  `outside_share` < 0.2.
+- `calibrate` reports; it changes nothing elsewhere. unimatrix-zero's `SPREAD_FIT` and
+  tactical-cube's `tod` default are copies of its output (`adapt calibrate` says whether
+  `SPREAD_FIT` still matches); update them together with decision 0017.

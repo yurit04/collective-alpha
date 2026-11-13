@@ -9,7 +9,8 @@ docs/decisions/0008-unimatrix-zero.md.
 |---|---|
 | `Engine(vinculum=None, store=None)` | `.run(weights, start, end, lag=1, costs, delisting, min_price, min_dollar_volume, market="SPY")` -> `Backtest`; `.returns(ids, start, end, delisting)`, `.market(start, end)`, `.forward_returns(panel, lag)`, `.ic(panel, cols, lag)`, `.quantile_returns(panel, col, n, lag)`, `.links()`, `.calendar(start, end)`, `.execution_dates(signal_dates, cal, lag)` (static; the one rule for signal date -> execution date, used by borg-queen too) |
 | `Backtest` | `.daily`, `.trades` (with spread_bps, impact_bps, adv, vol), `.weights`, `.market`, `.settings`, `.cost_warnings`, `.data_warnings` (held through a day vinculum's `suspect_splits` flags); `.summary()`, `.by_year()`, `.exposures()` |
-| `CostModel`, `NO_COSTS` | commission, spread ("volume" / "estimate" / bps), impact (with `aum`), borrow (GC / hard to borrow), `warn_bps` (cost warnings, default 100) |
+| `CostModel`, `NO_COSTS` | commission, spread ("fitted" default / "volume" / "estimate" / bps), `auction` (MOC fills: no spread), impact (with `aum`), borrow (GC / hard to borrow), `warn_bps` (cost warnings, default 100); `spread_cost(at)` / `unit_cost(trade, nav, at)` take the trade date (a date, year or date expression; None: the latest year) |
+| `SpreadFit`, `SPREAD_FIT` | the fitted effective half-spread (adaptation-matrix `adapt calibrate`, decision 0017): `bps(at, adv, vol)` expression, `level(at)`; years outside the fit take the nearest level |
 | `quantile_weights`, `rank_weights`, `top_n_weights`, `cap_weights` | signal panel -> weights (date, security_id, weight, sector, issuer_market_cap) |
 | `daily_returns(bars, links, calendar, delisting)` | the return panel builder |
 | `summary`, `by_year`, `exposures`, `stats` | analytics on a daily frame / weights |
@@ -19,7 +20,7 @@ docs/decisions/0008-unimatrix-zero.md.
 ```
 _returns.py    daily returns: successor splice, delisting rows, ADV, vol, Abdi-Ranaldo spread
 _weights.py    portfolio builders, orientation by SIGNALS direction, sector neutrality, caps
-_costs.py      CostModel
+_costs.py      CostModel, SpreadFit and SPREAD_FIT (numbers from `adapt calibrate`)
 _engine.py     Engine (period loop: rebalance from drifted weights, hold, borrow), screens, cache
 _analytics.py  statistics, by year, exposures
 ```
@@ -44,3 +45,6 @@ Invariants:
 - Successors: relabel weights and returns with neural_processor.relabel; returns across a link
   come from raw closes.
 - Sort before any shift or rolling window: polars joins do not keep row order.
+- `SPREAD_FIT` holds numbers fitted by adaptation-matrix (`adapt calibrate` says whether they
+  still match the archive). Change them only by refitting, and record why in decision 0017.
+  Pass the trade date to `spread_cost` wherever one exists, so history pays its own year's level.

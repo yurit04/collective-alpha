@@ -50,8 +50,11 @@ bt.round_trips()      # per security and day: gross, costs, net, minutes held
 
 `IntradayCosts(base=CostModel(...), aum=1e6)`:
 
-- half-spread from unimatrix-zero's `CostModel` (by dollar volume, or fixed bps), times a
-  time-of-day multiplier (3x in the first 5 minutes, 2x to 15, 1.5x to 30); 0 in the auctions
+- half-spread from unimatrix-zero's `CostModel` (fitted on measured costs from dollar volume,
+  volatility and the year, or fixed bps), times a measured time-of-day multiplier: 3.7x in the
+  first minute, 2.6x to 5, 1.75x to 15, 1.4x to 30, 1.2x to 60, then 1.0 down to 0.6x in the
+  last minutes (decision 0017); 0 in the auctions. Index ETFs: pass their measured spread as a
+  number and `tod=()`; their spread is flat through the day (SPY 0.12 bp)
 - square-root impact on the whole order's share of ADV (21 days, known before the open) and
   63-day volatility; every fill of an order pays the same rate, so splitting it is not cheaper
 - IB fixed commission, $0.0035 a share with a $0.35 minimum per order (without an AUM,

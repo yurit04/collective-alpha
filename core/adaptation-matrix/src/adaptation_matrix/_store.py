@@ -146,6 +146,63 @@ class AdaptationMatrix:
             "max_store_gb": self.settings.max_store_gb,
         }
 
+    # ------------------------------------------------------------------ calibration
+    def calibration_inputs(self, engine: Any = None, days: Iterable[Any] | None = None,
+                           refresh: bool = False) -> pl.DataFrame:
+        """Measured days joined with the backtester's inputs (ADV, volatility, raw close,
+        Abdi-Ranaldo, from unimatrix_zero.Engine.returns) and an asset class; cached in
+        `_calibration/inputs.parquet` (rebuilt with refresh=True or other `days`)."""
+        from ._calibrate import build_inputs
+        cache = self.layout.root / "_calibration" / "inputs.parquet"
+        if days is None and cache.exists() and not refresh:
+            return pl.read_parquet(cache)
+        if engine is None:
+            from unimatrix_zero import Engine
+            engine = Engine(store=self.runner.store)
+        want = ([_day(d) for d in days] if days is not None
+                else self.days().filter(pl.col("status") == "done")["day"].to_list())
+        out = build_inputs(self, engine, want, store=self.runner.store)
+        if days is None and out.height:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cache.with_suffix(".tmp")
+            out.write_parquet(tmp)
+            tmp.replace(cache)
+        return out
+
+    def calibrate(self, engine: Any = None, test_start: Any = None, tod_days: int = 60,
+                  refresh: bool = False, write: bool = True):
+        """Fit the cost models on the measured days (decision 0017) -> Calibration: the spread
+        formula (fitted on days before `test_start`, validated after it, then refitted on all
+        days), the close against the quote, impact coefficients by size and the time-of-day
+        profile (the last `tod_days` measured days). Writes `_calibration/calibration.json`."""
+        from ._calibrate import (
+            Calibration,
+            close_table,
+            compare,
+            fit_spread,
+            impact_table,
+            tod_profile,
+            tod_segments,
+        )
+        inputs = self.calibration_inputs(engine, refresh=refresh)
+        days = sorted(inputs["date"].unique().to_list())
+        ts = _day(test_start) or (days[-1] - timedelta(days=183))
+        held = fit_spread(inputs.filter(pl.col("date") < ts))
+        validation = compare(inputs, held, start=ts)
+        fit = fit_spread(inputs)
+        recent = date(days[-1].year - 3, days[-1].month, 1)
+        segs = tod_segments(self, days[-tod_days:])
+        cal = Calibration(spread=fit, validation=validation, close=close_table(inputs, start=recent),
+                          impact=impact_table(inputs, start=recent), tod=tod_profile(segs, inputs), test_start=ts,
+                          notes=[f"spread validated on {ts}..{days[-1]} with a fit on earlier days",
+                                 f"close and impact from {recent}",
+                                 f"time of day from {days[-tod_days]}..{days[-1]}"])
+        if write:
+            path = self.layout.root / "_calibration" / "calibration.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(cal.to_json())
+        return cal
+
     # ------------------------------------------------------------------ schedule and run
     def schedule(self, end: Any = None, recent_months: int | None = None) -> pl.DataFrame:
         """day, set, priority, done: the days a full run measures, in run order (see _schedule)."""

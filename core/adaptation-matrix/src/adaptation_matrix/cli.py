@@ -116,6 +116,38 @@ def measure_stored(day: str) -> None:
 
 
 @app.command()
+def calibrate(test_start: Annotated[str | None, typer.Option(help="hold out days from here (default: the last 6 months)")] = None,
+              refresh: Annotated[bool, typer.Option(help="rebuild the inputs (Engine.returns per measured day)")] = False
+              ) -> None:
+    """Fit the cost models on the measured days and print them (decision 0017): the spread formula
+    and its out-of-sample check, the close, impact by size and the time-of-day profile."""
+    import polars as pl
+
+    cal = _matrix().calibrate(test_start=test_start, refresh=refresh)
+    s = cal.spread
+    with pl.Config(tbl_rows=40, float_precision=2, tbl_cols=20, tbl_width_chars=200, tbl_hide_dataframe_shape=True):
+        typer.echo(f"spread fit ({s.rows:,} stock-days): adv_slope {s.adv_slope:.4f}, vol_slope {s.vol_slope:.4f}, "
+                   f"knots {[(f'{k:.0e}', round(c, 4)) for k, c in s.knots]}")
+        typer.echo("levels (bps at $100M ADV, 2% vol): "
+                   + ", ".join(f"{y}: {v:.3f}" for y, v in s.levels.items()))
+        typer.echo(f"\nheld out from {cal.test_start} (fit on earlier days):")
+        typer.echo(cal.validation)
+        typer.echo("\nclose vs the pre-close mid:")
+        typer.echo(cal.close)
+        typer.echo("\nimpact (square-root coefficient):")
+        typer.echo(cal.impact)
+        typer.echo(f"\ntime of day (tactical-cube tod): {cal.tod_pairs()}")
+    try:
+        from unimatrix_zero import SPREAD_FIT
+        same = (abs(SPREAD_FIT.adv_slope - s.adv_slope) < 1e-3 and abs(SPREAD_FIT.vol_slope - s.vol_slope) < 1e-3
+                and all(abs(dict(SPREAD_FIT.levels).get(y, 0) - v) < 1e-2 for y, v in s.levels.items()))
+        typer.echo("\nunimatrix_zero.SPREAD_FIT " + ("matches this fit" if same else
+                                                     "differs from this fit: update it (decision 0017)"))
+    except ImportError:
+        pass
+
+
+@app.command()
 def status() -> None:
     """Days measured, store size, failures."""
     m = _matrix()

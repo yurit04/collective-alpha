@@ -147,3 +147,10 @@ AUM, studies in a new project `assimilation-trials`.
 the measures feed unimatrix-zero as well, which cannot depend on tactical-cube, and the data
 had to be harvested before the Massive plan loses trades and quotes. Replacing tactical-cube's
 time-of-day multipliers with the measured profiles is part of 0016's phase 2.
+
+*Update 2026-11-13 (phase 3 done, decision 0017):* tactical-cube's multipliers are now measured
+(3.7x in the first minute to 0.6x at the close) on a fitted daily spread; the trials were re-run
+with measured spreads (SPY and QQQ at their own 0.12 / 0.16 bp). No verdict changed: SPY
+momentum -2.9%/yr net (cost 0.91 bp, of which 0.66 bp is modelled impact), overnight +3.4%
+(t 1.7), the top-500 reversal -15.4% (cost 3.73 bp). Impact, not spread, now decides the SPY
+studies; paper fills are the next check.

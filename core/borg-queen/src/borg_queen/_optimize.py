@@ -113,7 +113,7 @@ class Optimizer:
         # Sorted after the joins (joins keep no row order): solve finds holdings by searchsorted.
         ex = ex.filter(pl.col("spec_var").is_not_null()).sort("security_id")
         costs = self.costs
-        lin = ex.with_columns(costs.spread_cost().alias("c"))["c"].to_numpy()       # with_columns broadcasts
+        lin = ex.with_columns(costs.spread_cost(on).alias("c"))["c"].to_numpy()       # with_columns broadcasts
         eta = (ex.with_columns(costs.impact_cost(pl.lit(1.0), nav).alias("e"))["e"].to_numpy()
                if costs.aum else np.zeros(ex.height))
         X = design(ex["sector"].to_numpy(), ex.select(list(STYLES)).to_numpy())
@@ -138,7 +138,7 @@ class Optimizer:
         info: status, relaxed, alpha, vol (annual forecast), cost, turnover, names, seconds."""
         t0 = time.time()
         d = _day(on)
-        if market is None and (self.costs.aum or self.costs.spread == "volume"):
+        if market is None and (self.costs.aum or self.costs.spread in ("volume", "fitted")):
             raise ValueError("market (security_id, adv, vol) is needed for volume-based spreads and impact")
         m, ex, X, F, lin, eta = self._inputs(d, alpha, market, nav)
         ids = ex["security_id"].to_numpy()

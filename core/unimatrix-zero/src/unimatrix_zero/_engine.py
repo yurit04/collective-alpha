@@ -238,7 +238,7 @@ class Engine:
                  .join_asof(aux, on="date", by="security_id", strategy="backward", tolerance="10d",
                             check_sortedness=False))
             free = pl.col("cash") | (pl.col("trade") == 0)
-            t = t.with_columns(pl.when(free).then(0.0).otherwise(costs.spread_cost()).alias("__sp"),
+            t = t.with_columns(pl.when(free).then(0.0).otherwise(costs.spread_cost(ex)).alias("__sp"),
                                pl.when(free).then(0.0).otherwise(costs.impact_cost(pl.col("trade"), nav)).alias("__im"))
             t = t.with_columns((pl.col("trade").abs() * (pl.col("__sp") + pl.col("__im"))).alias("cost"))
             cost = float(t["cost"].sum())

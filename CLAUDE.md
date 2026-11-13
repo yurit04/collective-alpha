@@ -49,12 +49,11 @@ Current core graph:
 | `transwarp-conduit` | Execution through Interactive Brokers: IB contract mapping, order sheets with limits, paper-first MOC orders, journal, reconciliation | unimatrix-zero, massive-subspace-stream |
 | `nanoprobe-array` | Intraday: regular-session bar clock, minute bars resampled with gap rules, auction prices, per-bar features, daily intraday summaries store | massive-subspace-stream, vinculum |
 | `tactical-cube` | Intraday backtests: decisions at bar ends, lagged VWAP or auction fills, participation caps, flat-by times or overnight holds, intraday costs, look-ahead check; daily output in unimatrix-zero's format | nanoprobe-array, unimatrix-zero, vinculum |
-| `adaptation-matrix` | Transaction costs from trades and NBBO quotes, measured on a schedule of days before the plan loses them: quoted, effective and realized half-spreads, price impact, the close against the quote, minute quotes and signed flow, matched trades of the largest names (an archive) | massive-subspace-stream, vinculum |
+| `adaptation-matrix` | Transaction costs from trades and NBBO quotes, measured on a schedule of days before the plan loses them: quoted, effective and realized half-spreads, price impact, the close against the quote, minute quotes and signed flow, matched trades of the largest names (an archive); `adapt calibrate` fits the cost models on them (unimatrix-zero's `SPREAD_FIT`, tactical-cube's time-of-day profile) | massive-subspace-stream, vinculum, unimatrix-zero |
 | `unicomplex` | Orchestration: `collective run`, every nightly sync and build in order under one lock and log (one launchd job); `collective status`, a read-only freshness report over the data stores; `collective roots`, every store's root (read by tools/bootstrap.sh and reset.sh) | massive-subspace-stream, edgar-cortical-node, finra-sensor-array, vinculum, nanoprobe-array, borg-queen, transwarp-conduit, adaptation-matrix |
 
 Planned (not built):
-cost calibration from adaptation-matrix's measures (decision 0016 phase 2, also 0014 phase 3),
-`transwarp-conduit` phases 2-3 (cost calibration, live).
+`transwarp-conduit` phases 2-3 (comparing paper fills with the fitted costs, live).
 
 ## Commands
 
@@ -71,6 +70,7 @@ uv run queen --help                    # risk model (see core/borg-queen/README.
 uv run conduit --help                  # IB execution (see core/transwarp-conduit/README.md)
 uv run nanoprobe --help                # intraday bars, features, daily intraday summaries (core/nanoprobe-array/README.md)
 uv run adapt plan                      # cost measurement days and download size (core/adaptation-matrix/README.md)
+uv run adapt calibrate                 # refit the cost models on the archive; says whether SPREAD_FIT still matches
 uv run collective status               # are the stores as fresh as the schedule allows? (core/unicomplex/README.md)
 uv run collective run --dry-run        # the nightly steps in order (`run` runs them; `runs` shows history)
 uv run collective roots                # where every store lives (as each package resolves it)

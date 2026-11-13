@@ -31,6 +31,7 @@ flowchart LR
     conduit --> unicomplex
     nanoprobe --> unicomplex
     vinculum --> adaptation[adaptation-matrix]
+    unimatrix --> adaptation
     adaptation --> unicomplex
 ```
 
@@ -49,7 +50,7 @@ out; `uv run python tools/check_architecture.py --graph` prints the full graph.<
 | [`transwarp-conduit`](core/transwarp-conduit/README.md) | `conduit` | Execution through Interactive Brokers: order sheets with limits, paper-first market-on-close orders, journal, reconciliation |
 | [`nanoprobe-array`](core/nanoprobe-array/README.md) | `nanoprobe` | Intraday: minute bars resampled on a session clock with gap rules, auction prices, per-bar features, daily intraday summaries since 2003 |
 | [`tactical-cube`](core/tactical-cube/README.md) | | Intraday backtests: lagged VWAP and auction fills, participation caps, flat-by times or overnight holds, intraday costs, a look-ahead check |
-| [`adaptation-matrix`](core/adaptation-matrix/README.md) | `adapt` | Transaction costs from trades and NBBO quotes: spreads, realized spread and price impact, the close against the quote, by minute and day; an archive measured before a smaller plan loses the data |
+| [`adaptation-matrix`](core/adaptation-matrix/README.md) | `adapt` | Transaction costs from trades and NBBO quotes: spreads, realized spread and price impact, the close against the quote, by minute and day; an archive measured before a smaller plan loses the data, and the fits behind the backtesters' cost models |
 | [`unicomplex`](core/unicomplex/README.md) | `collective` | Orchestration: `collective run`, every nightly sync and build in order under one lock and log (one launchd job); `collective status`, a read-only freshness report; `collective roots`, where every store lives |
 
 Projects:

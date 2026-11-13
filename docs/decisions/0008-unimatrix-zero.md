@@ -107,3 +107,9 @@ Meridian Bancorp's 2014 second-step conversion (2.4484 new shares per old), appe
 check ran on the panel itself. The missing splits are fixed by override rows; the engine now
 lists any held day the check flags in `Backtest.data_warnings` and warns, without changing
 the return.
+
+## Addendum 2026-11-13: spreads fitted on measured costs
+The default half-spread is now `spread="fitted"` (decision 0017): fitted on 424 days of
+measured trades and quotes from ADV, volatility and the year. Held out, the volume rule above
+undercharged names over $100M a day by 37-62% (it was set from quoted spreads); it stays as
+`spread="volume"`. `CostModel(auction=True)` charges no half-spread on market-on-close fills.

@@ -19,7 +19,7 @@ notebooks/
   borg-queen/                the factor risk model and the cost-aware optimizer
   transwarp-conduit/         execution: order sheets, the simulated broker, reconciliation
   nanoprobe-array/           intraday bars on a session clock, empty bars and halts, auction prices, features, daily intraday summaries
-  adaptation-matrix/         transaction costs from trades and quotes: spreads by size and time of day, the close against the quote, 2005 vs 2026
+  adaptation-matrix/         transaction costs from trades and quotes: spreads by size and time of day, the close against the quote, 2005 vs 2026; the cost model fitted on them
   tactical-cube/             intraday backtests: lagged and auction fills, participation, overnight holds, the look-ahead check
   unicomplex/                `collective status`
 src/subspace_probe/          small shared helpers (chart style, timing, byte formatting)
@@ -106,6 +106,7 @@ Re-run a notebook to refresh it after its module changes.
 | Notebook | What it shows |
 |---|---|
 | `00_costs.ipynb` | What is stored, costs by company size (quoted, effective, realized, impact, lit vs off-exchange), effective spreads against dollar volume and the backtester's rule, quoted spreads through the day, the close against the pre-close mid, 2005 against 2026 with the `outside_share` flag, one trade decomposed |
+| `01_calibration.ipynb` | The cost model fitted on the archive: the fitted spread against the former rule, out-of-sample check by size, levels by year, the close against the quote, the time-of-day profile, impact from tape flow, why ETFs need their own spread |
 
 ## unicomplex
 

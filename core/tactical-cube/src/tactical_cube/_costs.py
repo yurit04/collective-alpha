@@ -20,7 +20,11 @@ class IntradayCosts:
                in size.
     tod        half-spread multipliers by the fill bar's start (minutes from the open): pairs
                (minutes, multiplier), the first pair whose minutes the bar starts before applies;
-               1.0 after the last. Spreads are wider just after the open.
+               1.0 after the last. The default is measured (adaptation-matrix, decision 0017):
+               the effective half-spread of stocks over $10M a day relative to the day's
+               dollar-weighted one, which CostModel's fitted spread predicts, on the last 60
+               measured sessions: 3.7x in the first minute, 1.4x at 15-30 minutes, 0.6-0.8x in
+               the last hour.
     auction_spread_bps  half-spread charged on opening and closing auction fills (one price
                for everyone: 0 by default; impact and commission still apply).
     commission_per_share, commission_min  IB fixed pricing (USD), with an AUM.
@@ -28,7 +32,9 @@ class IntradayCosts:
 
     base: CostModel = field(default_factory=CostModel)
     aum: float | None = None
-    tod: tuple[tuple[float, float], ...] = ((5, 3.0), (15, 2.0), (30, 1.5))
+    tod: tuple[tuple[float, float], ...] = (
+        (1, 3.71), (5, 2.58), (15, 1.75), (30, 1.39), (60, 1.2), (120, 1.02), (180, 0.92), (240, 0.87),
+        (300, 0.82), (360, 0.78), (375, 0.7), (385, 0.72), (390, 0.6))
     auction_spread_bps: float = 0.0
     commission_per_share: float = 0.0035
     commission_min: float = 0.35
@@ -58,7 +64,8 @@ class IntradayCosts:
         dollars = (pl.col("units") * pl.col("price")).abs()
         order = [c for c in ("date", "security_id", "kind", "decision_time") if c in fills.columns] + ["_side"]
         spread = (pl.when(pl.col("kind") == "bar")
-                  .then(no_comm.spread_cost() * self.tod_multiplier(pl.col("start_minute")))
+                  .then(no_comm.spread_cost(pl.col("date") if "date" in fills.columns else None)
+                        * self.tod_multiplier(pl.col("start_minute")))
                   .otherwise(pl.lit(self.auction_spread_bps / 1e4)))
         impact = no_comm.impact_cost(pl.col("_order_dollars") / capital, 1.0)
         if self.aum:

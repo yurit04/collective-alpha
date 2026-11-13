@@ -8,6 +8,7 @@ dependencies = [
     "tactical-cube",
     "nanoprobe-array",
     "unimatrix-zero",
+    "adaptation-matrix",
     "polars>=1.20",
     "matplotlib>=3.9",
     "ipykernel>=6.29",
@@ -17,6 +18,7 @@ dependencies = [
 tactical-cube = { workspace = true }
 nanoprobe-array = { workspace = true }
 unimatrix-zero = { workspace = true }
+adaptation-matrix = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
