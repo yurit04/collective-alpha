@@ -18,7 +18,8 @@ User docs: README.md in this folder. Design: docs/decisions/0010-transwarp-condu
 | `names_match`, `ib_symbol`, `is_paper`, `positions_hash`, `ConduitError`, `ENV_ROOT` | helpers |
 
 `Conduit` methods: `status()`, `holdings()` (managed positions as weights, for Optimizer w0),
-`market(ids, on)`, `plan(targets, on, capital, refresh_contracts, drop_blocked, check_borrow)` ->
+`closed_through()` (the newest day whose close has happened), `market(ids, on)` (prices on or
+before `on`, capped at `closed_through()`), `plan(targets, on, capital, refresh_contracts, drop_blocked, check_borrow)` ->
 OrderSheet (saved, nothing sent), `sheet(id)`, `cutoff(day)`, `submit(id, live=False)`,
 `orders(id)`, `sync_fills()`, `reconcile(id)`, `cancel(id)`, `cancel_all()`, `session(write)`.
 
@@ -41,6 +42,8 @@ Invariants (safety first; never weaken without the user's say-so):
 - Nothing is sent outside `Conduit.submit`, and submit sends nothing unless every check passes
   (planned, same day, before the MOC cutoff, same account, unchanged positions, no open orders
   from earlier sheets, paper unless live=True + settings.live + settings.account match).
+- Prices never come from a close that has not happened at `now()` (`market` caps `on` at
+  `closed_through()`), whatever `on` or the clock says.
 - Reads open read-only IB connections; only submit/cancel/cancel_all open writable ones.
 - Never trade a name whose contract status is not ok/override; never sell a position this
   package did not order (unmanaged positions are only reported).

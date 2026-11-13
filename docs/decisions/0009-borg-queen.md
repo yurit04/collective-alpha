@@ -102,6 +102,12 @@ decisive; the capacity gap at $1B is. A variant score (different value and quali
 gave 0.83 / 0.58 at no AUM / $100M against 0.64 / 0.42 for its quintile book: the same pattern
 at a higher level.
 
+*Re-run 2026-11-13 with the fitted spreads of decision 0017 and the data and risk model as of
+that day:* 4.9% / 0.56 / 9.3× with no AUM (quintile 0.57, sector neutral 0.55), 4.2% / 0.50 at
+$10M, 3.3% / 0.41 at $100M, 2.9% / 0.39 at $1B (quintile books -0.01 and -0.17). All three go
+criteria still pass. With the former spread rule in both optimizer and backtest the no-AUM
+Sharpe is 0.58 on the same data, so most of the move comes from the data, not the costs.
+
 ## Next
 Execution (`transwarp-conduit`): turn target weights into orders. Possible refinements: an IC
 estimated out of sample per signal, more style limits (momentum carries most of the risk), and

@@ -239,6 +239,33 @@ def test_plan_warns_when_every_price_is_old(tmp_path):
     old = c.plan(targets(AAPL=0.02), on=DAY + timedelta(days=2))   # Friday; Thursday's close missing
     assert any("up to date" in w and str(DAY + timedelta(days=1)) in w for w in old.warnings)
 
+def test_no_close_before_it_happens(tmp_path):
+    """The store already holds DAY's close (a fixed clock, or a re-run after the nightly sync):
+    a plan made during DAY's session must still price at DAY - 1, and at DAY once it has closed."""
+    class SameDay(FakeEngine):
+        def returns(self, ids, start, end):
+            prev = super().returns(ids, start, end)
+            today = prev.with_columns(pl.lit(DAY).alias("date"), pl.col("raw_close") * 1.1)
+            return pl.concat([prev, today]).filter(pl.col("date") <= end)
+
+    def make(clock):
+        s = ConduitSettings(root=str(tmp_path / clock.isoformat()))
+        return Conduit(s, broker=sim(), store=FakeStore(), engine=SameDay(), clock=lambda: clock)
+
+    morning = make(MORNING)
+    assert morning.closed_through() == DAY - timedelta(days=1)
+    for on in (None, DAY, DAY + timedelta(days=3)):
+        sheet = morning.plan(targets(AAPL=0.02), on=on)
+        assert sheet.price_date == DAY - timedelta(days=1) and sheet.orders["price"][0] == 200.0
+    assert morning.market(["BBG_AAPL"], DAY)["price_date"][0] == DAY - timedelta(days=1)
+    evening = make(datetime(2026, 11, 4, 21, 5, tzinfo=UTC))          # 16:05 ET
+    assert evening.closed_through() == DAY
+    sheet = evening.plan(targets(AAPL=0.02))
+    assert sheet.price_date == DAY and sheet.orders["price"][0] == pytest.approx(220.0)
+    weekend = make(datetime(2026, 11, 7, 15, 0, tzinfo=UTC))          # Saturday
+    assert weekend.closed_through() == date(2026, 11, 6)
+
+
 # ---------------------------------------------------------------------------- workflow
 def test_plan_submit_fill_reconcile(tmp_path):
     b = sim()

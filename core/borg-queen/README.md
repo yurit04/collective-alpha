@@ -111,14 +111,14 @@ Optimizer(rm, cm).solve(alpha_one_date, on, current_weights, market)  # one reba
   gross, beta, nav, seconds.
 - Solved with cvxpy and Clarabel, about 0.1 s per rebalance for 1,000 names.
 
-### Results (notebook 07, notebook 06's combined score, 2013-2026)
+### Results (`notebooks/borg-queen/01_optimizer.ipynb`, the combined score, 2013-2026, fitted spreads)
 
 | AUM | optimized net return / Sharpe / turnover | quintile net Sharpe | quintile sector-neutral net Sharpe |
 |---|---|---|---|
-| none | 5.1% / 0.59 / 9.4× | 0.57 | 0.54 |
-| $10M | 4.1% / 0.50 / 6.8× | 0.50 | 0.45 |
-| $100M | 3.3% / 0.41 / 4.9× | 0.36 | 0.28 |
-| $1B | 3.0% / 0.40 / 2.9× | -0.01 | -0.18 |
+| none | 4.9% / 0.56 / 9.3× | 0.57 | 0.55 |
+| $10M | 4.2% / 0.50 / 6.7× | 0.50 | 0.46 |
+| $100M | 3.3% / 0.41 / 4.8× | 0.36 | 0.29 |
+| $1B | 2.9% / 0.39 / 2.9× | -0.01 | -0.17 |
 
 Small, it matches the quintile books while holding sectors to 1% (quintile: up to 23%); large,
 it keeps earning where they lose money. Every rebalance solved without relaxing. Realized

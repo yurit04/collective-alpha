@@ -41,6 +41,11 @@ market data with SimBroker at $250k: 311 orders, turnover 1.96× capital, estima
 whole-share rounding moved weights by 0.02% on average (at most 0.2%); 71 trades under $200
 skipped. Planning takes under a second.
 
+*Added 2026-11-13:* `market` (so `plan` and `holdings`) never prices from a close that has not
+happened at the clock's time: during the session it uses the previous close even when the store
+already holds the day's (a fixed clock in a rehearsal, or a re-run after the nightly sync). The
+demo notebook's 10:00 ET rehearsal had been priced at that day's close.
+
 ## First check against IB (paper, read-only, 2026-11-04)
 The 458 names of that book: 420 resolved by FIGI and 38 by symbol, none blocked; lookups take
 about 10 s. The first version matched by symbol and name only and blocked 24 correct names,

@@ -109,8 +109,18 @@ class Conduit:
                            & pl.col("security_id").is_not_null())
         return managed.select("security_id", "con_id", "shares"), p.join(managed.select("con_id"), on="con_id", how="anti")
 
+    def closed_through(self) -> date:
+        """The newest day whose close has happened at now(): today once its session has closed,
+        otherwise the day before (prices never come from a close still to come)."""
+        today = self.today()
+        close = self._close(today)
+        return today if close is not None and self.now() >= close else today - timedelta(days=1)
+
     def market(self, ids: list[str], on: date) -> pl.DataFrame:
-        """security_id, price (last raw close on or before `on`), adv, vol, price_date."""
+        """security_id, price (last raw close on or before `on`, and never after
+        `closed_through()`: a plan made during the session uses the previous close even when the
+        clock is fixed or the store already holds the day), adv, vol, price_date."""
+        on = min(on, self.closed_through())
         r = self.engine.returns(ids, on - timedelta(days=MARKET_LOOKBACK_DAYS), on)
         r = r.filter(pl.col("raw_close").is_not_null()).sort("date")
         return r.group_by("security_id").agg(pl.col("raw_close").last().alias("price"), pl.col("adv").last(),
@@ -187,14 +197,18 @@ class Conduit:
         return OrderSheet.load(self.journal.sheets, sheet_id)
 
     # ------------------------------------------------------------------ submit
-    def cutoff(self, day: date) -> datetime | None:
-        """Last time to send market-on-close orders on `day` (None: not a trading day)."""
+    def _close(self, day: date) -> datetime | None:
+        """The session close of `day` in UTC (None: not a trading day)."""
         s = self.store.sessions(day, day)
         if s.is_empty():
             return None
         close = s["market_close"][0]
-        close = close.replace(tzinfo=UTC) if close.tzinfo is None else close
-        return close - timedelta(minutes=self.s.cutoff_minutes)
+        return close.replace(tzinfo=UTC) if close.tzinfo is None else close
+
+    def cutoff(self, day: date) -> datetime | None:
+        """Last time to send market-on-close orders on `day` (None: not a trading day)."""
+        close = self._close(day)
+        return None if close is None else close - timedelta(minutes=self.s.cutoff_minutes)
 
     def submit(self, sheet_id: str, live: bool = False) -> pl.DataFrame:
         """Send a planned sheet's orders after every check passes; otherwise raise ConduitError

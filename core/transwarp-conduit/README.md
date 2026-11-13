@@ -82,7 +82,8 @@ c.submit(sheet.sheet_id)                           # paper; on the execution day
   are cached for 30 days in `contracts.parquet`. Pin a contract by hand in
   `contract_overrides.csv` (`security_id,con_id,note`) under the data root.
 - **Order sheet.** Capital = the `capital` setting, else net liquidation. Target shares =
-  weight × capital ÷ last close (from unimatrix-zero's return panel, as in the backtest),
+  weight × capital ÷ last close (from unimatrix-zero's return panel, as in the backtest; during
+  the session that is the previous day's close, even if the data already holds today's),
   rounded to whole shares (IB's API has no fractional shares). Trades below `min_trade_usd` or
   `min_trade_weight` are skipped, except closing a position. A position this package has
   ordered before and that is no longer a target is sold; any other position is **unmanaged**
@@ -112,5 +113,6 @@ c.submit(sheet.sheet_id)                           # paper; on the execution day
   algos are phase 3).
 - Borrow availability is a snapshot when the sheet is planned; IB can still reject a short it
   cannot locate at the close.
-- Prices are the last close in the local data: run the nightly sync before planning.
+- Prices are the last close in the local data that has already happened (`closed_through()`):
+  run the nightly sync before planning.
 - Nothing runs on a schedule: you plan and submit each rebalance.
