@@ -204,6 +204,11 @@ class AdaptationMatrix:
         return cal
 
     # ------------------------------------------------------------------ schedule and run
+    def closed(self) -> str | None:
+        """Why no new day can be measured (the Massive plan lacks trades or quotes), or None.
+        Reads, `status()`, `calibrate()` and `measure_stored()` work either way."""
+        return self.runner.closed()
+
     def schedule(self, end: Any = None, recent_months: int | None = None) -> pl.DataFrame:
         """day, set, priority, done: the days a full run measures, in run order (see _schedule)."""
         store = self.runner.store
@@ -237,7 +242,8 @@ class AdaptationMatrix:
     def run(self, end: Any = None, sets: Iterable[str] | None = None, limit: int | None = None,
             days: Iterable[Any] | None = None, on_day=None) -> RunResult:
         """Measure scheduled days not done yet (or exactly `days`), in schedule order. Long: about
-        15 minutes per recent day; ask before starting a full run."""
+        15 minutes per recent day; ask before starting a full run. On a Massive plan without
+        trades and quotes nothing starts: `RunResult.stopped` says why (see `closed()`)."""
         if days is not None:
             todo = [(_day(d), "manual") for d in days]
         else:

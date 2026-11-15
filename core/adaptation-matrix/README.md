@@ -59,6 +59,18 @@ A run downloads the next day while measuring the current one, records each finis
 `max_store_gb` (480) or free disk falls below `disk_margin_gb` (50). It never takes the Massive
 store's writer lock, so the nightly sync keeps running.
 
+On a Massive plan without trades and quotes (Starter, and Developer, which lacks quotes) the
+archive is closed: `adapt plan` says so instead of estimating downloads, and `adapt run` starts
+nothing and records nothing. Everything already measured stays readable, `adapt status`,
+`adapt calibrate` and `measure-stored` work as before, and moving back to Advanced reopens it.
+
+```
+$ uv run adapt plan
+424 days: event 23, recent 128, sample 273; 421 done
+trades and quotes are not in the Massive starter plan: the archive is closed (last day measured
+2026-11-10); 3 scheduled day(s) will not be measured
+```
+
 ```python
 from adaptation_matrix import AdaptationMatrix
 

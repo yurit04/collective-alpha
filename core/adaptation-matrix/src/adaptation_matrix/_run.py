@@ -4,7 +4,8 @@ One day at a time, with the next day's files downloading while the current one i
 (downloads are the slow part: 10-30 MB/s, about 14 GB a day in 2026). Every finished day is
 recorded in state.json with the measure version, so a run can be stopped and started again;
 finished days are skipped. A run stops before the store passes `max_store_gb` or free disk falls
-below `disk_margin_gb`.
+below `disk_margin_gb`, and does not start when the Massive plan lacks trades or quotes (the
+archive is then closed: the measured days stay, new ones cannot be added).
 """
 
 from __future__ import annotations
@@ -145,6 +146,23 @@ class Runner:
             self._vinculum = Vinculum(store=self.store)
         return self._vinculum
 
+    def closed(self) -> str | None:
+        """Why the Massive plan cannot download the ticks a run needs (None: it can). An injected
+        ingestor's settings decide (none: assumed entitled); otherwise massive-subspace-stream's."""
+        if self._ingestor is not None:
+            massive = getattr(self._ingestor, "settings", None)
+            if massive is None:
+                return None
+        else:
+            from massive_subspace_stream import load_settings
+            massive = load_settings()
+        plan = massive.plan_info
+        lacking = [k for k in ("trades", "quotes") if k not in plan.flat_datasets]
+        if not lacking:
+            return None
+        verb = "are" if len(lacking) > 1 else "is"
+        return f"{' and '.join(lacking)} {verb} not in the Massive {plan.name} plan"
+
     # ------------------------------------------------------------------ state
     def done(self, day: date) -> bool:
         rec = self.layout.read_state().get("days", {}).get(day.isoformat())
@@ -274,6 +292,11 @@ class Runner:
         if limit is not None:
             todo = todo[:limit]
         if not todo:
+            return result
+        why = self.closed()
+        if why:   # before the lock and the work folder: nothing is touched or recorded
+            result.stopped = f"{why}; the archive is closed"
+            log.warning("not measuring %d day(s): %s", len(todo), result.stopped)
             return result
         self.layout.ensure()
         with self.layout.run_lock(f"run of {len(todo)} day(s)"):

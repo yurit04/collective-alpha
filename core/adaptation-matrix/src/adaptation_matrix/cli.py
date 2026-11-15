@@ -74,6 +74,17 @@ def plan(
     sched = m.schedule(end, recent_months)
     typer.echo(f"{sched.height} days: " + ", ".join(f"{s} {n}" for s, n in sched.group_by("set").len().sort("set").iter_rows())
                + f"; {sched['done'].sum()} done")
+    why = m.closed()
+    if why:
+        last = m.status().get("last")
+        pending = int((~sched["done"]).sum())
+        typer.secho(f"{why}: the archive is closed" + (f" (last day measured {last})" if last else "")
+                    + (f"; {pending} scheduled day(s) will not be measured" if pending else ""),
+                    fg=typer.colors.YELLOW)
+        if days:
+            with pl.Config(tbl_rows=-1):
+                typer.echo(sched)
+        return
     est = m.estimate(sched, mb_per_s)
     with pl.Config(tbl_rows=100):
         typer.echo(est.group_by("set").agg(pl.col("days").sum(), pl.col("gb").sum().round(0), pl.col("hours").sum().round(1)).sort("set"))

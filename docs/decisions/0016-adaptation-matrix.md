@@ -51,6 +51,10 @@ Download 9.5-36.5 MB/s (median 35); converting and measuring a recent day (about
 the pace. One day hit a transient S3 403 and succeeded on retry. Store: 290 GB (trades 187,
 minute 87, daily 1.3).
 
+Since the switch the archive is closed: `AdaptationMatrix.closed()` reads the Massive plan, and
+`adapt run` starts nothing on a plan without trades and quotes instead of recording each day it
+cannot download as failed. Reads and `calibrate` are unaffected; a move back to Advanced reopens it.
+
 ## Phase 2 (after the run): calibration
 *Done 2026-11-13: decision 0017.*
 - Daily spread model for unimatrix-zero's `CostModel` (and so borg-queen's optimizer): effective

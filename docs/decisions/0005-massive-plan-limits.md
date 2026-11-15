@@ -48,12 +48,22 @@ span. That record then has to be overridden in the security master's overrides.
   splits matters more than an empty diff.
 - **Relying on 403s alone:** a shortened answer is not an error, so it would not be caught.
 
-## Not verified
-There was no Starter key to test against. Three things are checked on the first syncs after
-the switch:
+## Verified on Starter
+There was no Starter key to test against when this was written, so three things were left to
+check on the first syncs after the switch (to Starter on 2026-11-13). The first Starter nightly
+(run 20261114-063012) settled them:
 
-- Whether Starter shortens the snapshot answers. The guard logs a warning if it does.
-- Whether `ticker_details` stays available. vinculum's ADR and class ratios depend on it.
-- Whether short interest, short volume and float are included. This no longer matters: since
-  2026-11-02 they come from FINRA (0006) and SEC 10-Ks (0004 addendum), and Massive's copies
-  are not refreshed by default.
+- **Starter does not shorten snapshot answers.** Row counts matched the last Advanced run
+  (20261113-115246) exactly: tickers 36,888, ticker_details 5,684, splits 28,041, ipos 6,497;
+  dividends 734,108 -> 734,147 (new rows only). The guard logged no warning. It stays: it also
+  covers a truncated answer on any plan.
+- **`ticker_details` stays available** (5,684 rows), so vinculum's ADR and class ratios keep
+  their inputs.
+- **Short interest, short volume and float** were not checked, and do not need to be: since
+  2026-11-02 they come from FINRA (0006) and SEC 10-Ks (0004 addendum), and Massive's copies are
+  not refreshed by default.
+
+The same run's bars, reference data, security master and the builds after them (vinculum,
+nanoprobe, borg-queen) succeeded. adaptation-matrix's trade and quote archive is closed on
+Starter: `adapt run` checks the plan and starts nothing (`AdaptationMatrix.closed()`), so the
+days it can no longer download are not recorded as failures.

@@ -45,6 +45,9 @@ folder. Design: docs/decisions/0016-adaptation-matrix.md, 0017-cost-calibration.
   `Calibration`; writes `_calibration/calibration.json`
 - `run(end, sets, limit, days, on_day)` -> `RunResult`: download, measure, store, delete;
   resumable; long (ask first). `measure_stored(day)`: a day already in the Massive store
+- `closed()` -> str | None: why no new day can be measured (the Massive plan lacks trades or
+  quotes; read from massive-subspace-stream's `Settings.plan_info`), or None. When closed, `run`
+  starts nothing and says why in `RunResult.stopped`; `adapt plan` says so instead of estimating
 
 CLI: `adapt plan [--days] | run [--sets --limit --day] | measure-stored DAY | calibrate [--test-start --refresh] | status | show TICKER`.
 
@@ -68,6 +71,9 @@ Invariants:
 - Never hold massive-subspace-stream's writer lock: tick files come from
   `Ingestor.download_ticks` into `_work/` and are deleted after the day; a run never blocks the
   nightly sync. One run at a time (`_run/run.lock`).
+- On a plan without trades and quotes (Starter since 2026-11-13) the archive is closed: a run
+  checks `closed()` before the lock and records nothing, so days it cannot download never show
+  up as failed. An injected ingestor without `settings` (tests) counts as entitled.
 - A day is `done` only after its three tables are renamed into place; state records
   `MEASURE_VERSION`. Raise the version when a measure's definition changes; days of an older
   version are measured again only while the plan still has trades and quotes.

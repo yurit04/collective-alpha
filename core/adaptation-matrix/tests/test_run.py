@@ -182,6 +182,48 @@ def test_run_stops_at_the_store_limit(tmp_path):
     assert res.done == [] and "max_store_gb" in res.stopped
 
 
+def _on_plan(ing, plan, tmp_path):
+    from massive_subspace_stream import load_settings as massive_settings
+    ing.settings = massive_settings(env_file=None, plan=plan, data_root=tmp_path / "massive")
+    return ing
+
+
+@pytest.mark.parametrize("plan, why", [
+    ("starter", "trades and quotes are not in the Massive starter plan"),
+    ("developer", "quotes is not in the Massive developer plan"),
+    ("advanced", None),
+])
+def test_closed_follows_the_massive_plan(tmp_path, plan, why):
+    m, ing = make(tmp_path)
+    _on_plan(ing, plan, tmp_path)
+    assert m.closed() == why
+
+
+def test_an_ingestor_without_settings_is_assumed_entitled(tmp_path):
+    m, _ = make(tmp_path)                   # FakeIngestor has no settings
+    assert m.closed() is None
+
+
+def test_run_on_a_plan_without_ticks_touches_nothing(tmp_path):
+    m, ing = make(tmp_path)
+    assert m.run(days=[D1]).done == [D1]    # measured while the plan had trades and quotes
+    _on_plan(ing, "starter", tmp_path)
+    state = m.layout.read_state()
+    n = len(ing.downloads)
+
+    res = m.run(days=[D1, D2])
+    assert res.done == [] and res.skipped == [D1] and not res.failed and not res.missing
+    assert res.stopped == "trades and quotes are not in the Massive starter plan; the archive is closed"
+    assert len(ing.downloads) == n                       # nothing listed or downloaded
+    assert m.layout.read_state() == state                # D2 not recorded as failed
+    assert m.status()["days_done"] == 1 and not m.status()["failed"]
+    assert m.daily(start=D1, end=D1).height == 3         # the archive still reads
+
+    # Nothing left to do: a plain run result, not a stop.
+    again = m.run(days=[D1])
+    assert again.skipped == [D1] and again.stopped is None
+
+
 def test_one_run_at_a_time(tmp_path):
     m, _ = make(tmp_path)
     m.layout.ensure()
