@@ -39,7 +39,8 @@ CLI: `cortical init | backfill | profiles | sync | series | status | show CIK | 
 ```
 _config.py    settings (collective.toml [edgar_cortical_node], EDGAR_DATA_ROOT, EDGAR_USER_AGENT)
 _layout.py    paths (facts buckets, companies, profiles, names, series, shares), state.json
-_client.py    SEC HTTP: User-Agent, shared rate limit (<= 8/s), retries, streamed downloads
+_client.py    SEC HTTP: User-Agent, shared rate limit (<= 8/s), retries (a 429 pauses every thread,
+              30 s doubling to 10 min, and halves the rate), streamed downloads
               (a transfer cut off on the way starts again, 3 attempts)
 _parse.py     company-facts JSON -> long table; submissions -> profiles/names; daily index; workers
 _ingest.py    bulk load (parallel processes, per-bucket compaction, swap), profiles, daily sync,

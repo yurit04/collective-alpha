@@ -309,6 +309,34 @@ def test_a_200_answer_that_is_not_json_is_a_sec_error():
         client.get_json("https://data.sec.gov/api/xbrl/companyfacts/CIK0000001111.json")
 
 
+def test_a_429_pauses_every_thread_and_slows_the_client(monkeypatch):
+    """2026-11-14: eight threads each retried their own 429 after 1, 2, 4... s while the others
+    kept sending, so the SEC's block outlasted every retry and the sync failed (540 429s)."""
+    import httpx
+    from edgar_cortical_node import _client
+    from edgar_cortical_node._client import COOLDOWN_FIRST, SecClient
+
+    clock = [1000.0]
+    monkeypatch.setattr(_client.time, "monotonic", lambda: clock[0])
+    slept = []
+
+    def sleep(s):
+        slept.append(s)
+        clock[0] += s
+
+    answers = iter([429, 429, 200])
+    client = SecClient("ua a@b.c", requests_per_second=8, sleep=sleep,
+                       transport=httpx.MockTransport(lambda r: httpx.Response(next(answers), json={})))
+    assert client.get_json("https://data.sec.gov/x.json") == {}
+    assert slept[0] == pytest.approx(COOLDOWN_FIRST) and slept[1] == pytest.approx(2 * COOLDOWN_FIRST)
+    assert client._interval == pytest.approx(0.5)                 # 8/s -> 4/s -> 2/s
+    # Another thread's 429 for a request sent before this pause ended does not lengthen it.
+    clock[0] = client._paused_until - 5
+    assert client._rate_limited(None) == pytest.approx(5) and client._cooldown == 2 * COOLDOWN_FIRST
+    # Every thread's next request waits for the pause.
+    assert client._next >= client._paused_until
+
+
 def test_materialized_series_match_the_facts_and_track_their_version(loaded, settings):
     from edgar_cortical_node import CONCEPTS
 

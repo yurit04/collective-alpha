@@ -15,6 +15,11 @@ import orjson
 log = logging.getLogger("edgar_cortical_node")
 
 RETRY_STATUS = {429, 500, 502, 503, 504}
+# A 429 from the SEC means the whole client is over the fair-access limit (its page says access
+# is limited for up to 10 minutes), so every thread pauses together, for longer each time, and
+# the client sends more slowly for the rest of its life.
+COOLDOWN_FIRST, COOLDOWN_MAX = 30.0, 600.0
+MIN_RATE = 1.0                   # requests per second the client never slows below
 BULK_URL = "https://www.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip"
 FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
 SUBMISSIONS_BULK_URL = "https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip"
@@ -38,6 +43,8 @@ class SecClient:
         self._next = 0.0
         self.max_retries = max_retries
         self._sleep = sleep
+        self._cooldown = 0.0          # length of the last shared pause after a 429
+        self._paused_until = 0.0      # monotonic time the current shared pause ends
 
     def close(self) -> None:
         self._http.close()
@@ -49,6 +56,22 @@ class SecClient:
             self._next = max(now, self._next) + self._interval
         if wait > 0:
             self._sleep(wait)
+
+    def _rate_limited(self, retry_after: str | None) -> float:
+        """A 429: pause every thread (the shared throttle starts after the pause) and halve the
+        rate. 429s for requests sent before the current pause began do not lengthen it.
+        Returns the seconds this thread waits."""
+        with self._lock:
+            now = time.monotonic()
+            if now >= self._paused_until:
+                self._cooldown = min(max(self._cooldown * 2, COOLDOWN_FIRST), COOLDOWN_MAX)
+                pause = float(retry_after) if retry_after else self._cooldown
+                self._paused_until = now + pause
+                self._interval = min(self._interval * 2, 1.0 / MIN_RATE)
+                log.warning("SEC rate limit: pausing all requests for %.0fs, then %.1f per second",
+                            pause, 1.0 / self._interval)
+            self._next = max(self._next, self._paused_until)
+            return max(self._paused_until - now, 0.0)
 
     def _request(self, method: str, url: str, stream: bool = False) -> httpx.Response:
         delay = 1.0
@@ -69,6 +92,10 @@ class SecClient:
             if resp.status_code in RETRY_STATUS and attempt < self.max_retries:
                 if stream:
                     resp.close()
+                if resp.status_code == 429:
+                    # The shared throttle holds this thread until the pause ends.
+                    self._rate_limited(resp.headers.get("Retry-After"))
+                    continue
                 wait = float(resp.headers.get("Retry-After") or delay)
                 log.warning("HTTP %s on %s; retrying in %.0fs", resp.status_code, url, wait)
                 self._sleep(wait)
