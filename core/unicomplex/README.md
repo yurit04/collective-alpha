@@ -59,7 +59,11 @@ Everything goes under `~/market_data/unicomplex` (`UNICOMPLEX_DATA_ROOT`): `runs
 
 ### Scheduling it
 
-macOS, one launchd job at 06:30 Tuesday to Saturday (machine local time):
+macOS, one launchd job Tuesday to Saturday (machine local time) at 06:30 and at each catch-up
+time (08:30, 10:30, 12:30, 14:30 and 18:30). Each start runs `collective run --scheduled`, which
+decides what to do: the full run if the day has none yet, a **catch-up** of whatever the day's
+runs left failed or deferred (with the steps that need it: a failed EDGAR sync is re-run with
+vinculum, nanoprobe and queen after it), or nothing. Design: decision 0018.
 
 ```bash
 uv run collective service install --replace   # removes the four per-package schedules first
@@ -72,24 +76,29 @@ The job runs under `caffeinate`, so the Mac stays awake until the run ends. A Ma
 sleep again after ~45 seconds and the steps would crawl along in short bursts: three minutes of
 work took 70 on 2026-11-06. `caffeinate` holds only on AC power: on battery, or with the lid
 closed and no external display, macOS sleeps anyway (on 2026-11-10 a run on battery took 12
-hours). Keep the Mac plugged in, lid open, for the 06:30 run; `pmset -g log` shows whether it
-slept, and a run still going at `ready_by` shows as stale and notifies. To wake the Mac at 06:29 itself (a system setting, needs sudo):
+hours). So a scheduled run starts no step on battery: it defers the rest ("plug the Mac in"
+in `collective status`) and a later catch-up picks them up once the Mac is on AC. A run by
+hand on battery only warns. `pmset -g log` shows whether the Mac slept, and a run still going
+at `ready_by` shows as stale and notifies. To wake the Mac at 06:29 itself (a system setting, needs sudo):
 `sudo pmset repeat wakeorpoweron TWRFS 06:29:00`.
 
 Without `--replace`, installing refuses while the old Massive sync, EDGAR sync, FINRA sync or
 vinculum build schedules exist, since they would run next to it. The Massive stream service is
-never touched; install it on its own with `uv run subspace service install --only stream`. The time is set in `collective.toml`:
+never touched; install it on its own with `uv run subspace service install --only stream`. The times are set in `collective.toml`
+(reinstall the job after changing them):
 
 ```toml
 [unicomplex]
 run_hour = 6
 run_minute = 30
+catch_up_times = ["08:30", "10:30", "12:30", "14:30", "18:30"]   # [] = no catch-ups
+require_ac = true                                                # false: run steps on battery too
 ```
 
-Linux: `tools/nightly_sync.sh` waits for the network and calls `collective run`. The systemd
-user units that start it (Tue-Sat at `run_hour:run_minute`, `Persistent=true`) and the optional
+Linux: `tools/nightly_sync.sh` waits for the network and calls `collective run --scheduled`. The systemd
+user units that start it (Tue-Sat at `run_hour:run_minute` and each catch-up time, `Persistent=true`) and the optional
 stream unit are in `tools/systemd/`; `tools/bootstrap.sh --only services` installs them. On WSL2
-without systemd it adds a crontab line instead.
+without systemd it adds crontab lines instead (one per time).
 
 ## Status
 
@@ -111,7 +120,7 @@ can act on it. It only reads.
 | borg-queen | `risk_model` | the last month end in the model is within 45 days (rebuilt by the nightly run) |
 | adaptation-matrix | `costs` | informational: days of trades and quotes measured, by set, and the store's size (built once with `adapt run`, not nightly) |
 | transwarp-conduit | `orders` | informational: the last order sheet and its status, fills journaled (read from the journal, no Gateway connection) |
-| unicomplex | `nightly_run` | the last full `collective run` after the latest scheduled time (Tue-Sat 06:30, 15 minutes' grace) succeeded and finished by `ready_by` (09:00); stale while one is still running past it; info while one is running before it, or before the first |
+| unicomplex | `nightly_run` | the last full `collective run` after the latest scheduled time (Tue-Sat 06:30, 15 minutes' grace) succeeded and finished by `ready_by` (09:00), or failed or deferred steps that later runs (catch-ups, runs by hand) completed ("caught up by"); stale while one is still running past it, or while steps are still to do; info while one is running before it, or before the first |
 
 States: `ok`, `stale` (behind the schedule), `info` (no expectation), `missing` (the store is
 absent or unreadable; the error is shown, the other checks still run).

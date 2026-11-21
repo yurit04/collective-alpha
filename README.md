@@ -51,7 +51,7 @@ out; `uv run python tools/check_architecture.py --graph` prints the full graph.<
 | [`nanoprobe-array`](core/nanoprobe-array/README.md) | `nanoprobe` | Intraday: minute bars resampled on a session clock with gap rules, auction prices, per-bar features, daily intraday summaries since 2003 |
 | [`tactical-cube`](core/tactical-cube/README.md) | | Intraday backtests: lagged VWAP and auction fills, participation caps, flat-by times or overnight holds, intraday costs, a look-ahead check |
 | [`adaptation-matrix`](core/adaptation-matrix/README.md) | `adapt` | Transaction costs from trades and NBBO quotes: spreads, realized spread and price impact, the close against the quote, by minute and day; an archive measured before a smaller plan loses the data, and the fits behind the backtesters' cost models |
-| [`unicomplex`](core/unicomplex/README.md) | `collective` | Orchestration: `collective run`, every nightly sync and build in order under one lock and log (one launchd job); `collective status`, a read-only freshness report; `collective roots`, where every store lives |
+| [`unicomplex`](core/unicomplex/README.md) | `collective` | Orchestration: `collective run`, every nightly sync and build in order under one lock and log (one launchd job, with same-day catch-ups); `collective status`, a read-only freshness report; `collective roots`, where every store lives |
 
 Projects:
 
@@ -110,7 +110,8 @@ After that, one nightly run keeps the stores current: `uv run collective service
 --replace` on macOS (one launchd job, Tue-Sat 06:30, replacing the per-package schedules), or the
 systemd user timer in `tools/systemd/` on Linux, which starts `tools/nightly_sync.sh`. Both run
 `collective run`: every sync, then the vinculum, intraday and risk-model builds, one after
-another. The live stream is a separate, always-on service (Massive allows one websocket per key,
+another. Later starts the same day (08:30 to 18:30) re-run only what failed, and a Mac on
+battery defers its steps until it is plugged in (decision 0018). The live stream is a separate, always-on service (Massive allows one websocket per key,
 so run it on one machine only):
 
 ```bash

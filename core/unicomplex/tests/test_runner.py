@@ -56,7 +56,8 @@ class Fake:
         return code
 
 
-def make(tmp_path, codes=None, steps=STEPS, **settings):
+def make(tmp_path, codes=None, steps=STEPS, power="ac", **settings):
+    """`power`: what the fake power source answers, a string or a list consumed one per check."""
     clock = Clock()
     fake = Fake(clock, codes)
     sleeps = []
@@ -65,8 +66,12 @@ def make(tmp_path, codes=None, steps=STEPS, **settings):
         sleeps.append(s)
         clock.advance(s)
 
+    def source():
+        return power.pop(0) if isinstance(power, list) and len(power) > 1 else (
+            power[0] if isinstance(power, list) else power)
+
     runner = Runner(Settings(data_root=tmp_path, **settings), steps=steps, execute=fake, clock=clock,
-                    sleep=sleep, resolve=lambda name: f"/bin/{name}")
+                    sleep=sleep, resolve=lambda name: f"/bin/{name}", power=source)
     return runner, fake, clock, sleeps
 
 
@@ -309,13 +314,19 @@ def test_plist(tmp_path, monkeypatch):
     plist = _services.build_plist(Settings(data_root=tmp_path / "uc", config_file=cfg),
                                   roots={"SUBSPACE_DATA_ROOT": "/data/massive"})
     assert plist["Label"] == "com.collective-alpha.unicomplex.nightly"
-    assert plist["ProgramArguments"] == ["/usr/bin/caffeinate", "-i", "-s", "/venv/bin/collective", "run", "--quiet"]
+    assert plist["ProgramArguments"] == ["/usr/bin/caffeinate", "-i", "-s", "/venv/bin/collective", "run", "--quiet",
+                                         "--scheduled"]
     env = plist["EnvironmentVariables"]
     assert env["SUBSPACE_DATA_ROOT"] == "/data/massive" and env["UNICOMPLEX_DATA_ROOT"].endswith("uc")
     assert env["COLLECTIVE_CONFIG"] == str(cfg.resolve())
     assert not any("KEY" in k or "SECRET" in k for k in env)
-    assert [d["Weekday"] for d in plist["StartCalendarInterval"]] == [2, 3, 4, 5, 6]
-    assert {(d["Hour"], d["Minute"]) for d in plist["StartCalendarInterval"]} == {(6, 30)}
+    starts = plist["StartCalendarInterval"]
+    assert {d["Weekday"] for d in starts} == {2, 3, 4, 5, 6}
+    assert sorted({(d["Hour"], d["Minute"]) for d in starts}) == [(6, 30), (8, 30), (10, 30), (12, 30), (14, 30),
+                                                                   (18, 30)]
+    assert len(starts) == 6 * 5
+    none = _services.build_plist(Settings(data_root=tmp_path / "uc", catch_up_times=()), roots={})
+    assert {(d["Hour"], d["Minute"]) for d in none["StartCalendarInterval"]} == {(6, 30)}
 
 
 def test_data_roots_come_from_each_package(monkeypatch, tmp_path):
@@ -503,3 +514,136 @@ def test_ready_by_must_follow_the_run_time(tmp_path):
     cfg.write_text('[unicomplex]\nready_by = "10:15"\nnotify = false\n[unicomplex.step_timeout_minutes]\nedgar = 300\n')
     s = load_settings(cfg)
     assert s.ready_by == "10:15" and s.notify is False and s.step_timeout_minutes == {"edgar": 300.0}
+
+
+# ------------------------------------------------------------------ scheduled runs and catch-ups
+def at_et(hour, minute=0, day=6):
+    """An instant on Friday 2026-11-06 (or `day`) at hour:minute ET."""
+    return datetime(2026, 11, day, hour, minute, tzinfo=ET)
+
+
+def names(fake):
+    return [c[0] for c in fake.calls]
+
+
+def test_scheduled_runs_the_full_run_first_then_nothing(tmp_path):
+    runner, fake, clock, _ = make(tmp_path)
+    res = runner.run(scheduled=True)
+    assert res.status == "ok" and res.full and res.mode == "full" and len(fake.calls) == 6
+    clock.now = at_et(8, 30)
+    res = runner.run(scheduled=True)
+    assert res.status == "skipped" and "nothing to do" in res.detail and len(fake.calls) == 6
+    assert len(runner.history()) == 1                        # a no-op is not recorded
+
+
+def test_a_catch_up_reruns_the_failed_step_and_everything_that_needs_it(tmp_path):
+    runner, fake, clock, _ = make(tmp_path, codes={"cortical": 1})
+    res = runner.run(scheduled=True)                         # edgar fails, vinculum builds on old facts
+    assert res.status == "failed" and res.failed == ["edgar"]
+    fake.calls.clear()
+    fake.codes = {}
+    clock.now = at_et(8, 30)
+    res = runner.run(scheduled=True)
+    assert res.mode == "catch-up" and not res.full and res.catch_up_of == runner.history()[0]["run_id"]
+    assert names(fake) == ["cortical", "vinculum", "nanoprobe", "queen"]   # not massive or finra
+    assert res.status == "ok" and res.exit_code == 0
+    fake.calls.clear()
+    clock.now = at_et(10, 30)
+    assert runner.run(scheduled=True).status == "skipped" and fake.calls == []
+    c = status_of(runner, at_et(12))
+    assert c.state == "ok" and "caught up by" in c.detail and "edgar" in c.detail
+
+
+def test_a_catch_up_whose_input_fails_again_does_not_rebuild(tmp_path):
+    runner, fake, clock, _ = make(tmp_path, codes={"cortical": 1})
+    runner.run(scheduled=True)
+    fake.calls.clear()
+    clock.now = at_et(8, 30)
+    res = runner.run(scheduled=True)                         # edgar fails again
+    assert names(fake) == ["cortical"]
+    assert [(s.name, s.status) for s in res.steps] == [("edgar", "failed"), ("vinculum", "deferred"),
+                                                      ("nanoprobe", "deferred"), ("queen", "deferred")]
+    assert res.steps[1].detail == "waits for edgar" and res.status == "failed"
+    c = status_of(runner, at_et(9, 30))
+    assert c.state == "stale" and "after 1 catch-up(s) still to do: edgar, vinculum, nanoprobe, queen" in c.detail
+
+
+def test_a_full_run_still_builds_after_a_failed_sync(tmp_path):
+    runner, fake, _, _ = make(tmp_path, codes={"cortical": 1})
+    runner.run(scheduled=True)
+    assert names(fake) == ["subspace", "cortical", "sensor", "vinculum", "nanoprobe", "queen"]
+
+
+def test_on_battery_a_scheduled_run_defers_the_rest(tmp_path):
+    # Unplugged after massive: the 2026-11-17 run slept through edgar and finra for 14 hours.
+    runner, fake, clock, _ = make(tmp_path, power=["ac", "battery"])
+    res = runner.run(scheduled=True)
+    assert names(fake) == ["subspace"]
+    assert res.status == "deferred" and res.exit_code == 0
+    assert {s.status for s in res.steps[1:]} == {"deferred"} and res.steps[1].detail == "on battery power"
+    assert "plug the Mac in" in Path(res.log).read_text()
+    c = status_of(runner, at_et(7))
+    assert c.state == "stale" and "plug the Mac in" in c.detail
+    clock.now = at_et(10, 30)                                # still on battery: deferred again, nothing run
+    res = runner.run(scheduled=True)
+    assert res.mode == "catch-up" and names(fake) == ["subspace"] and res.status == "deferred"
+    runner.power = lambda: "ac"                              # plugged in by 12:30
+    clock.now = at_et(12, 30)
+    res = runner.run(scheduled=True)
+    assert names(fake)[1:] == ["cortical", "sensor", "vinculum", "nanoprobe", "queen"] and res.status == "ok"
+    assert status_of(runner, at_et(13)).state == "ok"
+
+
+def test_a_run_by_hand_on_battery_only_warns(tmp_path):
+    runner, fake, _, _ = make(tmp_path, power="battery")
+    res = runner.run()
+    assert res.status == "ok" and len(fake.calls) == 6
+    assert "warning: on battery power" in Path(res.log).read_text()
+    runner2, fake2, _, _ = make(tmp_path / "off", power="battery", require_ac=False)
+    assert runner2.run(scheduled=True).status == "ok" and len(fake2.calls) == 6
+
+
+def test_a_hand_run_counts_toward_the_catch_up(tmp_path):
+    runner, fake, clock, _ = make(tmp_path, codes={"sensor": 1})
+    runner.run(scheduled=True)
+    fake.codes = {}
+    clock.now = at_et(7, 30)
+    runner.run(only=["finra"])                               # finra fixed by hand; vinculum still old
+    assert runner.todo(clock.now)[:2] == ("catch-up", ["vinculum", "nanoprobe", "queen"])
+
+
+def test_scheduled_on_a_new_day_starts_a_full_run(tmp_path):
+    runner, fake, clock, _ = make(tmp_path, codes={"cortical": 1})
+    runner.run(scheduled=True)                               # Friday: edgar failed
+    clock.now = at_et(6, 30, day=7)                          # Saturday's scheduled start
+    assert runner.todo(clock.now)[0] == "full"
+    clock.now = at_et(6, 29, day=7)                          # a minute early: launchd's slack
+    assert runner.todo(clock.now)[0] == "full"
+
+
+def test_scheduled_refuses_step_choices_and_dry_runs_its_plan(tmp_path):
+    runner, fake, clock, _ = make(tmp_path, codes={"sensor": 1})
+    with pytest.raises(ValueError, match="--scheduled"):
+        runner.run(only=["edgar"], scheduled=True)
+    runner.run(scheduled=True)
+    clock.now = at_et(8, 30)
+    res = runner.run(scheduled=True, dry_run=True)
+    assert res.mode == "catch-up" and [s.name for s in res.steps] == ["finra", "vinculum", "nanoprobe", "queen"]
+
+
+def test_steps_may_only_need_earlier_steps(tmp_path):
+    with pytest.raises(ValueError, match="earlier steps"):
+        Runner(Settings(data_root=tmp_path), steps=(Step("a", ("x",), needs=("b",)), Step("b", ("y",))))
+
+
+def test_catch_up_times_are_checked(tmp_path):
+    from unicomplex import ConfigError, load_settings
+
+    cfg = tmp_path / "collective.toml"
+    cfg.write_text('[unicomplex]\ncatch_up_times = ["8:30", "13:00"]\nrequire_ac = false\n')
+    s = load_settings(cfg)
+    assert s.schedule_times() == ["06:30", "08:30", "13:00"] and s.require_ac is False
+    for bad in ('["06:00"]', '["10:00", "09:00"]', '["25:00"]', '"08:30"'):
+        cfg.write_text(f"[unicomplex]\ncatch_up_times = {bad}\n")
+        with pytest.raises(ConfigError):
+            load_settings(cfg)

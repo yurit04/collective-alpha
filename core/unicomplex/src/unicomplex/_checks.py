@@ -212,10 +212,11 @@ NIGHTLY_GRACE_MINUTES = 15       # a run due less than this long ago may not hav
 RUN_WEEKDAYS = (1, 2, 3, 4, 5)   # Tue-Sat (Python weekday numbers), as the launchd job
 
 
-def last_scheduled(now: datetime, hour: int, minute: int, tz=None) -> datetime:
-    """The latest scheduled start (Tue-Sat at hour:minute, local time) at least the grace
-    period before `now`."""
-    local = (now - timedelta(minutes=NIGHTLY_GRACE_MINUTES)).astimezone(tz)
+def last_scheduled(now: datetime, hour: int, minute: int, tz=None,
+                   grace_minutes: float = NIGHTLY_GRACE_MINUTES) -> datetime:
+    """The latest scheduled start (Tue-Sat at hour:minute, local time) at least `grace_minutes`
+    before `now` (a negative grace also finds a start that is that close ahead)."""
+    local = (now - timedelta(minutes=grace_minutes)).astimezone(tz)
     for back in range(8):
         day = local.date() - timedelta(days=back)
         at = datetime.combine(day, datetime.min.time().replace(hour=hour, minute=minute), local.tzinfo)
@@ -245,7 +246,8 @@ def ran_late(started: datetime, finished: datetime | None, settings, tz=None, no
 def nightly_checks(runner, now: datetime, tz=None) -> list[Check]:
     """Did the last scheduled full run happen, succeed and finish by `ready_by`? A run that
     finished up to `skip_if_ok_hours` before the scheduled time counts (the scheduled one then
-    skips)."""
+    skips). A full run that failed or deferred steps is caught up once the runs after it leave
+    nothing to do (`Runner.outstanding`)."""
     s = runner.settings
     due = last_scheduled(now, s.run_hour, s.run_minute, tz)
     expected = _iso(due)
@@ -268,10 +270,24 @@ def nightly_checks(runner, now: datetime, tz=None) -> list[Check]:
         return [Check("unicomplex", "nightly_run", "stale", when, expected,
                       f"no full run since the one scheduled at {due:%a %H:%M} (last: {last.get('run_id')})")]
     if last.get("status") != "ok":
-        failed = last.get("failed") or []
+        # The full run and the runs after it (catch-ups, runs by hand): done once they leave nothing.
+        rows = runner.history()
+        at = max((i for i, r in enumerate(rows) if r.get("run_id") == last.get("run_id")), default=len(rows) - 1)
+        later = rows[at:]
+        left = runner.outstanding(later)
+        head = f"run {last.get('run_id')} {last.get('status')}: " + (", ".join(last.get("failed") or []) or "?")
+        if not left:
+            fix = later[-1]
+            fixed = datetime.fromisoformat(fix["finished"]) if fix.get("finished") else None
+            return [Check("unicomplex", "nightly_run", "ok", _iso(fixed) or when, expected,
+                          head + f"; caught up by {fix.get('run_id')}"
+                          + (f" at {fixed.astimezone(tz):%H:%M}" if fixed else ""))]
+        tries = sum(1 for r in later[1:] if r.get("mode") == "catch-up")
+        battery = any(st.get("detail") == "on battery power" for st in later[-1].get("steps", []))
         return [Check("unicomplex", "nightly_run", "stale", when, expected,
-                      f"run {last.get('run_id')} {last.get('status')}: " + (", ".join(failed) or "?")
-                      + (f"; log {last['log']}" if last.get("log") else ""))]
+                      head + (f"; after {tries} catch-up(s) still to do: {', '.join(left)}" if tries else "")
+                      + ("; on battery power: plug the Mac in" if battery else "")
+                      + (f"; log {later[-1]['log']}" if later[-1].get("log") else ""))]
     secs = sum(st.get("seconds", 0) for st in last.get("steps", []))
     started = datetime.fromisoformat(last["started"]) if last.get("started") else None
     if started is not None and ran_late(started, finished, s, tz):

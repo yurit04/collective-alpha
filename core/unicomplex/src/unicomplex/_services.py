@@ -1,4 +1,5 @@
-"""macOS launchd job for the nightly run (Tue-Sat, `collective run --quiet`).
+"""macOS launchd job for the nightly run (Tue-Sat, `collective run --quiet --scheduled`, at the
+run time and at each catch-up time; decision 0018).
 
 It replaces the four per-package schedules (Massive sync, EDGAR sync, FINRA sync, vinculum
 build), which started at fixed times and could overlap. Installing refuses while any of them
@@ -9,7 +10,8 @@ The run is wrapped in `caffeinate -i -s`: a Mac asleep at the scheduled time sta
 at its next Power Nap wake, and without the assertion it would sleep again ~45 s later and run
 the steps in bursts, 15 minutes apart (on 2026-11-06 three minutes of sync took 70). The
 assertion lasts only as long as the run; `-s` holds only on AC power. With the lid closed and
-no external display macOS may still sleep; `pmset -g log` shows whether it did.
+no external display macOS may still sleep; `pmset -g log` shows whether it did. On battery the
+scheduled run defers its steps and a later start (a catch-up time) picks them up.
 
 The plist carries each package's data root, resolved now through that package's public
 settings, so the run sees the same stores the CLIs do. Credentials are not written into it:
@@ -83,14 +85,15 @@ def build_plist(settings: Settings, roots: dict[str, str] | None = None) -> dict
     log = str(root / "_logs" / "nightly.launchd.log")
     return {
         "Label": LABEL,
-        "ProgramArguments": [*CAFFEINATE, collective, "run", "--quiet"],
+        "ProgramArguments": [*CAFFEINATE, collective, "run", "--quiet", "--scheduled"],
         "EnvironmentVariables": env,
         "WorkingDirectory": str(root),
         "StandardOutPath": log,
         "StandardErrorPath": log,
         "ProcessType": "Background",
-        "StartCalendarInterval": [{"Weekday": wd, "Hour": settings.run_hour, "Minute": settings.run_minute}
-                                  for wd in range(2, 7)],  # launchd weekdays: 2 = Tuesday ... 6 = Saturday
+        # launchd weekdays: 2 = Tuesday ... 6 = Saturday. Starts missed while asleep run once at wake.
+        "StartCalendarInterval": [{"Weekday": wd, "Hour": int(t[:2]), "Minute": int(t[3:])}
+                                  for t in settings.schedule_times() for wd in range(2, 7)],
     }
 
 

@@ -49,6 +49,9 @@ def run(
     force: Annotated[bool, typer.Option(help="Run even if a full run succeeded in the last few hours.")] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the steps and commands; run nothing.")] = False,
     quiet: Annotated[bool, typer.Option(help="Print only progress lines (the log has everything).")] = False,
+    scheduled: Annotated[bool, typer.Option(
+        "--scheduled", help="What the scheduled job runs: the full run, a catch-up of what the day's run "
+                            "left failed or deferred, or nothing; defers steps while on battery.")] = False,
 ) -> None:
     """Run the nightly steps one after another: massive, edgar, finra, vinculum, nanoprobe, queen.
     A failed step does not stop the rest; the exit code is 1 if any step failed. A second run
@@ -57,10 +60,13 @@ def run(
 
     runner = Runner()
     try:
-        res = runner.run(_names(only), _names(skip), force=force, dry_run=dry_run, echo=typer.echo, quiet=quiet)
+        res = runner.run(_names(only), _names(skip), force=force, dry_run=dry_run, echo=typer.echo, quiet=quiet,
+                         scheduled=scheduled)
     except ValueError as exc:
         _fail(str(exc), 2)
     if res.status == "dry-run":
+        if res.mode == "catch-up":
+            typer.echo(f"catch-up of {res.catch_up_of}:")
         for st in res.steps:
             typer.echo(f"  {st.name:<10} {' '.join(st.command)}   # {st.detail}")
         typer.echo(f"log and history under {runner.root}")
@@ -91,7 +97,8 @@ def runs(
         return
     for r in rows:
         steps = " ".join(f"{s['name']}:{s['status']}({s.get('seconds', 0) / 60:.0f}m)" for s in r.get("steps", []))
-        scope = "" if r.get("full") else " [partial]"
+        scope = ("" if r.get("full") else f" [catch-up of {r.get('catch_up_of')}]"
+                 if r.get("mode") == "catch-up" else " [partial]")
         typer.echo(f"{r.get('run_id')}  {r.get('status'):<11}{scope}  {steps}")
 
 
@@ -117,7 +124,8 @@ def service_install(
     replace: Annotated[bool, typer.Option(
         help="First remove the per-package sync/build schedules (never the Massive stream).")] = False,
 ) -> None:
-    """Install the launchd job: `collective run` Tue-Sat at the configured time (06:30)."""
+    """Install the launchd job: `collective run --scheduled` Tue-Sat at the run time (06:30) and
+    at each catch-up time."""
     from . import _services
     from ._config import load_settings
 
@@ -128,7 +136,7 @@ def service_install(
         _fail(str(exc))
     for name in removed:
         typer.echo(f"removed the old {name} schedule")
-    typer.secho(f"installed {_services.LABEL}: {path} (Tue-Sat {s.run_hour:02d}:{s.run_minute:02d})",
+    typer.secho(f"installed {_services.LABEL}: {path} (Tue-Sat {', '.join(s.schedule_times())})",
                 fg=typer.colors.GREEN)
 
 
