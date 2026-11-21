@@ -131,11 +131,15 @@ class Optimizer:
 
     # ------------------------------------------------------------------ solve
     def solve(self, alpha: pl.DataFrame, on: Any, w0: pl.DataFrame | None = None, market: pl.DataFrame | None = None,
-              nav: float = 1.0) -> Solution:
+              nav: float = 1.0, benchmark: pl.DataFrame | None = None) -> Solution:
         """alpha: security_id, alpha (expected return over the horizon; missing names get 0).
         w0: current holdings (security_id, weight); names outside the model's universe are sold.
-        market: security_id, adv, vol for costs (needed with an AUM). Returns target weights and
-        info: status, relaxed, alpha, vol (annual forecast), cost, turnover, names, seconds."""
+        market: security_id, adv, vol for costs (needed with an AUM). benchmark (long-only):
+        security_id, weight; risk, `target_vol` (then a tracking-error cap), sectors (`sector_net`),
+        styles and `beta` apply to the active weights (portfolio - benchmark); its names outside
+        the model's universe are dropped and the rest rescaled to 1. Returns target weights and
+        info: status, relaxed, alpha, vol (annual forecast; active with a benchmark), cost,
+        turnover, names, seconds; with a benchmark also tracking_error and active_share."""
         t0 = time.time()
         d = _day(on)
         if market is None and (self.costs.aum or self.costs.spread in ("volume", "fitted")):
@@ -151,6 +155,17 @@ class Optimizer:
             inside = w0.filter(pl.col("security_id").is_in(ids))
             h0[np.searchsorted(ids, inside["security_id"].to_numpy())] = inside["weight"].to_numpy()
             sold = float(w0.filter(~pl.col("security_id").is_in(ids))["weight"].abs().sum())
+        b = np.zeros(n)
+        if benchmark is not None:
+            if self.c.long_short:
+                raise ValueError("a benchmark is for long-only portfolios (Constraints.long_only)")
+            bm = (benchmark.group_by("security_id").agg(pl.col("weight").sum())
+                  .filter(pl.col("security_id").is_in(ids) & (pl.col("weight") > 0)))
+            if bm.is_empty():
+                raise ValueError("no benchmark name is in the risk model's universe")
+            b[np.searchsorted(ids, bm["security_id"].to_numpy())] = bm["weight"].to_numpy()
+            b = b / b.sum()
+        bench = benchmark is not None
         no_adv = ex["adv"].is_null().to_numpy() if self.costs.aum else np.zeros(n, bool)
         beta = self._beta(ex, X, F)
         L = _psd_root(F)
@@ -174,25 +189,29 @@ class Optimizer:
             v = cp.Variable(n)
             y = cp.Variable(len(FACTORS))
             tv = v - S * h0
+            act = v - S * b if bench else v                     # risk and exposures: active with a benchmark
             z = cp.Variable(n)
             imp = cp.Variable(n)
-            risk = cp.norm(cp.hstack([L.T @ y, cp.multiply(sd, v)])) * np.sqrt(hz)      # in percent
+            risk = cp.norm(cp.hstack([L.T @ y, cp.multiply(sd, act)])) * np.sqrt(hz)    # in percent
             obj = (a @ v - c.cost_aversion * lin @ z) / S - c.cost_aversion * (eta / S ** 1.5) @ imp
-            cons = [y == X.T @ v, cp.abs(v) <= c.max_weight * S, z >= cp.abs(tv), cp.power(z, 1.5) <= imp]
+            cons = [y == X.T @ act, cp.abs(v) <= c.max_weight * S, z >= cp.abs(tv), cp.power(z, 1.5) <= imp]
             if c.long_short:
                 obj -= borrow * cp.sum(cp.neg(v)) / S
                 cons += [cp.sum(v) == 0, cp.norm1(v) <= c.gross * S]
             else:
                 cons += [cp.sum(v) == S, v >= 0]
             if c.risk_aversion:
-                var = (cp.sum_squares(L.T @ y) + cp.sum_squares(cp.multiply(sd, v))) * hz / S ** 2
+                var = (cp.sum_squares(L.T @ y) + cp.sum_squares(cp.multiply(sd, act))) * hz / S ** 2
                 obj -= c.risk_aversion * var
             if c.target_vol:
                 cons.append(risk <= c.target_vol * np.sqrt(hz / ANNUAL) * S)
-            if c.sector_net is not None and c.long_short:
+            if c.sector_net is not None and (c.long_short or bench):
                 cons.append(cp.abs(y[1:1 + len(SECTORS)]) <= c.sector_net * S)
             if c.beta is not None:
-                cons.append(cp.abs(beta @ v - (0 if c.long_short else S)) <= c.beta * S)
+                if bench:
+                    cons.append(cp.abs(beta @ act) <= c.beta * S)
+                else:
+                    cons.append(cp.abs(beta @ v - (0 if c.long_short else S)) <= c.beta * S)
             for st, cap in c.styles:
                 cons.append(cp.abs(y[FACTORS.index(st)]) <= cap * S)
             if pt is not None:
@@ -217,6 +236,9 @@ class Optimizer:
                         "turnover": float(np.abs(dt).sum() + sold), "sold_outside": sold,
                         "names": int((wv != 0).sum()), "gross": float(np.abs(wv).sum()),
                         "beta": float(beta @ wv), "seconds": round(time.time() - t0, 2)}
+                if bench:
+                    info["tracking_error"] = info["vol"]
+                    info["active_share"] = float(np.abs(wv - b).sum() / 2)
                 out = pl.DataFrame({"security_id": ids, "weight": wv}).filter(pl.col("weight") != 0)
                 return Solution(out, info)
         log.warning("%s: no feasible portfolio, holding the current one", d)
@@ -240,11 +262,12 @@ class Portfolio:
             self._engine = self.opt.risk.engine
         return self._engine
 
-    def build(self, alpha: pl.DataFrame, start: Any = None, end: Any = None, lag: int = 1
-              ) -> tuple[pl.DataFrame, pl.DataFrame]:
-        """alpha: date (signal date), security_id, alpha. Returns (weights: date, security_id,
-        weight, sector, issuer_market_cap, for Engine.run with the same lag and CostModel;
-        diagnostics: one row per date with Solution.info)."""
+    def build(self, alpha: pl.DataFrame, start: Any = None, end: Any = None, lag: int = 1,
+              benchmark: pl.DataFrame | None = None) -> tuple[pl.DataFrame, pl.DataFrame]:
+        """alpha: date (signal date), security_id, alpha. benchmark (long-only): date,
+        security_id, weight; each rebalance uses the latest date on or before it. Returns
+        (weights: date, security_id, weight, sector, issuer_market_cap, for Engine.run with the
+        same lag and CostModel; diagnostics: one row per date with Solution.info)."""
         from unimatrix_zero import Engine
 
         s, e = _day(start), _day(end)
@@ -274,7 +297,13 @@ class Portfolio:
                 held, growth = self._drift(held, rets, prev_exec, ex_day)
                 nav *= growth
             mk = aux.filter(pl.col("date") <= d).group_by("security_id").agg(pl.all().sort_by("date").last())
-            sol = self.opt.solve(a.filter(pl.col("date") == d), d, held, mk, nav)
+            bm = None
+            if benchmark is not None:
+                bd = benchmark.filter(pl.col("date") <= d)["date"].max()
+                if bd is None:
+                    raise ValueError(f"no benchmark on or before {d}")
+                bm = benchmark.filter(pl.col("date") == bd)
+            sol = self.opt.solve(a.filter(pl.col("date") == d), d, held, mk, nav, benchmark=bm)
             sol.info["nav"] = nav
             diags.append(sol.info)
             weights.append(sol.weights.with_columns(pl.lit(d).alias("date")))

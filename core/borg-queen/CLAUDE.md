@@ -16,9 +16,9 @@ User docs: README.md in this folder. Design: docs/decisions/0009-borg-queen.md.
 | `ENV_ROOT` | `BORG_QUEEN_DATA_ROOT` (default ~/market_data/borg_queen) |
 | `alpha_from_score(panel, col, risk, ic=0.03, horizon_days=21)` | date, security_id, alpha (+ sector, issuer_market_cap) |
 | `Constraints(...)`, `Constraints.long_only(**kw)` | optimizer limits (frozen dataclass, fractions of capital) |
-| `Optimizer(risk, costs=None, constraints=None)` | `.solve(alpha, on, w0=None, market=None, nav=1.0)` -> `Solution` |
-| `Solution` | `.weights` (security_id, weight), `.info` (status, relaxed, alpha, vol, cost, turnover, names, gross, beta, ...) |
-| `Portfolio(optimizer, engine=None)` | `.build(alpha, start=None, end=None, lag=1)` -> (weights for Engine.run, diagnostics) |
+| `Optimizer(risk, costs=None, constraints=None)` | `.solve(alpha, on, w0=None, market=None, nav=1.0, benchmark=None)` -> `Solution` |
+| `Solution` | `.weights` (security_id, weight), `.info` (status, relaxed, alpha, vol, cost, turnover, names, gross, beta, ...; with a benchmark tracking_error, active_share) |
+| `Portfolio(optimizer, engine=None)` | `.build(alpha, start=None, end=None, lag=1, benchmark=None)` -> (weights for Engine.run, diagnostics); benchmark: date, security_id, weight (latest on or before each rebalance) |
 
 `RiskModel` methods:
 - `build(start="2011-01-01", end=None, settings=None)` -> info (~30 s); `status()`; `check()`
@@ -64,5 +64,8 @@ Invariants:
   borrow_bps), so a cost change in unimatrix-zero reaches optimizer and backtest together.
 - Names are matched to model rows by position (`np.searchsorted` on security_id): sort by
   security_id after the last join, never before it (polars joins keep no row order).
+- A benchmark (long-only only) moves risk, `target_vol` (a tracking-error cap), sectors
+  (`sector_net`), styles and `beta` onto the active weights (portfolio - benchmark); the
+  weights themselves stay long-only and fully invested. Without one, nothing changes.
 - An infeasible rebalance relaxes (participation, exposures x3, exposures off) and finally holds
   the current book; never return an empty book silently.

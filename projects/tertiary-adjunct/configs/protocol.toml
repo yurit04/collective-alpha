@@ -1,0 +1,94 @@
+# tertiary-adjunct: the research protocol, fixed on 2026-11-21 before any result of this project
+# was computed (README.md, "Protocol"). Change nothing here after the first run without saying so
+# in the README's "Deviations" section, with the date and the reason.
+
+capital = 100_000                 # dollars; positions are rounded to whole shares at this size
+
+[periods]
+signals_from = "2012-01-01"       # first signal date (IC history for the walk-forward weights)
+start = "2013-01-01"              # first rebalance: the risk model forecasts from 2012-12-31
+dev_end = "2019-12-31"            # development: every choice is made on 2013-2019 only
+holdout_start = "2020-01-01"      # run once, after the choice, to the last stored session
+
+[rebalance]
+# Signal dates: the last trading day of each month and the last trading day on or before the
+# 15th. Orders trade at the next session's close (lag 1: market-on-close in paper trading).
+days = ["month_end", "mid_month"]
+lag = 1
+
+[universe]
+top = 1000                        # by issuer market cap on each signal date (the risk model's universe)
+benchmark_top = 500               # long-only benchmark: the 500 largest, cap weighted (stands in for SPY)
+
+[signals]
+value = ["earnings_yield", "book_to_market", "fcf_yield", "ebitda_to_ev"]
+quality = ["roe", "gross_profitability", "cash_roa", "accruals"]
+momentum = ["momentum_12_1"]
+leverage = ["debt_to_equity", "interest_coverage"]
+investment = ["asset_growth", "share_issuance"]
+low_risk = ["high_52w", "volatility_3m"]
+short = ["si_pct_float", "days_to_cover"]
+
+# The three ways of combining them (the only score variants tried; each group needs 2 signals
+# where it has 2 or more, and a score needs 2 groups).
+[composites.C1]
+rule = "equal_groups"
+groups = ["value", "quality", "momentum"]
+
+[composites.C2]
+rule = "equal_groups"
+groups = ["value", "quality", "momentum", "leverage", "investment", "low_risk", "short"]
+
+[composites.C3]
+rule = "walk_forward_ic"
+groups = ["value", "quality", "momentum", "leverage", "investment", "low_risk", "short"]
+window_months = 36                # trailing month-end ICs (rank IC against the next month's return)
+min_months = 24                   # fewer: equal weights over every signal
+shrink = 0.5                      # weight = (1 - shrink) x IC-IR weight + shrink x equal weight
+# An IC is used only once its month has fully passed (its return window ended before the date).
+
+[alpha]
+ic = 0.03                         # Grinold: alpha = ic x z x specific vol, one-month horizon
+horizon_days = 21
+
+[long_short]                      # borg_queen.Constraints defaults
+gross = 2.0
+target_vol = 0.08
+sector_net = 0.01
+beta = 0.05
+size = 0.10
+max_weight = 0.02
+
+[long_only]                       # against the benchmark: active risk, active exposures
+max_weight = 0.05
+tracking_error = 0.05             # annual forecast active volatility cap
+sector_active = 0.03              # |portfolio - benchmark| per sector
+beta_active = 0.10                # |predicted beta - 1|
+size_active = 0.20                # |active size exposure|
+
+[shares]
+min_position = 250                # dollars: smaller rounded positions are dropped
+min_shares_at_max = 2             # a name priced above max position / 2 is left out
+
+[costs]
+# unimatrix-zero CostModel: fitted half-spread (charged although MOC orders may pay less: the
+# auction case is a sensitivity), square-root impact at the capital, borrow defaults. Its 1 bp
+# commission is replaced by IBKR Pro tiered pricing per order.
+commission_per_share = 0.0035
+commission_min = 0.35
+commission_max_pct = 0.01
+
+[selection]
+# Per form, the composite with the best development figure is chosen: net Sharpe ratio for
+# long-short, net information ratio against SPY for long-only.
+trials_per_form = 3
+
+[go]
+# Checked once on the holdout, for the chosen variant of each form. All must hold.
+ls_holdout_sharpe = 0.30          # net Sharpe ratio
+ls_max_drawdown = -0.20
+lo_holdout_ir = 0.30              # net information ratio against SPY
+lo_active_return = 0.01           # net annual return above SPY
+lo_max_relative_drawdown = -0.15
+dev_deflated_sharpe = 0.90        # probability the development Sharpe (or IR) beats zero after 3 trials
+# Development robustness: the figure stays positive with lag 2 and with costs doubled.

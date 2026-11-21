@@ -23,6 +23,7 @@ members = [
     "neural-processor",
     "subspace-probe",
     "tactical-cube",
+    "tertiary-adjunct",
     "transwarp-conduit",
     "unicomplex",
     "unimatrix-zero",
@@ -3145,6 +3146,39 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8a/11/965c6fd8e5cc254f1fe142d547387da17a8ebfd75a3455f637c663fb38a0/terminado-0.18.1.tar.gz", hash = "sha256:de09f2c4b85de4765f7714688fff57d3e75bad1f909b589fde880460c753fd2e", size = 32701, upload-time = "2024-03-12T14:34:39.026Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6a/9e/2064975477fdc887e47ad42157e214526dcad8f317a948dee17e1659a62f/terminado-0.18.1-py3-none-any.whl", hash = "sha256:a4468e1b37bb318f8a86514f65814e1afc977cf29b3992a4500d9dd305dcceb0", size = 14154, upload-time = "2024-03-12T14:34:36.569Z" },
+]
+
+[[package]]
+name = "tertiary-adjunct"
+version = "0.1.0"
+source = { editable = "projects/tertiary-adjunct" }
+dependencies = [
+    { name = "borg-queen" },
+    { name = "ipykernel" },
+    { name = "massive-subspace-stream" },
+    { name = "matplotlib" },
+    { name = "neural-processor" },
+    { name = "numpy" },
+    { name = "polars" },
+    { name = "scipy" },
+    { name = "transwarp-conduit" },
+    { name = "unimatrix-zero" },
+    { name = "vinculum" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "borg-queen", editable = "core/borg-queen" },
+    { name = "ipykernel", specifier = ">=6.29" },
+    { name = "massive-subspace-stream", editable = "core/massive-subspace-stream" },
+    { name = "matplotlib", specifier = ">=3.9" },
+    { name = "neural-processor", editable = "core/neural-processor" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "polars", specifier = ">=1.20" },
+    { name = "scipy", specifier = ">=1.11" },
+    { name = "transwarp-conduit", editable = "core/transwarp-conduit" },
+    { name = "unimatrix-zero", editable = "core/unimatrix-zero" },
+    { name = "vinculum", editable = "core/vinculum" },
 ]
 
 [[package]]
