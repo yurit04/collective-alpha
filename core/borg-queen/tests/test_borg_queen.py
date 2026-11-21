@@ -130,7 +130,9 @@ def test_cross_section_recovers_factor_returns_and_constraint():
     f[5] = -(c[:4] * f[1:5]).sum() / c[4]
     est, r2 = cross_section(X, X @ f, cap)
     assert np.allclose(est, f, atol=1e-10) and r2 == pytest.approx(1.0)
-    assert abs((c * est[1:13]).sum()) < 1e-12                       # cap-weighted sectors sum to 0
+    # Cap-weighted sectors sum to 0, relative to the terms' size (caps ~1e11): an absolute 1e-12
+    # held on Linux's OpenBLAS but not on macOS Accelerate (1.9e-6 on terms of ~1e10).
+    assert abs((c * est[1:13]).sum()) < 1e-12 * np.abs(c * est[1:13]).sum()
     assert np.all(est[1 + np.arange(5, 12)] == 0)                   # empty sectors get 0
 
 

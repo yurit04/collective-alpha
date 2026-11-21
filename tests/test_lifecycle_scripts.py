@@ -63,6 +63,13 @@ def test_reset_deletes_the_stores_and_the_folder_left_with_only_finder_litter(tm
     if sys.platform != "darwin" and (shutil.which("systemctl") or shutil.which("crontab")):
         if not os.environ.get("CI"):
             pytest.skip("would touch this machine's systemd units or crontab")
+    # reset.sh looks for this checkout's collective processes machine-wide (HOME isolation does
+    # not hide them), so a running stream or nightly run makes it refuse without --force.
+    tools = "subspace|cortical|sensor|vinculum|nanoprobe|queen|conduit|adapt|collective"
+    ps = subprocess.run(["ps", "-eo", "args="], capture_output=True, text=True).stdout
+    live = [x for x in ps.splitlines() if re.search(rf"{re.escape(str(ROOT))}/\.venv/bin/({tools})( |$)", x)]
+    if live:
+        pytest.skip(f"collective processes are running on this machine: {live[0][:80]}")
     home = tmp_path / "home"
     data = home / "market_data"
     (data / "massive" / "bars").mkdir(parents=True)
