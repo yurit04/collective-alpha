@@ -60,7 +60,15 @@ history. Paper trading is the only test nothing has seen.
 
 ## Deviations
 
-None yet.
+None. Choices the protocol did not spell out, made in code before any result:
+
+- **C3 with partly known signals.** Once 24 months of ICs are known, a signal with no trailing
+  IC yet (short interest before 2018) gets only its share of the equal-weight half.
+- **What the backtest charges vs what `conduit plan` sends.** The backtest trades every
+  difference between the drifted book and the new whole-share targets. `conduit plan` skips
+  trades under $200, so paper trading would trade a little less than the backtest.
+- **The drift the optimizer trades from is unrounded.** Rounding to whole shares happens after
+  the optimizer, on its targets.
 
 ## Run
 
@@ -72,4 +80,36 @@ Notebooks in `notebooks/` (results committed). Reusable code in `src/tertiary_ad
 
 ## Results
 
-Not run yet.
+### Development, 2013-2019 (notebooks 00 and 01)
+
+**No-go: neither form passes the development gate**, so neither can pass the protocol,
+whatever the holdout shows.
+
+| Form | Chosen | Figure (C1 / C2 / C3) | Deflated Sharpe | Lag 2 | Costs × 2 | Gate |
+|---|---|---|---|---|---|---|
+| Long-short | C3 | net Sharpe 0.24 / 0.41 / **0.44** | 0.82 (needs 0.90) | 0.43 | 0.27 | fails |
+| Long-only | C1 | net IR vs SPY **-0.13** / -0.76 / -0.64 | 0.14 | -0.13 | -0.20 | fails |
+
+- **Long-short.**
+  - 3.9%/yr net at 10% volatility, max drawdown -23%.
+  - Robust to lag and costs, but seven years at a 0.44 Sharpe ratio are not enough to tell it
+    from zero after three trials. Even undeflated, the probability is 0.87.
+  - Nearly all the return came in 2015. It has been flat to down since 2016.
+- **Long-only.**
+  - Every score trailed SPY net: C1 by 1.1%/yr, C2 by 4.7%/yr and C3 by 3.8%/yr.
+  - A value-and-quality tilt within large caps lost to large-cap growth over these years.
+- **Costs at $100k.**
+  - Long-short pays about 1.6%/yr: 0.6% half-spread and impact, 0.3% borrow, and 0.7% IBKR
+    commission (about 107 orders a rebalance). Commission alone takes 0.07 off its Sharpe ratio.
+  - Long-only pays about 0.4%/yr.
+  - Whole shares cost almost nothing next to fractional ones.
+
+### Holdout, 2020 onward
+
+Not run. With the development gate failed, the decision is no-go either way. An unseen
+2020-2026 is worth more to the next protocol than a number that cannot change this one.
+
+### Paper trading
+
+Per the protocol, nothing is paper traded on this strategy. `Study.targets` (one rebalance
+as `Conduit.plan` takes it) stays for a strategy that passes.

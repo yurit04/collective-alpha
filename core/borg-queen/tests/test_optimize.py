@@ -139,6 +139,53 @@ def test_long_only(setup):
     assert sol.weights["weight"].min() >= 0 and sol.weights["weight"].sum() == pytest.approx(1.0, abs=1e-6)
 
 
+def _benchmark(rm, top=60):
+    """Cap weights of the `top` largest names of the model's universe at M."""
+    ex = rm.exposures(M).sort("issuer_market_cap", descending=True).head(top)
+    return ex.select("security_id", (pl.col("issuer_market_cap") / pl.col("issuer_market_cap").sum()).alias("weight"))
+
+
+def test_long_only_against_a_benchmark(setup):
+    rm, alpha, market, _ = setup
+    bm = _benchmark(rm)
+    # No alpha, no costs, active variance penalized: the benchmark itself.
+    zero = _at(alpha).with_columns(pl.lit(0.0).alias("alpha"))
+    sol = Optimizer(rm, NO_COSTS, Constraints.long_only(max_weight=1.0, risk_aversion=1.0)).solve(
+        zero, M, None, market, benchmark=bm)
+    got = bm.join(sol.weights, on="security_id", how="left").with_columns(pl.col("weight_right").fill_null(0))
+    assert (got["weight"] - got["weight_right"]).abs().max() < 1e-4 and sol.info["active_share"] < 1e-3
+    # With alpha: active risk, active sectors, active beta and the size tilt stay inside their caps.
+    c = Constraints.long_only(max_weight=0.05, target_vol=0.03, sector_net=0.03, beta=0.1, styles=(("size", 0.2),))
+    sol = Optimizer(rm, CostModel(), c).solve(_at(alpha), M, None, market, benchmark=bm)
+    w = sol.weights
+    assert sol.info["status"] == "optimal" and sol.info["relaxed"] == "none"
+    assert w["weight"].min() >= 0 and w["weight"].sum() == pytest.approx(1.0, abs=1e-6)
+    active = (w.join(bm, on="security_id", how="full", coalesce=True)
+              .select("security_id", (pl.col("weight").fill_null(0) - pl.col("weight_right").fill_null(0)).alias("weight")))
+    assert rm.predict(active, on=M)["total_vol"].item() <= 0.03 + 1e-4
+    assert sol.info["tracking_error"] == pytest.approx(rm.predict(active, on=M)["total_vol"].item(), rel=1e-3)
+    ex = rm.exposures(M).join(active, on="security_id")
+    assert ex.group_by("sector").agg(pl.col("weight").sum())["weight"].abs().max() <= 0.03 + 1e-6
+    assert abs((ex["weight"] * ex["size"]).sum()) <= 0.2 + 1e-6
+    assert 0 < sol.info["active_share"] < 1 and sol.info["alpha"] > 0
+
+
+def test_a_benchmark_needs_long_only(setup):
+    rm, alpha, market, _ = setup
+    with pytest.raises(ValueError, match="long-only"):
+        Optimizer(rm, CostModel()).solve(_at(alpha), M, None, market, benchmark=_benchmark(rm))
+
+
+def test_portfolio_build_with_a_benchmark(setup):
+    rm, alpha, _, rets = setup
+    bm = _benchmark(rm).with_columns(pl.lit(date(2020, 3, 31)).alias("date"))
+    opt = Optimizer(rm, CostModel(), Constraints.long_only(max_weight=0.05, target_vol=0.03))
+    w, diag = Portfolio(opt, engine=FakeEngine(rets)).build(alpha, start="2020-03-31", benchmark=bm)
+    assert (diag["status"] == "optimal").all() and (diag["tracking_error"] <= 0.03 + 1e-4).all()
+    with pytest.raises(ValueError, match="no benchmark"):
+        Portfolio(opt, engine=FakeEngine(rets)).build(alpha, start="2020-02-28", benchmark=bm)
+
+
 def test_market_needed_for_volume_spreads(setup):
     rm, alpha, _, _ = setup
     with pytest.raises(ValueError):

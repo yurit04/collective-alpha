@@ -100,7 +100,10 @@ Optimizer(rm, cm).solve(alpha_one_date, on, current_weights, market)  # one reba
   volatility ≤ 8% a year; each sector's net weight within ±1%; predicted beta to the
   cap-weighted universe within ±0.05; size exposure within ±0.1 (more styles can be added);
   ≤ 2% per name; each trade ≤ 10% of ADV (with an AUM). `Constraints.long_only()` gives a fully
-  invested long-only book with no exposure limits.
+  invested long-only book with no exposure limits. Pass `benchmark=` (security_id, weight) to
+  `solve` (or date, security_id, weight to `Portfolio.build`) to run it against an index:
+  `target_vol` then caps the tracking error, and `sector_net`, `styles` and `beta` limit the
+  active exposures.
 - **When infeasible** it relaxes step by step: drop the participation limit, triple the
   exposure limits, drop them; if nothing works it holds the current book (`relaxed` in the
   diagnostics says which). Names outside the model's universe are sold; names with no volume
