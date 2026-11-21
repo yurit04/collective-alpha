@@ -104,10 +104,26 @@ whatever the holdout shows.
   - Long-only pays about 0.4%/yr.
   - Whole shares cost almost nothing next to fractional ones.
 
-### Holdout, 2020 onward
+### Holdout, 2020 to 2026-11-19 (notebook 02)
 
-Not run. With the development gate failed, the decision is no-go either way. An unseen
-2020-2026 is worth more to the next protocol than a number that cannot change this one.
+Run once, after the development verdict, at the user's request. **Still no-go for both.**
+
+| Form | Holdout figure | Other holdout tests | Holdout | Development gate | Go |
+|---|---|---|---|---|---|
+| Long-short C3 | net Sharpe 0.14 (needs 0.30) | max drawdown -36% (limit -20%) | fails | fails (DSR 0.82) | no |
+| Long-only C1 | net IR vs SPY 0.73 | +5.1%/yr above SPY; relative drawdown -12% | passes | fails (DSR 0.14, negative at lag 2 and costs x2) | no |
+
+- **Long-short.**
+  - 2020 lost 30%: the book was long quality and value and short the names that led the rebound from the March low.
+  - It has made about 7%/yr since 2021, too little to tell from luck within the holdout.
+- **Long-only C1 turned around.**
+  - It went from -1.1%/yr against SPY in development to +5.1%/yr in the holdout, with most of
+    the gain in 2023-2025.
+  - In those years it held NVDA, AAPL, META, MA and TSM at the 5% cap.
+  - It still is not a go: development was negative, C1 had already been seen on 2013-2026 in
+    `subspace-probe`, and seven years mostly measure one regime.
+  - A paper test of it would need a new protocol, written first, with its own length and pass
+    rules.
 
 ### Paper trading
 
