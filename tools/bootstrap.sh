@@ -232,8 +232,11 @@ step_vinculum() {
 step_nanoprobe() { tool nanoprobe build; }
 step_queen()     { tool queen build; }
 
-render_unit() {   # tools/systemd/<unit> with this checkout and the run time filled in
-    sed -e "s|@REPO@|$REPO|g" -e "s|@RUN_TIME@|$RUN_TIME|g" "$REPO/tools/systemd/$1"
+render_unit() {   # tools/systemd/<unit> with this checkout, the run time and every scheduled start filled in
+    local cal="" t
+    for t in $SCHEDULE; do cal="${cal}OnCalendar=Tue..Sat *-*-* $t:00\n"; done
+    sed -e "s|@REPO@|$REPO|g" -e "s|@RUN_TIME@|$RUN_TIME|g" "$REPO/tools/systemd/$1" |
+        awk -v cal="$cal" '$0 == "OnCalendar=@SCHEDULE@" { printf "%s", cal; next } { print }'
 }
 
 step_services() {
@@ -247,8 +250,10 @@ step_services() {
         return
     fi
 
-    RUN_TIME=$("$BIN/python" -c 'from unicomplex import load_settings as l; s = l(); print(f"{s.run_hour:02d}:{s.run_minute:02d}")' 2>/dev/null)
-    [ -n "$RUN_TIME" ] || RUN_TIME="06:30"
+    # Every scheduled start (HH:MM): the run time, then the catch-up times (decision 0018).
+    SCHEDULE=$("$BIN/python" -c 'from unicomplex import load_settings as l; print(" ".join(l().schedule_times()))' 2>/dev/null)
+    [ -n "$SCHEDULE" ] || SCHEDULE="06:30 08:30 10:30 12:30 14:30 18:30"
+    RUN_TIME=${SCHEDULE%% *}
     local units="collective-sync.service collective-sync.timer" unit
     [ "$STREAM" = 1 ] && units="$units collective-stream.service"
 
@@ -286,12 +291,16 @@ step_services() {
         warn "no crontab command either; a real run would stop here"
         return 0
     fi
-    local hour=${RUN_TIME%%:*} minute=${RUN_TIME##*:}
-    hour=${hour#0} minute=${minute#0}
-    local line="${minute:-0} ${hour:-0} * * 2-6 \"$REPO/tools/nightly_sync.sh\" >> \"$UC_ROOT/_logs/nightly.cron.log\" 2>&1 $CRON_TAG"
-    say "\$ crontab: $line"
+    local lines="" t hour minute
+    for t in $SCHEDULE; do
+        hour=${t%%:*} minute=${t##*:}
+        hour=${hour#0} minute=${minute#0}
+        lines="${lines}${minute:-0} ${hour:-0} * * 2-6 \"$REPO/tools/nightly_sync.sh\" --scheduled >> \"$UC_ROOT/_logs/nightly.cron.log\" 2>&1 $CRON_TAG
+"
+    done
+    say "$lines" | sed '/^$/d; s/^/$ crontab: /'
     if [ "$DRY" = 0 ]; then
-        { crontab -l 2>/dev/null | grep -v -e "$CRON_TAG" -e nightly_sync.sh; say "$line"; } | crontab -
+        { crontab -l 2>/dev/null | grep -v -e "$CRON_TAG" -e nightly_sync.sh; printf "%s" "$lines"; } | crontab -
     fi
     say "cron must be running: \`sudo service cron start\` (WSL2 starts no services by itself)."
     [ "$STREAM" = 1 ] && warn "the stream needs systemd here; it was not installed"
@@ -307,7 +316,7 @@ step_status() {
 # ------------------------------------------------------------------ main
 say "collective-alpha bootstrap: $OS$([ "$WSL" = 1 ] && echo ' (WSL2)'), repo $REPO"
 say "steps: $selected$([ "$DRY" = 1 ] && echo '   (dry run: nothing runs)')"
-MASSIVE_ROOT="" UC_ROOT="" LOG="" RUN_TIME="06:30"
+MASSIVE_ROOT="" UC_ROOT="" LOG="" RUN_TIME="06:30" SCHEDULE="06:30"
 T0=$(date +%s)
 # Ctrl-C stops the bootstrap. Without this a command that turns the interrupt into an ordinary
 # failure (exit 1) would be taken for a failed download and run again.

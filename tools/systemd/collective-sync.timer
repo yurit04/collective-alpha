@@ -1,10 +1,12 @@
-# Tue-Sat at the [unicomplex] run time (@RUN_TIME@), the day after each session. Persistent: a
-# machine that was off or asleep runs it at the next start.
+# Tue-Sat at the [unicomplex] run time (@RUN_TIME@), the day after each session, and at each
+# catch-up time: tools/bootstrap.sh writes one OnCalendar line per time in place of the
+# placeholder OnCalendar line. Each start is `collective run --scheduled` (the full run, a catch-up, or
+# nothing). Persistent: a machine that was off or asleep runs it once at the next start.
 [Unit]
-Description=collective-alpha nightly run, Tue-Sat @RUN_TIME@
+Description=collective-alpha nightly run, Tue-Sat @RUN_TIME@ and catch-ups
 
 [Timer]
-OnCalendar=Tue..Sat *-*-* @RUN_TIME@:00
+OnCalendar=@SCHEDULE@
 Persistent=true
 Unit=collective-sync.service
 

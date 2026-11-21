@@ -165,4 +165,17 @@ def test_systemd_units_use_only_the_known_placeholders():
     assert [u.name for u in UNITS] == ["collective-stream.service", "collective-sync.service",
                                        "collective-sync.timer"]
     for unit in UNITS:
-        assert set(re.findall(r"@[A-Z_]+@", unit.read_text())) <= {"@REPO@", "@RUN_TIME@"}, unit
+        assert set(re.findall(r"@[A-Z_]+@", unit.read_text())) <= {"@REPO@", "@RUN_TIME@", "@SCHEDULE@"}, unit
+
+
+def test_the_timer_gets_one_start_per_scheduled_time():
+    """bootstrap.sh's render_unit, on its own: the run time and each catch-up time (decision 0018)."""
+    script = (f"eval \"$(sed -n '/^render_unit()/,/^}}/p' '{BOOTSTRAP}')\"; "
+              f"REPO='{ROOT}' RUN_TIME=06:30 SCHEDULE='06:30 08:30 18:30'; "
+              "render_unit collective-sync.timer; render_unit collective-sync.service")
+    res = subprocess.run([BASH, "-c", script], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    assert re.findall(r"^OnCalendar=.*$", res.stdout, re.M) == [
+        "OnCalendar=Tue..Sat *-*-* 06:30:00", "OnCalendar=Tue..Sat *-*-* 08:30:00",
+        "OnCalendar=Tue..Sat *-*-* 18:30:00"]
+    assert f"ExecStart={ROOT}/tools/nightly_sync.sh --scheduled" in res.stdout and "@" not in res.stdout
