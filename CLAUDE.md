@@ -15,6 +15,7 @@ tools/nightly_sync.sh, systemd/   the nightly run on Linux (systemd user units i
 tests/                 repo-level tests (architecture rules, dry runs of bootstrap.sh and reset.sh)
 .github/workflows/ci.yml      lint, dependency rules and offline tests on push and pull request (3.12, 3.13)
 docs/decisions/        short design records: why X over Y
+docs/UPGRADING.md      manual steps a machine needs after a `git pull` (reinstall a job, ...); add one when a change needs it
 .claude/skills/        new-core-module, new-project, query-market-data
 ```
 
